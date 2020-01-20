@@ -1,7 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::rc::Weak;
-
 #[derive(Clone, Debug)]
 pub enum NodeType {
     Element,
@@ -11,6 +7,7 @@ pub enum NodeType {
     DocumentType,
 }
 
+#[derive(Clone, Debug)]
 pub enum TagType {
     None,
     Opening,
@@ -20,8 +17,8 @@ pub enum TagType {
 
 #[derive(Clone, Debug)]
 pub struct DomElement {
-    children: Vec<Rc<RefCell<DomElement>>>,
-    parentNode: Option<Weak<RefCell<DomElement>>>,
+    children: Vec<DomElement>,
+    parentNode: *mut DomElement,
     nodeValue: String,
     nodeType: NodeType,
     innerHTML: String,
@@ -33,7 +30,7 @@ impl DomElement {
     pub fn new(nodeType: NodeType) -> DomElement {
         DomElement {
             children: vec![],
-            parentNode: None,
+            parentNode: std::ptr::null_mut(),
             nodeType,
             innerHTML: "".to_string(),
             outerHTML: "".to_string(),
@@ -61,10 +58,8 @@ fn getTagName(source: &str) -> String {
 }
 
 fn getTagType(token: &str, tagName: &str) -> TagType {
-    let mut chars = token.chars();
-
-    if chars.nth(0).unwrap() == '<' && chars.clone().last().unwrap() == '>' {
-        if chars.nth(1).unwrap() == '/' {
+    if token.starts_with("<") && token.ends_with(">") {
+        if token.starts_with("</") {
             return TagType::Closing;
         } else if SELF_CLOSING_TAGS.contains(&token) {
             return TagType::SelfClosing;
@@ -77,12 +72,10 @@ fn getTagType(token: &str, tagName: &str) -> TagType {
 }
 
 fn getNodeType(token: &str, tagName: &str) -> NodeType {
-    let mut chars = token.chars();
-
-    if chars.nth(0).unwrap() == '<' && chars.clone().last().unwrap() == '>' {
+    if token.starts_with("<") && token.ends_with(">") {
         if token.starts_with("<!--") {
             return NodeType::Comment;
-        } else if chars.nth(1).unwrap() == '!' {
+        } else if token.starts_with("<!") {
             return NodeType::DocumentType;
         } else {
             return NodeType::Element;
@@ -111,7 +104,8 @@ fn tokenize(html: String) -> Vec<String> {
         } else if c == '>' || i == html.len() - 1 {
             capturing = false;
             capturedText.push(c);
-            tokens.push(capturedText.clone());
+            tokens.push(capturedText.to_string());
+            capturedText = String::from("");
         } else if !capturing {
             capturedText = String::from("");
             capturing = true;
@@ -129,17 +123,15 @@ fn getOpeningTag<'a>(tagName: &str, element: Option<&'a DomElement>) -> Option<&
     if element.clone().unwrap().tagName == tagName {
         return element;
     } else {
-        return getOpeningTag(tagName, unsafe {
-            Some(&(*element.unwrap().parentNode.unwrap().into_raw()).into_inner())
-        });
+        return getOpeningTag(tagName, unsafe { Some(&*element.unwrap().parentNode) });
     }
 }
 
-fn build_tree<'a>(tokens: Vec<String>) -> Vec<DomElement<'a>> {
+fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
     let mut elements: Vec<DomElement> = vec![];
     let mut openTags: Vec<String> = vec![];
 
-    let mut parent: Option<&DomElement> = None;
+    let mut parent: *mut DomElement = std::ptr::null_mut();
 
     for token in tokens {
         let tagName = getTagName(&token);
@@ -147,54 +139,36 @@ fn build_tree<'a>(tokens: Vec<String>) -> Vec<DomElement<'a>> {
         let nodeType = getNodeType(&token, &tagName);
 
         match tagType {
-            TagType::Closing => match parent {
-                Some(item) => {
-                    let openTagIndex = &openTags.iter().rev().position(|s| s == &tagName);
-                    match openTagIndex {
-                        Some(index) => {
-                            if item.tagName == tagName.to_string() {
-                                parent = *item.parentNode.as_ref();
-                            } else {
-                                let openingElement = getOpeningTag(&tagName, Some(item));
-                                match openingElement {
-                                    Some(el) => parent = *el.parentNode.as_ref(),
-                                    None => {}
+            TagType::Closing => {
+                if parent != std::ptr::null_mut() {
+                    unsafe {
+                        let openTagIndex = &openTags.iter().rev().position(|s| s == &tagName);
+                        match openTagIndex {
+                            Some(index) => {
+                                if (*parent).tagName == tagName.to_string() {
+                                    parent = (*parent).parentNode;
+                                } else {
+                                    let openingElement = getOpeningTag(&tagName, Some(&*parent));
+                                    match openingElement {
+                                        Some(el) => parent = (*el).parentNode,
+                                        None => {}
+                                    }
                                 }
+                                openTags.remove(*index);
                             }
-
-                            openTags.remove(*index);
+                            None => {}
                         }
-                        None => {}
                     }
                 }
-                None => {}
-            },
+            }
             _ => {
                 let mut element = DomElement::new(nodeType.clone());
+                let mut elementNewPtr: *mut DomElement = std::ptr::null_mut();
 
-                match parent {
-                    Some(item) => {
-                        let mut new: DomElement = item.clone();
-                        let mut el = element.clone();
-                        el.parentNode = Box::from(Some(&new));
-                        new.children.push(el);
-                    }
-                    None => {
-                        elements.push(element);
-                    }
-                }
-
-                /*match nodeType {
+                match nodeType {
                     NodeType::Element => {
                         element.tagName = tagName.clone();
                         openTags.push(tagName.clone());
-
-                        match tagType {
-                            TagType::Opening => {
-                                parent = Some(&element);
-                            }
-                            _ => {}
-                        }
                     }
                     NodeType::Text => {
                         element.nodeValue = token;
@@ -203,7 +177,28 @@ fn build_tree<'a>(tokens: Vec<String>) -> Vec<DomElement<'a>> {
                         // TODO: getCommentText
                     }
                     _ => {}
-                }*/
+                }
+
+                if parent != std::ptr::null_mut() {
+                    unsafe {
+                        element.parentNode = parent;
+                        (*parent).children.push(element);
+                        elementNewPtr = (*parent).children.last_mut().unwrap();
+                    }
+                } else {
+                    elements.push(element);
+                    elementNewPtr = elements.last_mut().unwrap();
+                }
+
+                match nodeType {
+                    NodeType::Element => match tagType {
+                        TagType::Opening => {
+                            parent = elementNewPtr;
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
             }
         }
     }
@@ -213,12 +208,13 @@ fn build_tree<'a>(tokens: Vec<String>) -> Vec<DomElement<'a>> {
 
 fn parse(html: &str) -> Vec<DomElement> {
     let tokens = tokenize(html.to_string());
+    //println!("{:#?}", tokens);
     let elements = build_tree(tokens);
 
     return elements;
 }
 
 fn main() {
-    let parsed = parse("<div>aha</div>");
+    let parsed = parse("<div>aha<div>b</div>");
     println!("{:#?}", parsed);
 }
