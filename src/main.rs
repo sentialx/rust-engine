@@ -1,3 +1,7 @@
+extern crate find_folder;
+extern crate piston_window;
+
+use piston_window::*;
 use std::fs;
 
 use std::{
@@ -36,6 +40,15 @@ impl Attribute {
             value: "".to_string(),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderItem {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -206,7 +219,7 @@ fn get_attributes(source: String, tag_name: String) -> Vec<Attribute> {
 
         if (c == '"' || c == ' ' || c == '>') && !inside_quotes {
             if attr.name.len() > 0 {
-                if (attr.value.len() == 0) {
+                if attr.value.len() == 0 {
                     attr.value = "true".to_string();
                 }
 
@@ -316,6 +329,43 @@ fn parse(html: &str) -> Vec<DomElement> {
     return elements;
 }
 
+fn get_render_array(tree: Vec<DomElement>, y_base: Option<f64>) -> Vec<RenderItem> {
+    let mut array: Vec<RenderItem> = vec![];
+
+    let mut y = y_base.unwrap_or(0.0);
+
+    for element in tree {
+        let mut new_y = y.clone();
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
+        {
+            let children_render_items =
+                get_render_array(element.children.clone(), Some(new_y.clone()));
+            array = [children_render_items.clone(), array.clone()].concat();
+
+            for item in children_render_items {
+                new_y += item.height;
+            }
+        }
+        match element.node_type {
+            NodeType::Comment => {}
+            _ => {
+                let item = RenderItem {
+                    x: 0.0,
+                    y: y,
+                    width: 0.0,
+                    height: 24.0,
+                    text: element.node_value.replace("&nbsp;", " "),
+                };
+                array.push(item);
+            }
+        }
+
+        y = new_y;
+    }
+
+    return array;
+}
+
 fn print_dom(tree: Vec<DomElement>, level: Option<i32>) -> String {
     let mut result: String = "".to_string();
     let l = level.unwrap_or(3);
@@ -356,7 +406,7 @@ fn main() {
     let parsed = parse(&contents);
     let time = now.elapsed().as_secs_f64();
 
-    let printed = print_dom(parsed, None);
+    let printed = print_dom(parsed.clone(), None);
 
     let write_file = File::create("out.txt").unwrap();
     let mut writer = BufWriter::new(&write_file);
@@ -365,4 +415,43 @@ fn main() {
     println!("{}", printed);
 
     println!("Parsed in {}", time);
+
+    let mut window: PistonWindow = WindowSettings::new("Graviton", [1366, 768])
+        .exit_on_esc(true)
+        .build()
+        .unwrap();
+
+    let assets = find_folder::Search::ParentsThenKids(3, 3)
+        .for_folder("assets")
+        .unwrap();
+    println!("{:?}", assets);
+    let mut glyphs = window
+        .load_font(assets.join("times-new-roman.ttf"))
+        .unwrap();
+
+    let render_array = get_render_array(parsed.clone(), None);
+
+    println!("{:#?}", render_array);
+
+    while let Some(event) = window.next() {
+        window.draw_2d(&event, |context, graphics, device| {
+            clear([1.0; 4], graphics);
+
+            for item in render_array.clone() {
+                let transform = context.transform.trans(item.x, item.y + item.height);
+
+                text::Text::new_color([0.0, 0.0, 0.0, 1.0], 16)
+                    .draw(
+                        &item.text,
+                        &mut glyphs,
+                        &context.draw_state,
+                        transform,
+                        graphics,
+                    )
+                    .unwrap();
+
+                glyphs.factory.encoder.flush(device);
+            }
+        });
+    }
 }
