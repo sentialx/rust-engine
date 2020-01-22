@@ -3,6 +3,11 @@ extern crate piston_window;
 
 use piston_window::*;
 use std::fs;
+use std::ops::Deref;
+use std::ops::DerefMut;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
 
 use std::{
     fs::File,
@@ -11,7 +16,7 @@ use std::{
 
 use std::time::Instant;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeType {
     Element,
     Text,
@@ -49,6 +54,7 @@ pub struct RenderItem {
     width: f64,
     height: f64,
     text: String,
+    render: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -150,7 +156,11 @@ fn tokenize(html: String) -> Vec<String> {
 
             captured_text = String::from("");
         } else if c == '>' || i == len - 1 {
-            if ignore && (captured_text == "</script" || captured_text == "</style") {
+            if ignore
+                && (captured_text == "</script"
+                    || captured_text == "</style"
+                    || captured_text.ends_with("--"))
+            {
                 ignore = false;
             }
 
@@ -173,8 +183,12 @@ fn tokenize(html: String) -> Vec<String> {
             captured_text = String::from("");
             capturing = true;
         }
-        if capturing && c != ' ' || (c == ' ' && captured_text != "") {
+        if capturing && (c != ' ' || (c == ' ' && captured_text != "")) {
             captured_text.push(c);
+
+            if captured_text == "<!--" {
+                ignore = true;
+            }
         }
     }
 
@@ -276,7 +290,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
             }
             _ => {
                 let mut element = DomElement::new(node_type.clone());
-                let mut element_new_ptr: *mut DomElement = std::ptr::null_mut();
+                let element_new_ptr: *mut DomElement;
 
                 match node_type {
                     NodeType::Element => {
@@ -324,6 +338,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
 
 fn parse(html: &str) -> Vec<DomElement> {
     let tokens = tokenize(html.to_string());
+    println!("{:?}", tokens);
     let elements = build_tree(tokens);
 
     return elements;
@@ -333,9 +348,12 @@ fn get_render_array(tree: Vec<DomElement>, y_base: Option<f64>) -> Vec<RenderIte
     let mut array: Vec<RenderItem> = vec![];
 
     let mut y = y_base.unwrap_or(0.0);
+    let mut new_y: f64 = y.clone();
 
     for element in tree {
-        let mut new_y = y.clone();
+        // TODO: display: inline-block
+        y = new_y.clone();
+
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
             let children_render_items =
@@ -353,14 +371,14 @@ fn get_render_array(tree: Vec<DomElement>, y_base: Option<f64>) -> Vec<RenderIte
                     x: 0.0,
                     y: y,
                     width: 0.0,
-                    height: 24.0,
+                    height: if element.node_value != "" { 16.0 } else { 0.0 },
                     text: element.node_value.replace("&nbsp;", " "),
+                    render: element.node_type == NodeType::Text && element.node_value != "",
                 };
+                new_y += item.height;
                 array.push(item);
             }
         }
-
-        y = new_y;
     }
 
     return array;
@@ -400,58 +418,90 @@ fn print_dom(tree: Vec<DomElement>, level: Option<i32>) -> String {
 }
 
 fn main() {
-    let contents = fs::read_to_string("index.html").expect("error while reading the file");
+    let mut window = BrowserWindow::create();
+    window.load_file("index.html");
+    while true {}
+}
 
-    let now = Instant::now();
-    let parsed = parse(&contents);
-    let time = now.elapsed().as_secs_f64();
+#[derive(Clone, Debug)]
+pub struct BrowserWindowInner {
+    render_array: Vec<RenderItem>,
+}
 
-    let printed = print_dom(parsed.clone(), None);
+pub struct BrowserWindow {
+    inner: Arc<Mutex<BrowserWindowInner>>,
+}
 
-    let write_file = File::create("out.txt").unwrap();
-    let mut writer = BufWriter::new(&write_file);
+impl BrowserWindow {
+    pub fn create() -> BrowserWindow {
+        let browser_window = BrowserWindow {
+            inner: Arc::from(Mutex::new(BrowserWindowInner {
+                render_array: vec![],
+            })),
+        };
 
-    writeln!(&mut writer, "{}", printed);
-    println!("{}", printed);
+        let inner = browser_window.inner.clone();
 
-    println!("Parsed in {}", time);
+        thread::spawn(move || {
+            let mut window: PistonWindow = WindowSettings::new("Graviton", [1024, 1024])
+                .exit_on_esc(true)
+                .build()
+                .unwrap();
 
-    let mut window: PistonWindow = WindowSettings::new("Graviton", [1366, 768])
-        .exit_on_esc(true)
-        .build()
-        .unwrap();
+            let assets = find_folder::Search::ParentsThenKids(3, 3)
+                .for_folder("assets")
+                .unwrap();
 
-    let assets = find_folder::Search::ParentsThenKids(3, 3)
-        .for_folder("assets")
-        .unwrap();
-    println!("{:?}", assets);
-    let mut glyphs = window
-        .load_font(assets.join("times-new-roman.ttf"))
-        .unwrap();
+            let mut glyphs = window.load_font(assets.join("lato.ttf")).unwrap();
 
-    let render_array = get_render_array(parsed.clone(), None);
+            while let Some(event) = window.next() {
+                window.draw_2d(&event, |context, graphics, device| {
+                    clear([1.0; 4], graphics);
 
-    println!("{:#?}", render_array);
+                    let arr = &inner.lock().unwrap().render_array;
 
-    while let Some(event) = window.next() {
-        window.draw_2d(&event, |context, graphics, device| {
-            clear([1.0; 4], graphics);
+                    for item in arr {
+                        let transform = context.transform.trans(item.x, item.y + item.height);
 
-            for item in render_array.clone() {
-                let transform = context.transform.trans(item.x, item.y + item.height);
+                        text::Text::new_color([0.0, 0.0, 0.0, 1.0], 14)
+                            .draw(
+                                &item.text,
+                                &mut glyphs,
+                                &context.draw_state,
+                                transform,
+                                graphics,
+                            )
+                            .unwrap();
 
-                text::Text::new_color([0.0, 0.0, 0.0, 1.0], 16)
-                    .draw(
-                        &item.text,
-                        &mut glyphs,
-                        &context.draw_state,
-                        transform,
-                        graphics,
-                    )
-                    .unwrap();
-
-                glyphs.factory.encoder.flush(device);
+                        glyphs.factory.encoder.flush(device);
+                    }
+                });
             }
         });
+
+        return browser_window;
+    }
+
+    pub fn load_file(&mut self, url: &str) {
+        let contents = fs::read_to_string("index.html").expect("error while reading the file");
+
+        let mut now = Instant::now();
+        let parsed = parse(&contents);
+        let mut time = now.elapsed().as_secs_f64();
+        let printed = print_dom(parsed.clone(), None);
+        let write_file = File::create("out.txt").unwrap();
+        let mut writer = BufWriter::new(&write_file);
+        writeln!(&mut writer, "{}", printed);
+        println!("{}", printed);
+        println!("Parsed in {}", time);
+        now = Instant::now();
+
+        self.inner.lock().unwrap().render_array = get_render_array(parsed.clone(), None)
+            .into_iter()
+            .filter(|i| i.render)
+            .collect();
+        time = now.elapsed().as_secs_f64();
+        // println!("{:#?}", render_array);
+        println!("Layouted in {}", time);
     }
 }
