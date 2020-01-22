@@ -1,10 +1,11 @@
 extern crate find_folder;
 extern crate piston_window;
 
+use piston_window::character::CharacterCache;
 use piston_window::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
-use std::ops::Deref;
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
@@ -48,6 +49,23 @@ impl Attribute {
 }
 
 #[derive(Clone, Debug)]
+pub struct StyleRule {
+    css: String,
+    selector: String,
+    declarations: Vec<Attribute>,
+}
+
+impl StyleRule {
+    pub fn new() -> StyleRule {
+        StyleRule {
+            css: "".to_string(),
+            selector: "".to_string(),
+            declarations: vec![],
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct RenderItem {
     x: f64,
     y: f64,
@@ -55,6 +73,7 @@ pub struct RenderItem {
     height: f64,
     text: String,
     render: bool,
+    background: String,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +86,7 @@ pub struct DomElement {
     inner_html: String,
     outer_html: String,
     tag_name: String,
+    style: HashMap<String, String>,
 }
 
 impl DomElement {
@@ -80,6 +100,7 @@ impl DomElement {
             outer_html: "".to_string(),
             node_value: "".to_string(),
             tag_name: "".to_string(),
+            style: HashMap::new(),
         }
     }
 }
@@ -256,7 +277,6 @@ fn get_attributes(source: String, tag_name: String) -> Vec<Attribute> {
 
 fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
     let mut elements: Vec<DomElement> = vec![];
-    let mut open_tags: Vec<String> = vec![];
 
     let mut parent: *mut DomElement = std::ptr::null_mut();
 
@@ -269,21 +289,14 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
             TagType::Closing => {
                 if parent != std::ptr::null_mut() {
                     unsafe {
-                        let open_tag_index = &open_tags.iter().rev().position(|s| s == &tag_name);
-                        match open_tag_index {
-                            Some(index) => {
-                                if (*parent).tag_name == tag_name.to_string() {
-                                    parent = (*parent).parent_node;
-                                } else {
-                                    let opening_element = get_opening_tag(&tag_name, &*parent);
-                                    match opening_element {
-                                        Some(el) => parent = (*el).parent_node,
-                                        None => {}
-                                    }
-                                }
-                                open_tags.remove(*index);
+                        if (*parent).tag_name == tag_name.to_string() {
+                            parent = (*parent).parent_node;
+                        } else {
+                            let opening_element = get_opening_tag(&tag_name, &*parent);
+                            match opening_element {
+                                Some(el) => parent = (*el).parent_node,
+                                None => {}
                             }
-                            None => {}
                         }
                     }
                 }
@@ -296,8 +309,6 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
                     NodeType::Element => {
                         element.tag_name = tag_name.clone();
                         element.attributes = get_attributes(token.clone(), tag_name.clone());
-
-                        open_tags.push(tag_name.clone());
                     }
                     NodeType::Text => {
                         element.node_value = token;
@@ -336,7 +347,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
     return elements;
 }
 
-fn parse(html: &str) -> Vec<DomElement> {
+fn parse_html(html: &str) -> Vec<DomElement> {
     let mut now = Instant::now();
     let tokens = tokenize(html.to_string());
     let elements = build_tree(tokens);
@@ -345,20 +356,21 @@ fn parse(html: &str) -> Vec<DomElement> {
     return elements;
 }
 
-fn get_styles(tree: Vec<DomElement>) -> String {
+fn get_styles(tree: Vec<DomElement>, parent: Option<DomElement>) -> String {
     let mut style: String = "".to_string();
 
     for element in tree {
         if element.children.len() > 0 && element.tag_name != "SCRIPT" {
-            style += &get_styles(element.children.clone());
+            style += &get_styles(element.children.clone(), Some(element.clone()));
         }
         match element.node_type {
-            NodeType::Text => unsafe {
-                if element.parent_node != std::ptr::null_mut()
-                    && (*element.parent_node).tag_name == "STYLE"
-                {
-                    style += &element.node_value;
+            NodeType::Text => match &parent {
+                Some(p) => {
+                    if p.tag_name == "STYLE" {
+                        style += &element.node_value;
+                    }
                 }
+                None => {}
             },
             _ => {}
         }
@@ -367,39 +379,123 @@ fn get_styles(tree: Vec<DomElement>) -> String {
     return style;
 }
 
-fn get_render_array(tree: Vec<DomElement>, y_base: Option<f64>) -> Vec<RenderItem> {
+fn get_render_array(
+    tree: Vec<DomElement>,
+    style: Vec<StyleRule>,
+    measureText: &dyn Fn(String) -> (f64, f64),
+    y_base: Option<f64>,
+    x_base: Option<f64>,
+) -> Vec<RenderItem> {
     let mut array: Vec<RenderItem> = vec![];
 
-    let mut y = y_base.unwrap_or(0.0);
-    let mut new_y: f64 = y.clone();
+    let mut elements = tree.clone();
 
-    for element in tree {
-        // TODO: display: inline-block
-        y = new_y.clone();
+    for i in 0..elements.clone().len() {
+        let mut x = x_base.unwrap_or(0.0);
+        let mut y = y_base.unwrap_or(0.0);
+
+        let mut declarations: HashMap<String, String> = HashMap::new();
+
+        {
+            let mut element = &mut elements[i];
+            for style_rule in style.clone() {
+                if style_rule.selector.to_uppercase() == element.tag_name
+                    || style_rule.selector == "*"
+                {
+                    for declaration in style_rule.declarations.clone() {
+                        declarations.insert(declaration.name, declaration.value);
+                    }
+                }
+            }
+
+            element.style = declarations.clone();
+        }
+
+        let mut width = 0.0;
+        let mut height = 0.0;
+
+        let g = &"inline-block".to_string();
+        let display = declarations.get("display").unwrap_or(g).as_str();
+
+        if display == "none" {
+            continue;
+        }
+        if i > 0 && array.len() > 1 {
+            let previous_render_item = &array[0];
+            let previous_element = &elements[i - 1];
+
+            match display {
+                "block" => {
+                    y = previous_render_item.y + previous_render_item.height;
+                }
+                "inline-block" => {
+                    if previous_element
+                        .style
+                        .get("display")
+                        .unwrap_or(&"inline-block".to_string())
+                        .to_string()
+                        == "inline-block"
+                    {
+                        x = previous_render_item.x + previous_render_item.width;
+                    } else {
+                        y = previous_render_item.y + previous_render_item.height;
+                    }
+                }
+                _ => {}
+            };
+        }
+
+        let g = &"none".to_string();
+        let background = declarations.get("background").unwrap_or(g);
+
+        let element = &mut elements[i];
 
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
-            let children_render_items =
-                get_render_array(element.children.clone(), Some(new_y.clone()));
-            array = [children_render_items.clone(), array.clone()].concat();
+            let children_render_items = get_render_array(
+                element.children.clone(),
+                style.clone(),
+                measureText,
+                Some(y.clone()),
+                Some(x.clone()),
+            );
+            array = [array.clone(), children_render_items.clone()].concat();
 
-            for item in children_render_items {
-                new_y += item.height;
+            for item in &children_render_items {
+                if item.x + item.width > width {
+                    width += item.width + (item.x - x) - width;
+                }
+
+                if item.y + item.height > height {
+                    height += item.height + (item.y - y) - height;
+                }
             }
         }
+
+        match element.node_type {
+            NodeType::Text => {
+                element.node_value = element.node_value.replace("&nbsp;", " ");
+                let size = measureText(element.node_value.clone());
+                width = size.0;
+                height = size.1;
+            }
+            _ => {}
+        }
+
         match element.node_type {
             NodeType::Comment => {}
             _ => {
                 let item = RenderItem {
-                    x: 0.0,
+                    x: x,
                     y: y,
-                    width: 0.0,
-                    height: if element.node_value != "" { 16.0 } else { 0.0 },
-                    text: element.node_value.replace("&nbsp;", " "),
-                    render: element.node_type == NodeType::Text && element.node_value != "",
+                    width: width,
+                    height: height,
+                    background: background.to_string(),
+                    text: element.node_value.clone(),
+                    render: (element.node_type == NodeType::Text && element.node_value != "")
+                        || *background != "none".to_string(),
                 };
-                new_y += item.height;
-                array.push(item);
+                array = [vec![item], array.clone()].concat();
             }
         }
     }
@@ -440,6 +536,44 @@ fn print_dom(tree: Vec<DomElement>, level: Option<i32>) -> String {
     return result;
 }
 
+fn parse_css(css: &str) -> Vec<StyleRule> {
+    let mut list: Vec<StyleRule> = vec![];
+
+    let mut captured_text = "".to_string();
+    let mut captured_code = "".to_string();
+
+    let mut style_rule = StyleRule::new();
+    let mut declaration = Attribute::new();
+
+    let chars = css.chars().enumerate();
+
+    for (i, c) in chars {
+        captured_code.push(c);
+
+        if c == '{' {
+            style_rule.selector = captured_text.trim().to_string();
+            captured_text = "".to_string();
+        } else if c == ':' {
+            declaration.name = captured_text.trim().to_string();
+            captured_text = "".to_string();
+        } else if c == ';' {
+            declaration.value = captured_text.trim().to_string();
+            style_rule.declarations.push(declaration);
+            declaration = Attribute::new();
+            captured_text = "".to_string();
+        } else if c == '}' {
+            style_rule.css = captured_code.trim().to_string();
+            list.push(style_rule);
+            style_rule = StyleRule::new();
+            captured_code = "".to_string();
+        } else {
+            captured_text.push(c);
+        }
+    }
+
+    return list;
+}
+
 fn main() {
     let mut window = BrowserWindow::create();
     window.load_file("index.html");
@@ -448,7 +582,7 @@ fn main() {
 
 #[derive(Clone, Debug)]
 pub struct BrowserWindowInner {
-    render_array: Vec<RenderItem>,
+    url: String,
 }
 
 pub struct BrowserWindow {
@@ -459,13 +593,15 @@ impl BrowserWindow {
     pub fn create() -> BrowserWindow {
         let browser_window = BrowserWindow {
             inner: Arc::from(Mutex::new(BrowserWindowInner {
-                render_array: vec![],
+                url: "".to_string(),
             })),
         };
 
         let inner = browser_window.inner.clone();
 
         thread::spawn(move || {
+            let mut url = "".to_string();
+
             let mut window: PistonWindow = WindowSettings::new("Graviton", [1024, 1024])
                 .exit_on_esc(true)
                 .build()
@@ -476,22 +612,62 @@ impl BrowserWindow {
                 .unwrap();
 
             let mut glyphs = window.load_font(assets.join("lato.ttf")).unwrap();
+            let mut render_array: Vec<RenderItem> = vec![];
+
+            let default_css =
+                fs::read_to_string("default_styles.css").expect("error while reading the file");
+            let default_styles = parse_css(&default_css);
 
             while let Some(event) = window.next() {
                 window.draw_2d(&event, |context, graphics, device| {
-                    clear([1.0; 4], graphics);
+                    clear([0.0, 0.0, 0.0, 1.0], graphics);
 
-                    let arr = &inner.lock().unwrap().render_array;
+                    let new_url = (&inner.lock().unwrap()).url.clone();
 
-                    for item in arr {
-                        let transform = context.transform.trans(item.x, item.y + item.height);
+                    if url != new_url {
+                        url = new_url;
 
-                        text::Text::new_color([0.0, 0.0, 0.0, 1.0], 14)
+                        let contents =
+                            fs::read_to_string(&url).expect("error while reading the file");
+
+                        let dom_tree = parse_html(&contents);
+
+                        let style = get_styles(dom_tree.clone(), None);
+                        let parsed_css = parse_css(&style);
+
+                        let mut closureRef =
+                            RefCell::new(|text: String| glyphs.width(14, &text).unwrap());
+
+                        render_array = get_render_array(
+                            dom_tree.clone(),
+                            [default_styles.clone(), parsed_css].concat(),
+                            &move |text| {
+                                return ((&mut *closureRef.borrow_mut())(text), 24.0);
+                            },
+                            None,
+                            None,
+                        )
+                        .into_iter()
+                        .filter(|i| i.render)
+                        .collect();
+                    }
+
+                    for item in &render_array {
+                        if item.background == "red" {
+                            rectangle(
+                                [1.0, 0.0, 0.0, 1.0],
+                                [0.0, 0.0, item.width, item.height],
+                                context.transform.trans(item.x, item.y),
+                                graphics,
+                            );
+                        }
+
+                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 14)
                             .draw(
                                 &item.text,
                                 &mut glyphs,
                                 &context.draw_state,
-                                transform,
+                                context.transform.trans(item.x, item.y + item.height - 4.0),
                                 graphics,
                             )
                             .unwrap();
@@ -506,25 +682,16 @@ impl BrowserWindow {
     }
 
     pub fn load_file(&mut self, url: &str) {
-        let write_file = File::create("out.txt").unwrap();
+        /*let write_file = File::create("out.txt").unwrap();
         let mut writer = BufWriter::new(&write_file);
 
-        let contents = fs::read_to_string(url).expect("error while reading the file");
-
-        let parsed = parse(&contents);
         let printed = print_dom(parsed.clone(), None);
         writeln!(&mut writer, "{}", printed);
 
-        let now = Instant::now();
+        let now = Instant::now();*/
 
-        let style = get_styles(parsed.clone());
-        println!("{}", style);
+        self.inner.lock().unwrap().url = url.to_string();
 
-        self.inner.lock().unwrap().render_array = get_render_array(parsed.clone(), None)
-            .into_iter()
-            .filter(|i| i.render)
-            .collect();
-
-        println!("Layouted in {}", now.elapsed().as_secs_f64());
+        // println!("Layouted in {}", now.elapsed().as_secs_f64());
     }
 }
