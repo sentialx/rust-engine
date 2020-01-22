@@ -337,11 +337,34 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
 }
 
 fn parse(html: &str) -> Vec<DomElement> {
+    let mut now = Instant::now();
     let tokens = tokenize(html.to_string());
-    println!("{:?}", tokens);
     let elements = build_tree(tokens);
+    println!("Parsed in {}", now.elapsed().as_secs_f64());
 
     return elements;
+}
+
+fn get_styles(tree: Vec<DomElement>) -> String {
+    let mut style: String = "".to_string();
+
+    for element in tree {
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" {
+            style += &get_styles(element.children.clone());
+        }
+        match element.node_type {
+            NodeType::Text => unsafe {
+                if element.parent_node != std::ptr::null_mut()
+                    && (*element.parent_node).tag_name == "STYLE"
+                {
+                    style += &element.node_value;
+                }
+            },
+            _ => {}
+        }
+    }
+
+    return style;
 }
 
 fn get_render_array(tree: Vec<DomElement>, y_base: Option<f64>) -> Vec<RenderItem> {
@@ -483,25 +506,25 @@ impl BrowserWindow {
     }
 
     pub fn load_file(&mut self, url: &str) {
-        let contents = fs::read_to_string("index.html").expect("error while reading the file");
-
-        let mut now = Instant::now();
-        let parsed = parse(&contents);
-        let mut time = now.elapsed().as_secs_f64();
-        let printed = print_dom(parsed.clone(), None);
         let write_file = File::create("out.txt").unwrap();
         let mut writer = BufWriter::new(&write_file);
+
+        let contents = fs::read_to_string(url).expect("error while reading the file");
+
+        let parsed = parse(&contents);
+        let printed = print_dom(parsed.clone(), None);
         writeln!(&mut writer, "{}", printed);
-        println!("{}", printed);
-        println!("Parsed in {}", time);
-        now = Instant::now();
+
+        let now = Instant::now();
+
+        let style = get_styles(parsed.clone());
+        println!("{}", style);
 
         self.inner.lock().unwrap().render_array = get_render_array(parsed.clone(), None)
             .into_iter()
             .filter(|i| i.render)
             .collect();
-        time = now.elapsed().as_secs_f64();
-        // println!("{:#?}", render_array);
-        println!("Layouted in {}", time);
+
+        println!("Layouted in {}", now.elapsed().as_secs_f64());
     }
 }
