@@ -76,6 +76,20 @@ pub struct RenderItem {
     background: String,
 }
 
+impl RenderItem {
+    pub fn new() -> RenderItem {
+        RenderItem {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+            text: "".to_string(),
+            render: false,
+            background: "none".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DomElement {
     children: Vec<DomElement>,
@@ -87,6 +101,7 @@ pub struct DomElement {
     outer_html: String,
     tag_name: String,
     style: HashMap<String, String>,
+    render_item: RenderItem,
 }
 
 impl DomElement {
@@ -101,6 +116,7 @@ impl DomElement {
             node_value: "".to_string(),
             tag_name: "".to_string(),
             style: HashMap::new(),
+            render_item: RenderItem::new(),
         }
     }
 }
@@ -390,6 +406,8 @@ fn get_render_array(
 
     let mut elements = tree.clone();
 
+    let mut reserved_block_y = y_base.unwrap_or(0.0);
+
     for i in 0..elements.clone().len() {
         let mut x = x_base.unwrap_or(0.0);
         let mut y = y_base.unwrap_or(0.0);
@@ -417,18 +435,21 @@ fn get_render_array(
         let g = &"inline-block".to_string();
         let display = declarations.get("display").unwrap_or(g).as_str();
 
+        let g = &"none".to_string();
+        let background = declarations.get("background").unwrap_or(g);
+
         if display == "none" {
             continue;
         }
-        if i > 0 && array.len() > 1 {
-            let previous_render_item = &array[0];
+        if i > 0 {
             let previous_element = &elements[i - 1];
 
             match display {
                 "block" => {
-                    y = previous_render_item.y + previous_render_item.height;
+                    y = reserved_block_y;
                 }
                 "inline-block" => {
+                    y = previous_element.render_item.y;
                     if previous_element
                         .style
                         .get("display")
@@ -436,17 +457,14 @@ fn get_render_array(
                         .to_string()
                         == "inline-block"
                     {
-                        x = previous_render_item.x + previous_render_item.width;
+                        x = previous_element.render_item.x + previous_element.render_item.width;
                     } else {
-                        y = previous_render_item.y + previous_render_item.height;
+                        y = reserved_block_y;
                     }
                 }
                 _ => {}
             };
         }
-
-        let g = &"none".to_string();
-        let background = declarations.get("background").unwrap_or(g);
 
         let element = &mut elements[i];
 
@@ -462,13 +480,8 @@ fn get_render_array(
             array = [array.clone(), children_render_items.clone()].concat();
 
             for item in &children_render_items {
-                if item.x + item.width > width {
-                    width += item.width + (item.x - x) - width;
-                }
-
-                if item.y + item.height > height {
-                    height += item.height + (item.y - y) - height;
-                }
+                width = f64::max(item.width + (item.x - x), width);
+                height = f64::max(item.height + (item.y - y), height);
             }
         }
 
@@ -495,7 +508,9 @@ fn get_render_array(
                     render: (element.node_type == NodeType::Text && element.node_value != "")
                         || *background != "none".to_string(),
                 };
+                element.render_item = item.clone();
                 array = [vec![item], array.clone()].concat();
+                reserved_block_y += height;
             }
         }
     }
@@ -619,38 +634,43 @@ impl BrowserWindow {
             let default_styles = parse_css(&default_css);
 
             while let Some(event) = window.next() {
+                let new_url = (&inner.lock().unwrap()).url.clone();
+
+                let mut refresh = |u: String| {
+                    render_array = vec![];
+                    let contents =
+                        fs::read_to_string(u.clone()).expect("error while reading the file");
+                    let dom_tree = parse_html(&contents);
+                    let style = get_styles(dom_tree.clone(), None);
+                    let parsed_css = parse_css(&style);
+                    let closure_ref = RefCell::new(|text: String| glyphs.width(14, &text).unwrap());
+                    render_array = get_render_array(
+                        dom_tree.clone(),
+                        [default_styles.clone(), parsed_css].concat(),
+                        &move |text| {
+                            return ((&mut *closure_ref.borrow_mut())(text), 24.0);
+                        },
+                        None,
+                        None,
+                    )
+                    .into_iter()
+                    .filter(|i| i.render)
+                    .collect();
+
+                    println!("{:#?}", render_array);
+                };
+                if url != new_url {
+                    url = new_url;
+                    refresh(url.clone());
+                }
+                if let Some(Button::Keyboard(key)) = event.press_args() {
+                    if key == Key::F5 {
+                        refresh(url.clone());
+                    }
+                };
+
                 window.draw_2d(&event, |context, graphics, device| {
                     clear([0.0, 0.0, 0.0, 1.0], graphics);
-
-                    let new_url = (&inner.lock().unwrap()).url.clone();
-
-                    if url != new_url {
-                        url = new_url;
-
-                        let contents =
-                            fs::read_to_string(&url).expect("error while reading the file");
-
-                        let dom_tree = parse_html(&contents);
-
-                        let style = get_styles(dom_tree.clone(), None);
-                        let parsed_css = parse_css(&style);
-
-                        let mut closureRef =
-                            RefCell::new(|text: String| glyphs.width(14, &text).unwrap());
-
-                        render_array = get_render_array(
-                            dom_tree.clone(),
-                            [default_styles.clone(), parsed_css].concat(),
-                            &move |text| {
-                                return ((&mut *closureRef.borrow_mut())(text), 24.0);
-                            },
-                            None,
-                            None,
-                        )
-                        .into_iter()
-                        .filter(|i| i.render)
-                        .collect();
-                    }
 
                     for item in &render_array {
                         if item.background == "red" {

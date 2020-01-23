@@ -251,3 +251,11 @@ td {
 meta {
   display: none;
 }
+
+p {
+  display: block;
+}
+
+section {
+  display: block;
+}
