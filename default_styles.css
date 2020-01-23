@@ -1,8 +1,17 @@
 a {
-  color: #0000ff;
+  color: #0000ee;
   text-decoration: underline;
-  font-weight: normal;
-  display: inline-block;
+  cursor: auto;
+}
+
+a:visited {
+  text-decoration: underline;
+  cursor: auto;
+  color: #551a8b;
+}
+
+a:active {
+  color: #ee0000;
 }
 
 address {
@@ -40,8 +49,8 @@ meta {
 
 blockquote {
   display: block;
-  margin-top: 16px;
-  margin-bottom: 16px;
+  margin-top: 1em;
+  margin-bottom: 1em;
   margin-left: 40px;
   margin-right: 40px;
 }
@@ -51,9 +60,8 @@ body {
   margin: 8px;
 }
 
-canvas {
-  height: 150px;
-  width: 300px;
+body:focus {
+  outline: none;
 }
 
 caption {
@@ -67,6 +75,10 @@ center {
 
 cite {
   font-style: italic;
+}
+
+code {
+  font-family: monospace;
 }
 
 col {
@@ -94,10 +106,6 @@ details {
   display: block;
 }
 
-details {
-  display: block;
-}
-
 dfn {
   font-style: italic;
 }
@@ -108,10 +116,10 @@ div {
 
 dl {
   display: block;
-  margin-top: 16px;
-  margin-bottom: 16px;
-  margin-left: 0px;
-  margin-right: 0px;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  margin-left: 0;
+  margin-right: 0;
 }
 
 dt {
@@ -122,14 +130,19 @@ em {
   font-style: italic;
 }
 
+embed:focus {
+  outline: none;
+}
+
 fieldset {
   display: block;
   margin-left: 2px;
   margin-right: 2px;
-  padding-top: 5px;
-  padding-bottom: 10px;
-  padding-left: 12px;
-  padding-right: 12px;
+  padding-top: 0.35em;
+  padding-bottom: 0.625em;
+  padding-left: 0.75em;
+  padding-right: 0.75em;
+  border: 1px solid gray;
 }
 
 figcaption {
@@ -138,8 +151,8 @@ figcaption {
 
 figure {
   display: block;
-  margin-top: 16px;
-  margin-bottom: 16px;
+  margin-top: 1em;
+  margin-bottom: 1em;
   margin-left: 40px;
   margin-right: 40px;
 }
@@ -150,6 +163,7 @@ footer {
 
 form {
   display: block;
+  margin-top: 0em;
 }
 
 frameset {
@@ -229,37 +243,104 @@ header {
 
 hr {
   display: block;
-  margin-top: 8px;
-  margin-bottom: 8px;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  margin-left: auto;
+  margin-right: auto;
+  border-style: inset;
+  border-width: 1px;
 }
 
 html {
   display: block;
 }
 
+html:focus {
+  outline: none;
+}
+
 i {
   font-style: italic;
 }
 
-table {
-  display: table;
+iframe:focus {
+  outline: none;
 }
 
-tr {
-  display: table-row;
+iframe[seamless] {
+  display: block;
 }
 
-th {
-  display: table-cell;
-  font-weight: bold;
+img {
+  display: inline-block;
 }
 
-td {
-  display: table-cell;
+ins {
+  text-decoration: underline;
 }
 
-meta {
+kbd {
+  font-family: monospace;
+}
+
+label {
+  cursor: default;
+}
+
+legend {
+  display: block;
+  padding-left: 2px;
+  padding-right: 2px;
+  border: none;
+}
+
+li {
+  display: list-item;
+}
+
+link {
   display: none;
+}
+
+map {
+  display: inline;
+}
+
+mark {
+  background-color: yellow;
+  color: black;
+}
+
+menu {
+  display: block;
+  list-style-type: disc;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 40px;
+}
+
+nav {
+  display: block;
+}
+
+object:focus {
+  outline: none;
+}
+
+ol {
+  display: block;
+  list-style-type: decimal;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 40px;
+}
+
+output {
+  display: inline;
 }
 
 p {
@@ -270,22 +351,140 @@ p {
   margin-right: 0;
 }
 
+param {
+  display: none;
+}
+
+pre {
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+  margin: 1em 0;
+}
+
+q {
+  display: inline;
+}
+
+q::before {
+  content: open-quote;
+}
+
+q::after {
+  content: close-quote;
+}
+
+rt {
+  line-height: normal;
+}
+
+s {
+  text-decoration: line-through;
+}
+
+samp {
+  font-family: monospace;
+}
+
+script {
+  display: none;
+}
+
 section {
   display: block;
 }
 
+small {
+  font-size: smaller;
+}
+
+strike {
+  text-decoration: line-through;
+}
+
+strong {
+  font-weight: bold;
+}
+
+style {
+  display: none;
+}
+
+sub {
+  vertical-align: sub;
+  font-size: smaller;
+}
+
+summary {
+  display: block;
+}
+
+sup {
+  vertical-align: super;
+  font-size: smaller;
+}
+
+table {
+  display: table;
+  border-collapse: separate;
+  border-spacing: 2px;
+  border-color: gray;
+}
+
+tbody {
+  display: table-row-group;
+  vertical-align: middle;
+  border-color: inherit;
+}
+
+td {
+  display: table-cell;
+  vertical-align: inherit;
+}
+
+tfoot {
+  display: table-footer-group;
+  vertical-align: middle;
+  border-color: inherit;
+}
+
+th {
+  display: table-cell;
+  vertical-align: inherit;
+  font-weight: bold;
+  text-align: center;
+}
+
+thead {
+  display: table-header-group;
+  vertical-align: middle;
+  border-color: inherit;
+}
+
+title {
+  display: none;
+}
+
+tr {
+  display: table-row;
+  vertical-align: inherit;
+  border-color: inherit;
+}
+
+u {
+  text-decoration: underline;
+}
+
 ul {
   display: block;
+  list-style-type: disc;
+  margin-top: 1em;
+  margin-bottom: 1 em;
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 40px;
 }
 
-li {
-  display: block;
-}
-
-br {
-  display: block;
-}
-
-code {
-  background: red;
+var {
+  font-style: italic;
 }

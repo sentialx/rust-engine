@@ -1,5 +1,4 @@
 extern crate find_folder;
-extern crate opengl_graphics;
 extern crate piston_window;
 
 use piston_window::character::CharacterCache;
@@ -742,7 +741,9 @@ impl BrowserWindow {
                 .for_folder("assets")
                 .unwrap();
 
-            let mut glyphs = window.load_font(assets.join("lato.ttf")).unwrap();
+            let mut glyphs = window
+                .load_font(assets.join("Times New Roman 400.ttf"))
+                .unwrap();
             let mut render_array: Vec<RenderItem> = vec![];
 
             let default_css =
@@ -802,15 +803,21 @@ impl BrowserWindow {
                             );
                         }
 
-                        text::Text::new_color([0.0, 0.0, 0.0, 1.0], item.font_size.round() as u32)
-                            .draw(
-                                &item.text,
-                                &mut glyphs,
-                                &context.draw_state,
-                                context.transform.trans(item.x, item.y + item.height - 4.0),
-                                graphics,
-                            )
-                            .unwrap();
+                        text::Text::new_color(
+                            [0.0, 0.0, 0.0, 1.0],
+                            2 * (item.font_size.round() as u32),
+                        )
+                        .draw(
+                            &item.text,
+                            &mut glyphs,
+                            &context.draw_state,
+                            context
+                                .transform
+                                .trans(item.x, item.y + item.height - 4.0)
+                                .zoom(0.5),
+                            graphics,
+                        )
+                        .unwrap();
 
                         glyphs.factory.encoder.flush(device);
                     }
