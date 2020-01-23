@@ -1,4 +1,5 @@
 extern crate find_folder;
+extern crate opengl_graphics;
 extern crate piston_window;
 
 use piston_window::character::CharacterCache;
@@ -75,6 +76,7 @@ pub struct RenderItem {
     font_size: f64,
     render: bool,
     background: String,
+    margin_bottom: f64,
 }
 
 impl RenderItem {
@@ -86,6 +88,7 @@ impl RenderItem {
             height: 0.0,
             font_size: 16.0,
             text: "".to_string(),
+            margin_bottom: 0.0,
             render: false,
             background: "none".to_string(),
         }
@@ -437,7 +440,6 @@ fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
     let val_num: f64 = val_str.parse().unwrap();
 
     if unit == "em" {
-        println!("{} {}", val_num, base_font_size);
         return val_num * base_font_size;
     }
 
@@ -494,30 +496,30 @@ fn get_render_array(
         let display = get_style_value(&declarations, "display", "inline-block");
         let background = get_style_value(&declarations, "background", "none");
 
-        let font_size_inherit = inherit_declarations.get("font-size");
-        let font_size_str = declarations.get("font-size");
-
-        let mut font_size = 16.0;
+        let mut base_font_size = 16.0;
+        let mut font_size: f64 = base_font_size.clone();
 
         {
-            let mut s = "16px".to_string();
+            let font_size_inherit = inherit_declarations.get("font-size");
+            let font_size_str = declarations.get("font-size");
+            let mut text_value = base_font_size.to_string() + "px";
 
             match font_size_str {
                 Some(f) => {
                     match font_size_inherit {
                         Some(f_i) => {
-                            font_size = parse_numeric_css_value(&f, f_i.value);
+                            base_font_size = f_i.value;
                         }
-                        None => {
-                            font_size = parse_numeric_css_value(&f, font_size);
-                        }
+                        None => {}
                     }
-                    s = f.to_string();
+
+                    font_size = parse_numeric_css_value(&f, base_font_size);
+                    text_value = f.to_string();
                 }
                 None => match font_size_inherit {
                     Some(f_i) => {
                         font_size = f_i.value;
-                        s = f_i.text_value.to_string();
+                        text_value = f_i.text_value.to_string();
                     }
                     None => {}
                 },
@@ -526,7 +528,7 @@ fn get_render_array(
             new_inherit_declarations.insert(
                 "font-size".to_string(),
                 CssValue {
-                    text_value: s,
+                    text_value: text_value,
                     value: font_size,
                 },
             );
@@ -535,12 +537,24 @@ fn get_render_array(
         if display == "none" {
             continue;
         }
+
+        let margin_top = parse_numeric_css_value(
+            &get_style_value(&declarations, "margin-top", "0"),
+            base_font_size,
+        );
+
+        let margin_bottom = parse_numeric_css_value(
+            &get_style_value(&declarations, "margin-bottom", "0"),
+            base_font_size,
+        );
+
         if i > 0 {
             let previous_element = &elements[i - 1];
 
             match display.as_str() {
                 "block" => {
                     y = reserved_block_y;
+                    y += f64::max(previous_element.render_item.margin_bottom, margin_top);
                 }
                 "inline-block" => {
                     y = previous_element.render_item.y;
@@ -554,6 +568,7 @@ fn get_render_array(
                         x = previous_element.render_item.x + previous_element.render_item.width;
                     } else {
                         y = reserved_block_y;
+                        y += f64::max(previous_element.render_item.margin_bottom, margin_top);
                     }
                 }
                 _ => {}
@@ -605,6 +620,7 @@ fn get_render_array(
                     background: background.to_string(),
                     text: element.node_value.clone(),
                     font_size: font_size,
+                    margin_bottom: margin_bottom,
                     render: (element.node_type == NodeType::Text && element.node_value != "")
                         || *background != "none".to_string(),
                 };
@@ -744,7 +760,7 @@ impl BrowserWindow {
                     let style = get_styles(dom_tree.clone(), None);
                     let parsed_css = parse_css(&style);
                     let closure_ref = RefCell::new(|text: String, font_size: f64| {
-                        glyphs.width(font_size as u32, &text).unwrap()
+                        glyphs.width(font_size.round() as u32, &text).unwrap()
                     });
                     render_array = get_render_array(
                         dom_tree.clone(),
@@ -786,7 +802,7 @@ impl BrowserWindow {
                             );
                         }
 
-                        text::Text::new_color([0.0, 0.0, 0.0, 1.0], item.font_size as u32)
+                        text::Text::new_color([0.0, 0.0, 0.0, 1.0], item.font_size.round() as u32)
                             .draw(
                                 &item.text,
                                 &mut glyphs,
