@@ -73,6 +73,7 @@ pub struct RenderItem {
     height: f64,
     text: String,
     font_size: f64,
+    font_path: String,
     render: bool,
     background: String,
     margin_bottom: f64,
@@ -86,6 +87,7 @@ impl RenderItem {
             width: 0.0,
             height: 0.0,
             font_size: 16.0,
+            font_path: "".to_string(),
             text: "".to_string(),
             margin_bottom: 0.0,
             render: false,
@@ -411,9 +413,38 @@ fn get_styles(tree: Vec<DomElement>, parent: Option<DomElement>) -> String {
     return style;
 }
 
-fn get_style_value(declarations: &HashMap<String, String>, key: &str, default: &str) -> String {
+fn get_style_value_string(
+    declarations: &HashMap<String, String>,
+    key: &str,
+    default: &str,
+) -> String {
     let g = &default.to_string();
     return declarations.get(key).unwrap_or(g).to_string();
+}
+
+fn get_style_value<T: Clone>(
+    declarations: &HashMap<String, T>,
+    declarations_to_inherit: &HashMap<String, T>,
+    key: &str,
+    default: T,
+) -> T {
+    let mut res: T = default;
+    let option = declarations.get(key);
+    match option {
+        Some(v) => {
+            res = v.clone();
+        }
+        None => {
+            let inherited_option = declarations_to_inherit.get(key);
+            match inherited_option {
+                Some(v) => {
+                    res = v.clone();
+                }
+                None => {}
+            }
+        }
+    }
+    return res;
 }
 
 fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
@@ -454,25 +485,28 @@ pub struct CssValue {
 fn get_render_array(
     tree: Vec<DomElement>,
     style: Vec<StyleRule>,
-    measure_text: &dyn Fn(String, f64) -> (f64, f64),
-    declarations_to_inherit: Option<HashMap<String, CssValue>>,
-    y_base: Option<f64>,
-    x_base: Option<f64>,
+    measure_text: &dyn Fn(String, f64, String) -> (f64, f64),
+    numeric_declarations: Option<HashMap<String, f64>>,
+    string_declarations: Option<HashMap<String, String>>,
 ) -> Vec<RenderItem> {
     let mut array: Vec<RenderItem> = vec![];
 
     let mut elements = tree.clone();
 
-    let mut reserved_block_y = y_base.unwrap_or(0.0);
+    let numeric_declarations = numeric_declarations.unwrap_or(HashMap::new());
+    let string_declarations = string_declarations.unwrap_or(HashMap::new());
 
-    let mut inherit_declarations = declarations_to_inherit.unwrap_or(HashMap::new());
+    let x_base = *numeric_declarations.get("x").unwrap_or(&0.0);
+    let y_base = *numeric_declarations.get("y").unwrap_or(&0.0);
+    let mut reserved_block_y = y_base.clone();
 
     for i in 0..elements.clone().len() {
-        let mut x = x_base.unwrap_or(0.0);
-        let mut y = y_base.unwrap_or(0.0);
+        let mut x = x_base.clone();
+        let mut y = y_base.clone();
 
         let mut declarations: HashMap<String, String> = HashMap::new();
-        let mut new_inherit_declarations = inherit_declarations.clone();
+        let mut new_numeric_declarations = numeric_declarations.clone();
+        let mut new_string_declarations = string_declarations.clone();
 
         {
             let mut element = &mut elements[i];
@@ -492,45 +526,77 @@ fn get_render_array(
         let mut width = 0.0;
         let mut height = 0.0;
 
-        let display = get_style_value(&declarations, "display", "inline-block");
-        let background = get_style_value(&declarations, "background", "none");
+        let display = get_style_value_string(&declarations, "display", "inline-block");
+        let background = get_style_value_string(&declarations, "background", "none");
+        let font_weight = get_style_value(
+            &declarations,
+            &string_declarations,
+            "font-weight",
+            "normal".to_string(),
+        );
+
+        let font_style = get_style_value(
+            &declarations,
+            &string_declarations,
+            "font-style",
+            "normal".to_string(),
+        );
+
+        let font_family = get_style_value(
+            &declarations,
+            &string_declarations,
+            "font-family",
+            "Times New Roman".to_string(),
+        );
 
         let mut base_font_size = 16.0;
         let mut font_size: f64 = base_font_size.clone();
+        let mut font_path: String = "Times New Roman 400.ttf".to_string();
+
+        new_string_declarations.insert("font-family".to_string(), font_family.to_string());
+        new_string_declarations.insert("font-weight".to_string(), font_weight.to_string());
+        new_string_declarations.insert("font-style".to_string(), font_style.to_string());
+
+        if font_family.to_lowercase() == "times new roman" {
+            if font_weight == "bold" {
+                if font_style == "italic" {
+                    font_path = "Times New Roman Italique 700.ttf".to_string();
+                } else {
+                    font_path = "Times New Roman 700.ttf".to_string();
+                }
+            } else {
+                if font_style == "italic" {
+                    font_path = "Times New Roman Italique 400.ttf".to_string();
+                } else {
+                    font_path = "Times New Roman 400.ttf".to_string();
+                }
+            }
+        }
 
         {
-            let font_size_inherit = inherit_declarations.get("font-size");
+            let font_size_inherit = numeric_declarations.get("font-size");
             let font_size_str = declarations.get("font-size");
-            let mut text_value = base_font_size.to_string() + "px";
 
             match font_size_str {
                 Some(f) => {
                     match font_size_inherit {
                         Some(f_i) => {
-                            base_font_size = f_i.value;
+                            base_font_size = *f_i;
                         }
                         None => {}
                     }
 
                     font_size = parse_numeric_css_value(&f, base_font_size);
-                    text_value = f.to_string();
                 }
                 None => match font_size_inherit {
                     Some(f_i) => {
-                        font_size = f_i.value;
-                        text_value = f_i.text_value.to_string();
+                        font_size = *f_i;
                     }
                     None => {}
                 },
             }
 
-            new_inherit_declarations.insert(
-                "font-size".to_string(),
-                CssValue {
-                    text_value: text_value,
-                    value: font_size,
-                },
-            );
+            new_numeric_declarations.insert("font-size".to_string(), font_size);
         }
 
         if display == "none" {
@@ -538,12 +604,12 @@ fn get_render_array(
         }
 
         let margin_top = parse_numeric_css_value(
-            &get_style_value(&declarations, "margin-top", "0"),
+            &get_style_value_string(&declarations, "margin-top", "0"),
             base_font_size,
         );
 
         let margin_bottom = parse_numeric_css_value(
-            &get_style_value(&declarations, "margin-bottom", "0"),
+            &get_style_value_string(&declarations, "margin-bottom", "0"),
             base_font_size,
         );
 
@@ -578,13 +644,15 @@ fn get_render_array(
 
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
+            new_numeric_declarations.insert("x".to_string(), x.clone());
+            new_numeric_declarations.insert("y".to_string(), y.clone());
+
             let children_render_items = get_render_array(
                 element.children.clone(),
                 style.clone(),
                 measure_text,
-                Some(new_inherit_declarations),
-                Some(y.clone()),
-                Some(x.clone()),
+                Some(new_numeric_declarations),
+                Some(new_string_declarations),
             );
             array = [array.clone(), children_render_items.clone()].concat();
 
@@ -601,7 +669,8 @@ fn get_render_array(
                     .replace("&nbsp;", " ")
                     .replace("&gt;", ">")
                     .replace("&lt;", "<");
-                let size = measure_text(element.node_value.clone(), font_size);
+                let size =
+                    measure_text(element.node_value.clone(), font_size, font_path.to_string());
                 width = size.0;
                 height = size.1;
             }
@@ -619,6 +688,7 @@ fn get_render_array(
                     background: background.to_string(),
                     text: element.node_value.clone(),
                     font_size: font_size,
+                    font_path: font_path.to_string(),
                     margin_bottom: margin_bottom,
                     render: (element.node_type == NodeType::Text && element.node_value != "")
                         || *background != "none".to_string(),
@@ -741,9 +811,20 @@ impl BrowserWindow {
                 .for_folder("assets")
                 .unwrap();
 
-            let mut glyphs = window
-                .load_font(assets.join("Times New Roman 400.ttf"))
-                .unwrap();
+            let mut glyphs_map: HashMap<String, Glyphs> = HashMap::new();
+
+            let mut add_font = |name: &str| {
+                glyphs_map.insert(
+                    name.to_string(),
+                    window.load_font(assets.join(name)).unwrap(),
+                )
+            };
+
+            add_font("Times New Roman 400.ttf");
+            add_font("Times New Roman 700.ttf");
+            add_font("Times New Roman Italique 400.ttf");
+            add_font("Times New Roman Italique 700.ttf");
+
             let mut render_array: Vec<RenderItem> = vec![];
 
             let default_css =
@@ -760,19 +841,28 @@ impl BrowserWindow {
                     let dom_tree = parse_html(&contents);
                     let style = get_styles(dom_tree.clone(), None);
                     let parsed_css = parse_css(&style);
-                    let closure_ref = RefCell::new(|text: String, font_size: f64| {
-                        glyphs.width(font_size.round() as u32, &text).unwrap()
-                    });
+                    let closure_ref =
+                        RefCell::new(|text: String, font_size: f64, font_family: String| {
+                            let mut glyphs = glyphs_map.remove(font_family.as_str()).unwrap();
+                            let res = glyphs.width(font_size.round() as u32, &text).unwrap();
+                            glyphs_map.insert(font_family.clone(), glyphs);
+                            return res;
+                        });
                     render_array = get_render_array(
                         dom_tree.clone(),
                         [default_styles.clone(), parsed_css].concat(),
-                        &move |text, font_size| {
+                        &move |text, font_size, font_family| {
+                            /*match glyphs_map.get(font_family) {
+                                Some(g) => {}
+                                None => {
+                                    glyphs_map.insert()
+                                }
+                            }*/
                             return (
-                                (&mut *closure_ref.borrow_mut())(text, font_size),
+                                (&mut *closure_ref.borrow_mut())(text, font_size, font_family),
                                 font_size + 8.0,
                             );
                         },
-                        None,
                         None,
                         None,
                     )
@@ -803,6 +893,8 @@ impl BrowserWindow {
                             );
                         }
 
+                        let mut glyphs = glyphs_map.remove(&item.font_path).unwrap();
+
                         text::Text::new_color(
                             [0.0, 0.0, 0.0, 1.0],
                             2 * (item.font_size.round() as u32),
@@ -820,6 +912,8 @@ impl BrowserWindow {
                         .unwrap();
 
                         glyphs.factory.encoder.flush(device);
+
+                        glyphs_map.insert((&item).font_path.clone(), glyphs);
                     }
                 });
             }
