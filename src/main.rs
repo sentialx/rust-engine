@@ -1,6 +1,8 @@
 extern crate find_folder;
 extern crate piston_window;
 
+mod colors;
+
 use piston_window::character::CharacterCache;
 use piston_window::*;
 use std::cell::RefCell;
@@ -77,6 +79,7 @@ pub struct RenderItem {
     render: bool,
     background: String,
     margin_bottom: f64,
+    color: colors::ColorTupleA,
 }
 
 impl RenderItem {
@@ -87,11 +90,12 @@ impl RenderItem {
             width: 0.0,
             height: 0.0,
             font_size: 16.0,
-            font_path: "".to_string(),
-            text: "".to_string(),
             margin_bottom: 0.0,
             render: false,
-            background: "none".to_string(),
+            color: (0.0, 0.0, 0.0, 1.0),
+            background: S("none"),
+            font_path: S(""),
+            text: S(""),
         }
     }
 }
@@ -413,38 +417,38 @@ fn get_styles(tree: Vec<DomElement>, parent: Option<DomElement>) -> String {
     return style;
 }
 
-fn get_style_value_string(
+fn get_declaration_value(
     declarations: &HashMap<String, String>,
     key: &str,
     default: &str,
 ) -> String {
-    let g = &default.to_string();
-    return declarations.get(key).unwrap_or(g).to_string();
+    (*declarations.get(key).unwrap_or(&default.to_string())).to_string()
 }
 
-fn get_style_value<T: Clone>(
-    declarations: &HashMap<String, T>,
-    declarations_to_inherit: &HashMap<String, T>,
+fn get_inheritable_declaration_option(
+    declarations: &HashMap<String, String>,
+    inherit_declarations: &HashMap<String, CssValue>,
     key: &str,
-    default: T,
-) -> T {
-    let mut res: T = default;
-    let option = declarations.get(key);
-    match option {
-        Some(v) => {
-            res = v.clone();
-        }
-        None => {
-            let inherited_option = declarations_to_inherit.get(key);
-            match inherited_option {
-                Some(v) => {
-                    res = v.clone();
-                }
-                None => {}
-            }
-        }
+) -> Option<CssValue> {
+    match declarations.get(key) {
+        Some(v) => Some(CssValue::String(v.clone())),
+        None => match inherit_declarations.get(key) {
+            Some(v) => Some(v.clone()),
+            None => None,
+        },
     }
-    return res;
+}
+
+fn get_inheritable_declaration_value(
+    declarations: &HashMap<String, String>,
+    inherit_declarations: &HashMap<String, CssValue>,
+    key: &str,
+    default: CssValue,
+) -> CssValue {
+    match get_inheritable_declaration_option(declarations, inherit_declarations, key) {
+        Some(v) => v.clone(),
+        None => default,
+    }
 }
 
 fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
@@ -476,28 +480,59 @@ fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
     return val_num;
 }
 
-#[derive(Clone, Debug)]
-pub struct CssValue {
-    value: f64,
-    text_value: String,
+#[derive(Clone)]
+pub enum CssValue {
+    String(String),
+    Number(f64),
+    Color(colors::ColorTupleA),
+}
+
+impl CssValue {
+    pub fn to_number(&self) -> f64 {
+        match &self {
+            CssValue::Number(obj) => *obj,
+            _ => 0.0,
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match &self {
+            CssValue::String(obj) => obj.to_string(),
+            _ => "".to_string(),
+        }
+    }
+}
+
+fn S(st: &str) -> String {
+    st.to_string()
+}
+
+fn css_string(st: &str) -> CssValue {
+    CssValue::String(st.to_string())
 }
 
 fn get_render_array(
     tree: Vec<DomElement>,
     style: Vec<StyleRule>,
     measure_text: &dyn Fn(String, f64, String) -> (f64, f64),
-    numeric_declarations: Option<HashMap<String, f64>>,
-    string_declarations: Option<HashMap<String, String>>,
+    inherit_declarations: Option<HashMap<String, CssValue>>,
 ) -> Vec<RenderItem> {
     let mut array: Vec<RenderItem> = vec![];
 
     let mut elements = tree.clone();
 
-    let numeric_declarations = numeric_declarations.unwrap_or(HashMap::new());
-    let string_declarations = string_declarations.unwrap_or(HashMap::new());
+    let inherit_declarations = inherit_declarations.unwrap_or(HashMap::new());
 
-    let x_base = *numeric_declarations.get("x").unwrap_or(&0.0);
-    let y_base = *numeric_declarations.get("y").unwrap_or(&0.0);
+    let x_base = (*inherit_declarations
+        .get("x")
+        .unwrap_or(&CssValue::Number(0.0)))
+    .to_number();
+
+    let y_base = (*inherit_declarations
+        .get("y")
+        .unwrap_or(&CssValue::Number(0.0)))
+    .to_number();
+
     let mut reserved_block_y = y_base.clone();
 
     for i in 0..elements.clone().len() {
@@ -505,8 +540,7 @@ fn get_render_array(
         let mut y = y_base.clone();
 
         let mut declarations: HashMap<String, String> = HashMap::new();
-        let mut new_numeric_declarations = numeric_declarations.clone();
-        let mut new_string_declarations = string_declarations.clone();
+        let mut new_inherit_declarations = inherit_declarations.clone();
 
         {
             let mut element = &mut elements[i];
@@ -526,36 +560,44 @@ fn get_render_array(
         let mut width = 0.0;
         let mut height = 0.0;
 
-        let display = get_style_value_string(&declarations, "display", "inline-block");
-        let background = get_style_value_string(&declarations, "background", "none");
-        let font_weight = get_style_value(
-            &declarations,
-            &string_declarations,
-            "font-weight",
-            "normal".to_string(),
-        );
+        let get_inherit_value = |k: &str, d: CssValue| {
+            get_inheritable_declaration_value(&declarations, &inherit_declarations, k, d)
+        };
 
-        let font_style = get_style_value(
-            &declarations,
-            &string_declarations,
-            "font-style",
-            "normal".to_string(),
-        );
+        let display = get_declaration_value(&declarations, "display", "inline-block");
+        let background = get_declaration_value(&declarations, "background", "none");
 
-        let font_family = get_style_value(
-            &declarations,
-            &string_declarations,
-            "font-family",
-            "Times New Roman".to_string(),
-        );
+        let font_weight_css = get_inherit_value("font-weight", css_string("normal"));
+        let font_weight = font_weight_css.to_string();
+
+        let font_style_css = get_inherit_value("font-style", css_string("normal"));
+        let font_style = font_style_css.to_string();
+
+        let font_family_css = get_inherit_value("font-family", css_string("Times New Roman"));
+        let font_family = font_family_css.to_string();
+
+        let color_css = get_inherit_value("color", css_string("#000"));
+
+        let color = match color_css {
+            CssValue::Color(c) => c,
+            CssValue::String(c) => match colors::parse_css_color(&c) {
+                Ok(c) => c,
+                Err(e) => {
+                    println!("{}", e);
+                    (0.0, 0.0, 0.0, 1.0)
+                }
+            },
+            CssValue::Number(_) => (0.0, 0.0, 0.0, 1.0),
+        };
 
         let mut base_font_size = 16.0;
         let mut font_size: f64 = base_font_size.clone();
         let mut font_path: String = "Times New Roman 400.ttf".to_string();
 
-        new_string_declarations.insert("font-family".to_string(), font_family.to_string());
-        new_string_declarations.insert("font-weight".to_string(), font_weight.to_string());
-        new_string_declarations.insert("font-style".to_string(), font_style.to_string());
+        new_inherit_declarations.insert(S("font-family"), font_family_css);
+        new_inherit_declarations.insert(S("font-weight"), font_weight_css);
+        new_inherit_declarations.insert(S("font-style"), font_style_css);
+        new_inherit_declarations.insert(S("color"), CssValue::Color(color));
 
         if font_family.to_lowercase() == "times new roman" {
             if font_weight == "bold" {
@@ -573,15 +615,16 @@ fn get_render_array(
             }
         }
 
+        // TODO: simplify
         {
-            let font_size_inherit = numeric_declarations.get("font-size");
+            let font_size_inherit = inherit_declarations.get("font-size");
             let font_size_str = declarations.get("font-size");
 
             match font_size_str {
                 Some(f) => {
                     match font_size_inherit {
                         Some(f_i) => {
-                            base_font_size = *f_i;
+                            base_font_size = (*f_i).to_number();
                         }
                         None => {}
                     }
@@ -590,13 +633,13 @@ fn get_render_array(
                 }
                 None => match font_size_inherit {
                     Some(f_i) => {
-                        font_size = *f_i;
+                        font_size = (*f_i).to_number();
                     }
                     None => {}
                 },
             }
 
-            new_numeric_declarations.insert("font-size".to_string(), font_size);
+            new_inherit_declarations.insert("font-size".to_string(), CssValue::Number(font_size));
         }
 
         if display == "none" {
@@ -604,18 +647,19 @@ fn get_render_array(
         }
 
         let margin_top = parse_numeric_css_value(
-            &get_style_value_string(&declarations, "margin-top", "0"),
+            &get_declaration_value(&declarations, "margin-top", "0"),
             base_font_size,
         );
 
         let margin_bottom = parse_numeric_css_value(
-            &get_style_value_string(&declarations, "margin-bottom", "0"),
+            &get_declaration_value(&declarations, "margin-bottom", "0"),
             base_font_size,
         );
 
         if i > 0 {
             let previous_element = &elements[i - 1];
 
+            // TODO: simplify
             match display.as_str() {
                 "block" => {
                     y = reserved_block_y;
@@ -644,15 +688,14 @@ fn get_render_array(
 
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
-            new_numeric_declarations.insert("x".to_string(), x.clone());
-            new_numeric_declarations.insert("y".to_string(), y.clone());
+            new_inherit_declarations.insert(S("x"), CssValue::Number(x.clone()));
+            new_inherit_declarations.insert(S("y"), CssValue::Number(y.clone()));
 
             let children_render_items = get_render_array(
                 element.children.clone(),
                 style.clone(),
                 measure_text,
-                Some(new_numeric_declarations),
-                Some(new_string_declarations),
+                Some(new_inherit_declarations),
             );
             array = [array.clone(), children_render_items.clone()].concat();
 
@@ -692,6 +735,7 @@ fn get_render_array(
                     margin_bottom: margin_bottom,
                     render: (element.node_type == NodeType::Text && element.node_value != "")
                         || *background != "none".to_string(),
+                    color: color,
                 };
                 element.render_item = item.clone();
                 array = [vec![item], array.clone()].concat();
@@ -864,7 +908,6 @@ impl BrowserWindow {
                             );
                         },
                         None,
-                        None,
                     )
                     .into_iter()
                     .filter(|i| i.render)
@@ -895,8 +938,15 @@ impl BrowserWindow {
 
                         let mut glyphs = glyphs_map.remove(&item.font_path).unwrap();
 
+                        let color = &item.color;
+
                         text::Text::new_color(
-                            [0.0, 0.0, 0.0, 1.0],
+                            [
+                                (color.0 / 255.0) as f32,
+                                (color.1 / 255.0) as f32,
+                                (color.2 / 255.0) as f32,
+                                (color.3 / 255.0) as f32,
+                            ],
                             2 * (item.font_size.round() as u32),
                         )
                         .draw(
