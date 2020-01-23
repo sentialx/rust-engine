@@ -72,6 +72,7 @@ pub struct RenderItem {
     width: f64,
     height: f64,
     text: String,
+    font_size: f64,
     render: bool,
     background: String,
 }
@@ -83,6 +84,7 @@ impl RenderItem {
             y: 0.0,
             width: 0.0,
             height: 0.0,
+            font_size: 16.0,
             text: "".to_string(),
             render: false,
             background: "none".to_string(),
@@ -176,16 +178,20 @@ fn tokenize(html: String) -> Vec<String> {
     let chars = html.chars().enumerate();
 
     let mut ignore = false;
+    let mut codeBlock = false;
 
     for (i, c) in chars {
-        if c == '\n' || c == '\r' || c == '\t' {
+        if (!codeBlock && c == '\n') || c == '\r' || c == '\t' {
             continue;
         }
-        if c == '<' {
+        if c == '<' || (codeBlock && c == '\n' && c != '<') {
             if capturing {
                 captured_text = captured_text.trim().to_string();
                 if captured_text != "" {
                     tokens.push(captured_text.clone());
+                    if codeBlock && c == '\n' {
+                        tokens.push("<br/>".to_string());
+                    }
                 }
             } else {
                 capturing = true;
@@ -201,10 +207,18 @@ fn tokenize(html: String) -> Vec<String> {
                 ignore = false;
             }
 
+            if codeBlock && captured_text == "</code" {
+                codeBlock = false;
+            }
+
             if !ignore {
                 capturing = false;
                 captured_text.push(c);
                 captured_text = captured_text.trim().to_string();
+            }
+
+            if captured_text.starts_with("<code") {
+                codeBlock = true;
             }
 
             if !ignore && captured_text != "" {
@@ -395,10 +409,52 @@ fn get_styles(tree: Vec<DomElement>, parent: Option<DomElement>) -> String {
     return style;
 }
 
+fn get_style_value(declarations: &HashMap<String, String>, key: &str, default: &str) -> String {
+    let g = &default.to_string();
+    return declarations.get(key).unwrap_or(g).to_string();
+}
+
+fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
+    let chars = value.chars().enumerate();
+
+    let mut unit: String = "".to_string();
+    let mut val_str: String = "".to_string();
+
+    let mut capturing_unit = false;
+
+    for (i, c) in chars {
+        if c == 'p' || c == 'e' {
+            capturing_unit = true;
+        }
+
+        if capturing_unit {
+            unit.push(c);
+        } else {
+            val_str.push(c);
+        }
+    }
+
+    let val_num: f64 = val_str.parse().unwrap();
+
+    if unit == "em" {
+        println!("{} {}", val_num, base_font_size);
+        return val_num * base_font_size;
+    }
+
+    return val_num;
+}
+
+#[derive(Clone, Debug)]
+pub struct CssValue {
+    value: f64,
+    text_value: String,
+}
+
 fn get_render_array(
     tree: Vec<DomElement>,
     style: Vec<StyleRule>,
-    measureText: &dyn Fn(String) -> (f64, f64),
+    measure_text: &dyn Fn(String, f64) -> (f64, f64),
+    declarations_to_inherit: Option<HashMap<String, CssValue>>,
     y_base: Option<f64>,
     x_base: Option<f64>,
 ) -> Vec<RenderItem> {
@@ -408,11 +464,14 @@ fn get_render_array(
 
     let mut reserved_block_y = y_base.unwrap_or(0.0);
 
+    let mut inherit_declarations = declarations_to_inherit.unwrap_or(HashMap::new());
+
     for i in 0..elements.clone().len() {
         let mut x = x_base.unwrap_or(0.0);
         let mut y = y_base.unwrap_or(0.0);
 
         let mut declarations: HashMap<String, String> = HashMap::new();
+        let mut new_inherit_declarations = inherit_declarations.clone();
 
         {
             let mut element = &mut elements[i];
@@ -432,11 +491,46 @@ fn get_render_array(
         let mut width = 0.0;
         let mut height = 0.0;
 
-        let g = &"inline-block".to_string();
-        let display = declarations.get("display").unwrap_or(g).as_str();
+        let display = get_style_value(&declarations, "display", "inline-block");
+        let background = get_style_value(&declarations, "background", "none");
 
-        let g = &"none".to_string();
-        let background = declarations.get("background").unwrap_or(g);
+        let font_size_inherit = inherit_declarations.get("font-size");
+        let font_size_str = declarations.get("font-size");
+
+        let mut font_size = 16.0;
+
+        {
+            let mut s = "16px".to_string();
+
+            match font_size_str {
+                Some(f) => {
+                    match font_size_inherit {
+                        Some(f_i) => {
+                            font_size = parse_numeric_css_value(&f, f_i.value);
+                        }
+                        None => {
+                            font_size = parse_numeric_css_value(&f, font_size);
+                        }
+                    }
+                    s = f.to_string();
+                }
+                None => match font_size_inherit {
+                    Some(f_i) => {
+                        font_size = f_i.value;
+                        s = f_i.text_value.to_string();
+                    }
+                    None => {}
+                },
+            }
+
+            new_inherit_declarations.insert(
+                "font-size".to_string(),
+                CssValue {
+                    text_value: s,
+                    value: font_size,
+                },
+            );
+        }
 
         if display == "none" {
             continue;
@@ -444,7 +538,7 @@ fn get_render_array(
         if i > 0 {
             let previous_element = &elements[i - 1];
 
-            match display {
+            match display.as_str() {
                 "block" => {
                     y = reserved_block_y;
                 }
@@ -473,7 +567,8 @@ fn get_render_array(
             let children_render_items = get_render_array(
                 element.children.clone(),
                 style.clone(),
-                measureText,
+                measure_text,
+                Some(new_inherit_declarations),
                 Some(y.clone()),
                 Some(x.clone()),
             );
@@ -487,8 +582,12 @@ fn get_render_array(
 
         match element.node_type {
             NodeType::Text => {
-                element.node_value = element.node_value.replace("&nbsp;", " ");
-                let size = measureText(element.node_value.clone());
+                element.node_value = element
+                    .node_value
+                    .replace("&nbsp;", " ")
+                    .replace("&gt;", ">")
+                    .replace("&lt;", "<");
+                let size = measure_text(element.node_value.clone(), font_size);
                 width = size.0;
                 height = size.1;
             }
@@ -505,12 +604,13 @@ fn get_render_array(
                     height: height,
                     background: background.to_string(),
                     text: element.node_value.clone(),
+                    font_size: font_size,
                     render: (element.node_type == NodeType::Text && element.node_value != "")
                         || *background != "none".to_string(),
                 };
                 element.render_item = item.clone();
                 array = [vec![item], array.clone()].concat();
-                reserved_block_y += height;
+                reserved_block_y = f64::max(height + y, reserved_block_y);
             }
         }
     }
@@ -643,21 +743,25 @@ impl BrowserWindow {
                     let dom_tree = parse_html(&contents);
                     let style = get_styles(dom_tree.clone(), None);
                     let parsed_css = parse_css(&style);
-                    let closure_ref = RefCell::new(|text: String| glyphs.width(14, &text).unwrap());
+                    let closure_ref = RefCell::new(|text: String, font_size: f64| {
+                        glyphs.width(font_size as u32, &text).unwrap()
+                    });
                     render_array = get_render_array(
                         dom_tree.clone(),
                         [default_styles.clone(), parsed_css].concat(),
-                        &move |text| {
-                            return ((&mut *closure_ref.borrow_mut())(text), 24.0);
+                        &move |text, font_size| {
+                            return (
+                                (&mut *closure_ref.borrow_mut())(text, font_size),
+                                font_size + 8.0,
+                            );
                         },
+                        None,
                         None,
                         None,
                     )
                     .into_iter()
                     .filter(|i| i.render)
                     .collect();
-
-                    println!("{:#?}", render_array);
                 };
                 if url != new_url {
                     url = new_url;
@@ -670,7 +774,7 @@ impl BrowserWindow {
                 };
 
                 window.draw_2d(&event, |context, graphics, device| {
-                    clear([0.0, 0.0, 0.0, 1.0], graphics);
+                    clear([1.0, 1.0, 1.0, 1.0], graphics);
 
                     for item in &render_array {
                         if item.background == "red" {
@@ -682,7 +786,7 @@ impl BrowserWindow {
                             );
                         }
 
-                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 14)
+                        text::Text::new_color([0.0, 0.0, 0.0, 1.0], item.font_size as u32)
                             .draw(
                                 &item.text,
                                 &mut glyphs,
