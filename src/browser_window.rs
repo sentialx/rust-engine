@@ -1,3 +1,4 @@
+use crate::colors::*;
 use crate::css::*;
 use crate::html::*;
 use crate::layout::*;
@@ -66,6 +67,15 @@ impl BrowserWindow {
         fs::read_to_string("default_styles.css").expect("error while reading the file");
       let default_styles = parse_css(&default_css);
 
+      let color_conv = |c: ColorTupleA| {
+        [
+          (c.0 / 255.0) as f32,
+          (c.1 / 255.0) as f32,
+          (c.2 / 255.0) as f32,
+          (c.3 / 255.0) as f32,
+        ]
+      };
+
       while let Some(event) = window.next() {
         let new_url = (&inner.lock().unwrap()).url.clone();
 
@@ -116,9 +126,9 @@ impl BrowserWindow {
           clear([1.0, 1.0, 1.0, 1.0], graphics);
 
           for item in &render_array {
-            if item.background == "red" {
+            if item.background_color != (0.0, 0.0, 0.0, 0.0) {
               rectangle(
-                [1.0, 0.0, 0.0, 1.0],
+                color_conv(item.background_color),
                 [0.0, 0.0, item.width, item.height],
                 context.transform.trans(item.x, item.y),
                 graphics,
@@ -128,13 +138,7 @@ impl BrowserWindow {
             if item.text != "" {
               let mut glyphs = glyphs_map.remove(&item.font_path).unwrap();
 
-              let color = &item.color;
-              let color = [
-                (color.0 / 255.0) as f32,
-                (color.1 / 255.0) as f32,
-                (color.2 / 255.0) as f32,
-                (color.3 / 255.0) as f32,
-              ];
+              let color = color_conv(item.color);
 
               text::Text::new_color(color, 2 * item.font_size as u32)
                 .draw(

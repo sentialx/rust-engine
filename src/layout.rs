@@ -15,7 +15,7 @@ pub struct RenderItem {
   pub font_size: f64,
   pub font_path: String,
   pub render: bool,
-  pub background: String,
+  pub background_color: ColorTupleA,
   pub margin_bottom: f64,
   pub color: ColorTupleA,
   pub underline: bool,
@@ -32,7 +32,7 @@ impl RenderItem {
       margin_bottom: 0.0,
       render: false,
       color: (0.0, 0.0, 0.0, 1.0),
-      background: S("none"),
+      background_color: (0.0, 0.0, 0.0, 0.0),
       font_path: S(""),
       text: S(""),
       underline: false,
@@ -92,7 +92,7 @@ pub fn get_render_array(
     };
 
     let display = get_declaration_value(&declarations, "display", "inline-block");
-    let background = get_declaration_value(&declarations, "background", "none");
+    let background_color_css = get_declaration_value(&declarations, "background-color", "none");
 
     let font_weight_css = get_inherit_value("font-weight", css_string("normal"));
     let font_weight = font_weight_css.to_string();
@@ -118,6 +118,18 @@ pub fn get_render_array(
         }
       },
       CssValue::Number(_) => (0.0, 0.0, 0.0, 1.0),
+    };
+
+    let background_color = if background_color_css == "none" {
+      (0.0, 0.0, 0.0, 0.0)
+    } else {
+      match parse_css_color(&background_color_css) {
+        Ok(c) => c,
+        Err(e) => {
+          println!("{}", e);
+          (0.0, 0.0, 0.0, 0.0)
+        }
+      }
     };
 
     let mut base_font_size = 16.0;
@@ -257,13 +269,13 @@ pub fn get_render_array(
           y: y,
           width: width,
           height: height,
-          background: background.to_string(),
+          background_color: background_color,
           text: element.node_value.clone(),
           font_size: font_size,
           font_path: font_path.to_string(),
           margin_bottom: margin_bottom,
           render: (element.node_type == NodeType::Text && element.node_value != "")
-            || *background != "none".to_string(),
+            || *background_color_css != "none".to_string(),
           color: color,
           underline: element.node_value != "" && text_decoration == "underline",
         };
