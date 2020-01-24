@@ -488,3 +488,7 @@ ul {
 var {
   font-style: italic;
 }
+
+br {
+  display: block;
+}

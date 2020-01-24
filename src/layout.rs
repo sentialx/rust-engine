@@ -204,10 +204,6 @@ pub fn get_render_array(
 
       // TODO: simplify
       match display.as_str() {
-        "block" => {
-          y = reserved_block_y;
-          y += f64::max(previous_element.render_item.margin_bottom, margin_top);
-        }
         "inline-block" => {
           y = previous_element.render_item.y;
           if previous_element
@@ -223,7 +219,10 @@ pub fn get_render_array(
             y += f64::max(previous_element.render_item.margin_bottom, margin_top);
           }
         }
-        _ => {}
+        _ => {
+          y = reserved_block_y;
+          y += f64::max(previous_element.render_item.margin_bottom, margin_top);
+        }
       };
     }
 
