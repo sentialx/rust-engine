@@ -20,6 +20,7 @@ pub struct RenderItem {
   pub adjacent_margin_bottom: f64,
   pub color: ColorTupleA,
   pub underline: bool,
+  pub margin_right: f64,
 }
 
 impl RenderItem {
@@ -38,6 +39,7 @@ impl RenderItem {
       text: S(""),
       underline: false,
       adjacent_margin_bottom: 0.0,
+      margin_right: 0.0,
     }
   }
 }
@@ -202,6 +204,16 @@ pub fn get_render_array(
       base_font_size,
     );
 
+    let margin_left = parse_numeric_css_value(
+      &get_declaration_value(&declarations, "margin-left", "0"),
+      base_font_size,
+    );
+
+    let margin_right = parse_numeric_css_value(
+      &get_declaration_value(&declarations, "margin-right", "0"),
+      base_font_size,
+    );
+
     let mut previous_margin_bottom =
       get_inherit_value("previous-margin-bottom", CssValue::Number(0.0)).to_number();
 
@@ -245,6 +257,8 @@ pub fn get_render_array(
           );
         }
       };
+
+      x += previous_element.render_item.margin_right;
     } else {
       new_inherit_declarations.insert(
         S("previous-margin-bottom"),
@@ -253,6 +267,8 @@ pub fn get_render_array(
 
       y += f64::max(0.0, margin_top - previous_margin_bottom);
     }
+
+    x += margin_left;
 
     let element = &mut elements[i];
 
@@ -273,10 +289,6 @@ pub fn get_render_array(
       for item in &children_render_items {
         width = f64::max(item.width + (item.x - x), width);
         height = f64::max(item.height + (item.y - y), height);
-      }
-
-      if i == elements_len - 1 {
-        adjacent_margin_bottom = margin_bottom;
       }
 
       adjacent_margin_bottom = margin_bottom;
@@ -322,6 +334,7 @@ pub fn get_render_array(
           color: color,
           underline: element.node_value != "" && text_decoration == "underline",
           adjacent_margin_bottom: adjacent_margin_bottom,
+          margin_right: margin_right,
         };
         element.render_item = item.clone();
         array = [vec![item], array.clone()].concat();
