@@ -38,7 +38,7 @@ impl BrowserWindow {
     thread::spawn(move || {
       let mut url = "".to_string();
 
-      let mut window: PistonWindow = WindowSettings::new("Graviton", [1024, 1024])
+      let mut window: PistonWindow = WindowSettings::new("Graviton", [640, 480])
         .exit_on_esc(true)
         .build()
         .unwrap();

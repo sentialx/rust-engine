@@ -17,6 +17,7 @@ pub struct RenderItem {
   pub render: bool,
   pub background_color: ColorTupleA,
   pub margin_bottom: f64,
+  pub adjacent_margin_bottom: f64,
   pub color: ColorTupleA,
   pub underline: bool,
 }
@@ -36,6 +37,7 @@ impl RenderItem {
       font_path: S(""),
       text: S(""),
       underline: false,
+      adjacent_margin_bottom: 0.0,
     }
   }
 }
@@ -49,6 +51,7 @@ pub fn get_render_array(
   let mut array: Vec<RenderItem> = vec![];
 
   let mut elements = tree.clone();
+  let elements_len = elements.len();
 
   let inherit_declarations = inherit_declarations.unwrap_or(HashMap::new());
 
@@ -64,7 +67,7 @@ pub fn get_render_array(
 
   let mut reserved_block_y = y_base.clone();
 
-  for i in 0..elements.clone().len() {
+  for i in 0..elements_len {
     let mut x = x_base.clone();
     let mut y = y_base.clone();
 
@@ -199,6 +202,14 @@ pub fn get_render_array(
       base_font_size,
     );
 
+    let mut previous_margin_bottom =
+      get_inherit_value("previous-margin-bottom", CssValue::Number(0.0)).to_number();
+
+    let mut child_previous_margin_bottom =
+      get_inherit_value("child-previous-margin-bottom", CssValue::Number(0.0)).to_number();
+
+    new_inherit_declarations.remove("previous-margin-bottom");
+
     if i > 0 {
       let previous_element = &elements[i - 1];
 
@@ -217,16 +228,35 @@ pub fn get_render_array(
           } else {
             y = reserved_block_y;
             y += f64::max(previous_element.render_item.margin_bottom, margin_top);
+
+            new_inherit_declarations.insert(
+              S("previous-margin-bottom"),
+              CssValue::Number(previous_element.render_item.adjacent_margin_bottom),
+            );
           }
         }
         _ => {
           y = reserved_block_y;
           y += f64::max(previous_element.render_item.margin_bottom, margin_top);
+
+          new_inherit_declarations.insert(
+            S("previous-margin-bottom"),
+            CssValue::Number(previous_element.render_item.adjacent_margin_bottom),
+          );
         }
       };
+    } else {
+      new_inherit_declarations.insert(
+        S("previous-margin-bottom"),
+        CssValue::Number(previous_margin_bottom),
+      );
+
+      y += f64::max(0.0, margin_top - previous_margin_bottom);
     }
 
     let element = &mut elements[i];
+
+    let mut adjacent_margin_bottom = 0.0;
 
     if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE" {
       new_inherit_declarations.insert(S("x"), CssValue::Number(x.clone()));
@@ -244,6 +274,20 @@ pub fn get_render_array(
         width = f64::max(item.width + (item.x - x), width);
         height = f64::max(item.height + (item.y - y), height);
       }
+
+      if i == elements_len - 1 {
+        adjacent_margin_bottom = margin_bottom;
+      }
+
+      adjacent_margin_bottom = margin_bottom;
+
+      adjacent_margin_bottom = f64::max(
+        adjacent_margin_bottom,
+        children_render_items
+          .first()
+          .unwrap()
+          .adjacent_margin_bottom,
+      );
     }
 
     match element.node_type {
@@ -277,6 +321,7 @@ pub fn get_render_array(
             || background_color_css != "none",
           color: color,
           underline: element.node_value != "" && text_decoration == "underline",
+          adjacent_margin_bottom: adjacent_margin_bottom,
         };
         element.render_item = item.clone();
         array = [vec![item], array.clone()].concat();
