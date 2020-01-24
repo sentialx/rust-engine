@@ -38,6 +38,10 @@ pub fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
   let mut capturing_unit = false;
 
   for (i, c) in chars {
+    if c == ' ' {
+      continue;
+    }
+
     if c == 'p' || c == 'e' {
       capturing_unit = true;
     }
@@ -49,13 +53,19 @@ pub fn parse_numeric_css_value(value: &str, base_font_size: f64) -> f64 {
     }
   }
 
-  let val_num: f64 = val_str.parse().unwrap();
-
-  if unit == "em" {
-    return val_num * base_font_size;
+  match val_str.parse() {
+    Ok(val) => {
+      if unit == "em" {
+        val * base_font_size
+      } else {
+        val
+      }
+    }
+    Err(e) => {
+      println!("Error while parsing css value {}: {}", value, e);
+      0.0
+    }
   }
-
-  return val_num;
 }
 
 pub fn parse_css(css: &str) -> Vec<StyleRule> {

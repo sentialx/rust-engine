@@ -275,7 +275,7 @@ pub fn get_render_array(
           font_path: font_path.to_string(),
           margin_bottom: margin_bottom,
           render: (element.node_type == NodeType::Text && element.node_value != "")
-            || *background_color_css != "none".to_string(),
+            || background_color_css != "none",
           color: color,
           underline: element.node_value != "" && text_decoration == "underline",
         };
