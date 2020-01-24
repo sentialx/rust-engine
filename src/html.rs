@@ -104,18 +104,18 @@ fn tokenize(html: String) -> Vec<String> {
   let chars = html.chars().enumerate();
 
   let mut ignore = false;
-  let mut codeBlock = false;
+  let mut code_block = false;
 
   for (i, c) in chars {
-    if (!codeBlock && c == '\n') || c == '\r' || c == '\t' {
+    if (!code_block && c == '\n') || c == '\r' || c == '\t' {
       continue;
     }
-    if c == '<' || (codeBlock && c == '\n' && c != '<') {
+    if c == '<' || (code_block && c == '\n' && c != '<') {
       if capturing {
         captured_text = captured_text.trim().to_string();
         if captured_text != "" {
           tokens.push(captured_text.clone());
-          if codeBlock && c == '\n' {
+          if code_block && c == '\n' {
             tokens.push("<br/>".to_string());
           }
         }
@@ -133,8 +133,8 @@ fn tokenize(html: String) -> Vec<String> {
         ignore = false;
       }
 
-      if codeBlock && captured_text == "</code" {
-        codeBlock = false;
+      if code_block && captured_text == "</code" {
+        code_block = false;
       }
 
       if !ignore {
@@ -144,7 +144,7 @@ fn tokenize(html: String) -> Vec<String> {
       }
 
       if captured_text.starts_with("<code") {
-        codeBlock = true;
+        code_block = true;
       }
 
       if !ignore && captured_text != "" {

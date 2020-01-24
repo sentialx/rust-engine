@@ -18,6 +18,7 @@ pub struct RenderItem {
   pub background: String,
   pub margin_bottom: f64,
   pub color: ColorTupleA,
+  pub underline: bool,
 }
 
 impl RenderItem {
@@ -34,6 +35,7 @@ impl RenderItem {
       background: S("none"),
       font_path: S(""),
       text: S(""),
+      underline: false,
     }
   }
 }
@@ -101,6 +103,9 @@ pub fn get_render_array(
     let font_family_css = get_inherit_value("font-family", css_string("Times New Roman"));
     let font_family = font_family_css.to_string();
 
+    let text_decoration_css = get_inherit_value("text-decoration", css_string("none"));
+    let text_decoration = text_decoration_css.to_string();
+
     let color_css = get_inherit_value("color", css_string("#000"));
 
     let color = match color_css {
@@ -122,6 +127,7 @@ pub fn get_render_array(
     new_inherit_declarations.insert(S("font-family"), font_family_css);
     new_inherit_declarations.insert(S("font-weight"), font_weight_css);
     new_inherit_declarations.insert(S("font-style"), font_style_css);
+    new_inherit_declarations.insert(S("text-decoration"), text_decoration_css);
     new_inherit_declarations.insert(S("color"), CssValue::Color(color));
 
     if font_family.to_lowercase() == "times new roman" {
@@ -259,6 +265,7 @@ pub fn get_render_array(
           render: (element.node_type == NodeType::Text && element.node_value != "")
             || *background != "none".to_string(),
           color: color,
+          underline: element.node_value != "" && text_decoration == "underline",
         };
         element.render_item = item.clone();
         array = [vec![item], array.clone()].concat();

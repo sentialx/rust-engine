@@ -77,7 +77,7 @@ impl BrowserWindow {
           let parsed_css = parse_css(&style);
           let closure_ref = RefCell::new(|text: String, font_size: f64, font_family: String| {
             let mut glyphs = glyphs_map.remove(font_family.as_str()).unwrap();
-            let res = glyphs.width(font_size.round() as u32, &text).unwrap();
+            let res = glyphs.width(font_size as u32, &text).unwrap();
             glyphs_map.insert(font_family.clone(), glyphs);
             return res;
           });
@@ -125,34 +125,41 @@ impl BrowserWindow {
               );
             }
 
-            let mut glyphs = glyphs_map.remove(&item.font_path).unwrap();
+            if item.text != "" {
+              let mut glyphs = glyphs_map.remove(&item.font_path).unwrap();
 
-            let color = &item.color;
-
-            text::Text::new_color(
-              [
+              let color = &item.color;
+              let color = [
                 (color.0 / 255.0) as f32,
                 (color.1 / 255.0) as f32,
                 (color.2 / 255.0) as f32,
                 (color.3 / 255.0) as f32,
-              ],
-              2 * (item.font_size.round() as u32),
-            )
-            .draw(
-              &item.text,
-              &mut glyphs,
-              &context.draw_state,
-              context
-                .transform
-                .trans(item.x, item.y + item.height - 4.0)
-                .zoom(0.5),
-              graphics,
-            )
-            .unwrap();
+              ];
 
-            glyphs.factory.encoder.flush(device);
+              text::Text::new_color(color, 2 * item.font_size as u32)
+                .draw(
+                  &item.text,
+                  &mut glyphs,
+                  &context.draw_state,
+                  context
+                    .transform
+                    .trans(item.x, item.y + item.height - 4.0)
+                    .zoom(0.5),
+                  graphics,
+                )
+                .unwrap();
 
-            glyphs_map.insert((&item).font_path.clone(), glyphs);
+              if item.underline {
+                rectangle(
+                  color,
+                  [0.0, 0.0, item.width, 1.0],
+                  context.transform.trans(item.x, item.y + item.height - 3.0),
+                  graphics,
+                );
+              }
+              glyphs.factory.encoder.flush(device);
+              glyphs_map.insert((&item).font_path.clone(), glyphs);
+            }
           }
         });
       }
