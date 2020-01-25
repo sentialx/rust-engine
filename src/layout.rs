@@ -217,54 +217,38 @@ pub fn get_render_array(
     let mut previous_margin_bottom =
       get_inherit_value("previous-margin-bottom", CssValue::Number(0.0)).to_number();
 
-    let mut child_previous_margin_bottom =
-      get_inherit_value("child-previous-margin-bottom", CssValue::Number(0.0)).to_number();
-
-    new_inherit_declarations.remove("previous-margin-bottom");
-
     if i > 0 {
       let previous_element = &elements[i - 1];
 
-      // TODO: simplify
-      match display.as_str() {
-        "inline-block" => {
-          y = previous_element.render_item.y;
-          if previous_element
-            .style
-            .get("display")
-            .unwrap_or(&"inline-block".to_string())
-            .to_string()
-            == "inline-block"
-          {
-            x = previous_element.render_item.x + previous_element.render_item.width;
-          } else {
-            y = reserved_block_y;
-            y += f64::max(previous_element.render_item.margin_bottom, margin_top);
+      if display == "inline-block" {
+        y = previous_element.render_item.y;
+      }
 
-            new_inherit_declarations.insert(
-              S("previous-margin-bottom"),
-              CssValue::Number(previous_element.render_item.adjacent_margin_bottom),
-            );
-          }
-        }
-        _ => {
-          y = reserved_block_y;
-          y += f64::max(previous_element.render_item.margin_bottom, margin_top);
+      if (display == "inline-block"
+        && previous_element
+          .style
+          .get("display")
+          .unwrap_or(&"inline-block".to_string())
+          .to_string()
+          != "inline-block")
+        || display == "block"
+        || display == "list-item"
+      {
+        // Vertical layout
+        y = reserved_block_y;
+        y += f64::max(previous_element.render_item.margin_bottom, margin_top);
 
-          new_inherit_declarations.insert(
-            S("previous-margin-bottom"),
-            CssValue::Number(previous_element.render_item.adjacent_margin_bottom),
-          );
-        }
-      };
-
+        new_inherit_declarations.insert(
+          S("previous-margin-bottom"),
+          CssValue::Number(previous_element.render_item.adjacent_margin_bottom),
+        );
+      } else if display == "inline-block" {
+        // Horizontal layout
+        x = previous_element.render_item.x + previous_element.render_item.width;
+        new_inherit_declarations.remove("previous-margin-bottom");
+      }
       x += previous_element.render_item.margin_right;
     } else {
-      new_inherit_declarations.insert(
-        S("previous-margin-bottom"),
-        CssValue::Number(previous_margin_bottom),
-      );
-
       y += f64::max(0.0, margin_top - previous_margin_bottom);
     }
 
