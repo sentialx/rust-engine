@@ -7,10 +7,9 @@ mod layout;
 mod styles;
 mod utils;
 
+use std::string::String;
 use browser_window::*;
 
 fn main() {
-    let mut window = BrowserWindow::create();
-    window.load_file("index.html");
-    while true {}
+    create_browser_window(String::from("index.html"));
 }

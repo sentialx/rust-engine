@@ -77,6 +77,8 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
   let mut style_rule = StyleRule::new();
   let mut declaration = KeyValue::new();
 
+  let mut is_capturing_selector = true;
+
   let chars = css.chars().enumerate();
 
   for (i, c) in chars {
@@ -85,7 +87,8 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
     if c == '{' {
       style_rule.selector = captured_text.trim().to_string();
       captured_text = "".to_string();
-    } else if c == ':' {
+      is_capturing_selector = false;
+    } else if c == ':' && !is_capturing_selector {
       declaration.0 = captured_text.trim().to_string();
       captured_text = "".to_string();
     } else if c == ';' {
@@ -98,6 +101,7 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
       list.push(style_rule);
       style_rule = StyleRule::new();
       captured_code = "".to_string();
+      is_capturing_selector = true;
     } else {
       captured_text.push(c);
     }

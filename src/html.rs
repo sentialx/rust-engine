@@ -30,6 +30,7 @@ pub struct DomElement {
   pub tag_name: String,
   pub style: HashMap<String, String>,
   pub render_item: RenderItem,
+  pub is_hovered: bool,
 }
 
 impl DomElement {
@@ -45,6 +46,7 @@ impl DomElement {
       tag_name: "".to_string(),
       style: HashMap::new(),
       render_item: RenderItem::new(),
+      is_hovered: false,
     }
   }
 }
