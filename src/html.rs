@@ -1,3 +1,4 @@
+use crate::colors::ColorTupleA;
 use crate::layout::*;
 use crate::utils::*;
 use std::collections::HashMap;
@@ -19,6 +20,35 @@ pub enum TagType {
 }
 
 #[derive(Clone, Debug)]
+pub struct Margin {
+  pub top: f64,
+  pub right: f64,
+  pub bottom: f64,
+  pub left: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComputedStyle {
+  pub margin: Margin,
+  pub background_color: ColorTupleA,
+  pub color: ColorTupleA,
+  pub font_size: f64,
+  pub font_path: String,
+  pub text_decoration: String,
+  pub display: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComputedFlow {
+  pub x: f64,
+  pub y: f64,
+  pub width: f64,
+  pub height: f64,
+  pub adjacent_margin_bottom: f64,
+  pub hover_rect: Rect,
+}
+
+#[derive(Clone, Debug)]
 pub struct DomElement {
   pub children: Vec<DomElement>,
   pub attributes: Vec<KeyValue>,
@@ -29,8 +59,9 @@ pub struct DomElement {
   pub outer_html: String,
   pub tag_name: String,
   pub style: HashMap<String, String>,
-  pub render_item: RenderItem,
   pub is_hovered: bool,
+  pub computed_flow: Option<ComputedFlow>,
+  pub computed_style: Option<ComputedStyle>,
 }
 
 impl DomElement {
@@ -45,7 +76,8 @@ impl DomElement {
       node_value: "".to_string(),
       tag_name: "".to_string(),
       style: HashMap::new(),
-      render_item: RenderItem::new(),
+      computed_flow: None,
+      computed_style: None,
       is_hovered: false,
     }
   }

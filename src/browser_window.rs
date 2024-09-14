@@ -5,6 +5,7 @@ use crate::html::*;
 use crate::layout::*;
 use crate::styles::*;
 use std::collections::HashMap;
+use std::time::Instant;
 
 extern crate find_folder;
 extern crate piston_window;
@@ -36,6 +37,16 @@ pub fn create_browser_window(url: String) {
         )
     };
 
+    let get_window_rect = |window: &PistonWindow| -> Rect {
+        let window_size = window.size();
+        return Rect {
+            x: 0.0,
+            y: 0.0,
+            width: window_size.width as f64,
+            height: window_size.height as f64,
+        };
+    };
+
     add_font("Times New Roman 400.ttf");
     add_font("Times New Roman 700.ttf");
     add_font("Times New Roman Italique 400.ttf");
@@ -44,6 +55,7 @@ pub fn create_browser_window(url: String) {
     let mut render_array: Vec<RenderItem> = vec![];
     let mut dom_tree: RefCell<Vec<DomElement>> = RefCell::new(vec![]);
     let mut parsed_css: RefCell<Vec<StyleRule>> = RefCell::new(vec![]);
+    let mut styles: Vec<StyleRule> = vec![];
 
     let default_css =
         fs::read_to_string("default_styles.css").expect("error while reading the file");
@@ -58,15 +70,30 @@ pub fn create_browser_window(url: String) {
         ]
     };
 
-    let mut rerender = || {
-        let mut closure_ref = RefCell::new(|text: String, font_size: f64, font_family: String| {
-            let mut glyphs_map = glyphs_map.borrow_mut();
-            let mut glyphs = glyphs_map.get_mut(font_family.as_str()).unwrap();
-            return 0.5 * glyphs.width(2 * (font_size - 2.0) as u32, &text).unwrap();
-        });
+    let rerender = |window: &PistonWindow| {
+        let s = Instant::now();
+        let window_rect = get_window_rect(&window);
         let render_array: Vec<RenderItem> = get_render_array(
             &mut dom_tree.borrow_mut(),
-            [default_styles.clone(), parsed_css.borrow_mut().clone()].concat(),
+            &window_rect,
+        )
+        .into_iter()
+        .collect();
+        println!("Rerendering took: {:?}, items: {:?}", s.elapsed(), render_array.len());
+
+        return render_array;
+    };
+
+    let reflow = || {
+        let s = Instant::now();
+        let closure_ref = RefCell::new(|text: String, font_size: f64, font_family: String| {
+            let mut glyphs_map = glyphs_map.borrow_mut();
+            let glyphs = glyphs_map.get_mut(font_family.as_str()).unwrap();
+            return 0.5 * glyphs.width(2 * (font_size - 2.0) as u32, &text).unwrap();
+        });
+        
+        reflow(
+            &mut dom_tree.borrow_mut(),
             &move |text, font_size, font_family| {
                 return (
                     (closure_ref.borrow_mut())(text, font_size, font_family),
@@ -74,43 +101,66 @@ pub fn create_browser_window(url: String) {
                 );
             },
             None,
-        )
-        .into_iter()
-        .filter(|i| i.render)
-        .collect();
-
-        return render_array;
+        );
+        println!("Reflow took: {:?}", s.elapsed());
     };
 
-    let mut refresh = |u: String| {
+    let recompute_styles = |window: &PistonWindow, styles: &Vec<StyleRule>| {
+        let s = Instant::now();
+        compute_styles(&mut dom_tree.borrow_mut(), &styles, None);
+        println!("Computing styles took: {:?}", s.elapsed());
+    };
+
+    let recalc_all = |window: &PistonWindow, styles: &Vec<StyleRule>| {
+        recompute_styles(&window, &styles);
+        reflow();
+        return rerender(&window)
+    };
+
+    let refresh = |window: &PistonWindow, u: String| {
         let contents = fs::read_to_string(u.clone()).expect("error while reading the file");
         *dom_tree.borrow_mut() = parse_html(&contents);
+
         let style = get_styles(dom_tree.borrow_mut().clone(), None);
-        println!("{}", style);
         *parsed_css.borrow_mut() = parse_css(&style);
-        return rerender();
+
+        return [default_styles.clone(), parsed_css.borrow_mut().clone()].concat()
     };
 
-    render_array = refresh(url.clone());
+    styles = refresh(&window, url.clone());
+    render_array = recalc_all(&window, &styles);
 
     while let Some(event) = window.next() {
         let mouse = event.mouse_cursor_args();
 
         if let Some(Button::Keyboard(key)) = event.press_args() {
             if key == Key::F5 {
-                render_array = refresh(url.clone());
+                styles = refresh(&window, url.clone());
+                render_array = recalc_all(&window, &styles);
             }
         };
 
+        // on resize
+        if let Some(size) = event.resize_args() {
+            reflow();
+            render_array = rerender(&window);
+        }
+
+        let mut mouse_x = 0.0;
+        let mut mouse_y = 0.0;
+
         if mouse.is_some() {
-            if should_rerender(
-                mouse.unwrap()[0],
-                mouse.unwrap()[1],
-                &mut dom_tree.borrow_mut(),
-                parsed_css.borrow_mut().clone(),
-            ) {
-                render_array = rerender();
-            }
+            mouse_x = mouse.unwrap()[0];
+            mouse_y = mouse.unwrap()[1];
+
+            // if should_rerender(
+            //     mouse_x,
+            //     mouse_y,
+            //     &mut dom_tree.borrow_mut(),
+            //     &*parsed_css.borrow_mut(),
+            // ) {
+            //     // render_array = rerender(&window);
+            // }
         }
 
         window.draw_2d(&event, |context, graphics, device| {
@@ -128,7 +178,7 @@ pub fn create_browser_window(url: String) {
 
                 if item.text != "" {
                     let mut glyphs_map = glyphs_map.borrow_mut();
-                    let mut glyphs = glyphs_map.get_mut(&item.font_path).unwrap();
+                    let glyphs = glyphs_map.get_mut(&item.font_path).unwrap();
 
                     let color = color_conv(item.color);
 

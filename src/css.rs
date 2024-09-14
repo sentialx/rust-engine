@@ -17,10 +17,10 @@ impl CssValue {
     }
   }
 
-  pub fn to_string(&self) -> String {
+  pub fn to_string(&self) -> &String {
     match &self {
-      CssValue::String(obj) => obj.to_string(),
-      _ => "".to_string(),
+      CssValue::String(obj) => obj,
+      _ => panic!("Cannot convert to string"),
     }
   }
 }
