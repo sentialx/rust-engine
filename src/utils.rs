@@ -12,4 +12,11 @@ impl KeyValue {
       1: "".to_string(),
     }
   }
+
+  pub fn new_values(key: &str, value: &str) -> KeyValue {
+    KeyValue {
+      0: key.to_string(),
+      1: value.to_string(),
+    }
+  }
 }

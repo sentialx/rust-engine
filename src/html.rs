@@ -2,6 +2,7 @@ use crate::colors::ColorTupleA;
 use crate::layout::*;
 use crate::utils::*;
 use std::collections::HashMap;
+use std::hash::Hash;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeType {
@@ -30,12 +31,14 @@ pub struct Margin {
 #[derive(Clone, Debug)]
 pub struct ComputedStyle {
   pub margin: Margin,
+  pub padding: Margin,
   pub background_color: ColorTupleA,
   pub color: ColorTupleA,
   pub font_size: f64,
   pub font_path: String,
   pub text_decoration: String,
   pub display: String,
+  pub float: String,
 }
 
 #[derive(Clone, Debug)]
@@ -51,7 +54,7 @@ pub struct ComputedFlow {
 #[derive(Clone, Debug)]
 pub struct DomElement {
   pub children: Vec<DomElement>,
-  pub attributes: Vec<KeyValue>,
+  pub attributes: HashMap<String, String>,
   pub parent_node: *mut DomElement,
   pub node_value: String,
   pub node_type: NodeType,
@@ -68,7 +71,7 @@ impl DomElement {
   pub fn new(node_type: NodeType) -> DomElement {
     DomElement {
       children: vec![],
-      attributes: vec![],
+      attributes: HashMap::new(),
       parent_node: std::ptr::null_mut(),
       node_type,
       inner_html: "".to_string(),
@@ -146,7 +149,7 @@ fn tokenize(html: String) -> Vec<String> {
     }
     if c == '<' || (code_block && c == '\n' && c != '<') {
       if capturing {
-        captured_text = captured_text.trim().to_string();
+        captured_text = captured_text.to_string();
         if captured_text != "" {
           tokens.push(captured_text.clone());
           if code_block && c == '\n' {
@@ -174,7 +177,7 @@ fn tokenize(html: String) -> Vec<String> {
       if !ignore {
         capturing = false;
         captured_text.push(c);
-        captured_text = captured_text.trim().to_string();
+        captured_text = captured_text.to_string();
       }
 
       if captured_text.starts_with("<code") {
@@ -220,8 +223,8 @@ fn get_opening_tag<'a>(tag_name: &str, element: *const DomElement) -> Option<&'a
   }
 }
 
-fn get_attributes(source: String, tag_name: String) -> Vec<KeyValue> {
-  let mut list: Vec<KeyValue> = vec![];
+fn get_attributes(source: String, tag_name: String) -> HashMap<String, String> {
+  let mut map = HashMap::new();
   let mut attr = KeyValue::new();
 
   let mut capturing_value = false;
@@ -252,7 +255,7 @@ fn get_attributes(source: String, tag_name: String) -> Vec<KeyValue> {
           attr.1 = attr.1.trim().to_string();
         }
 
-        list.push(attr);
+        map.insert(attr.0.clone(), attr.1.clone());
       }
 
       attr = KeyValue::new();
@@ -262,7 +265,7 @@ fn get_attributes(source: String, tag_name: String) -> Vec<KeyValue> {
     }
   }
 
-  return list;
+  return map;
 }
 
 fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
@@ -305,7 +308,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
           }
           NodeType::Comment => {
             element.node_value =
-              unsafe { token.get_unchecked(4..token.len() - 3).trim().to_string() };
+              unsafe { token.get_unchecked(4..token.len() - 3).to_string() };
           }
           _ => {}
         }

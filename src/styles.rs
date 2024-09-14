@@ -56,12 +56,14 @@ pub fn get_inheritable_declaration_option(
   inherit_declarations: &HashMap<String, CssValue>,
   key: &str,
 ) -> Option<CssValue> {
+  let inherited = match inherit_declarations.get(key) {
+    Some(v) => Some(v.clone()),
+    None => None,
+  };
+
   match declarations.get(key) {
-    Some(v) => Some(CssValue::String(v.clone())),
-    None => match inherit_declarations.get(key) {
-      Some(v) => Some(v.clone()),
-      None => None,
-    },
+    Some(v) => if v == "inherit" { inherited } else { Some(CssValue::String(v.clone())) },
+    None => inherited,
   }
 }
 

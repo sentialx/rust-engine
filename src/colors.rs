@@ -32,13 +32,14 @@ pub fn hex_to_rgb(s: &str) -> Result<ColorTuple, String> {
 }
 
 pub fn parse_css_color(s: &str) -> Result<ColorTupleA, String> {
+  let s = s.to_string().replace("!important", "");
   if s.starts_with("#") {
-    match hex_to_rgb(s) {
+    match hex_to_rgb(&s) {
       Ok(r) => Ok((r.0, r.1, r.2, 255.0)),
-      Err(_) => Err(make_parse_css_err(s)),
+      Err(_) => Err(make_parse_css_err(&s)),
     }
   } else {
-    Err(make_parse_css_err(s))
+    Err(make_parse_css_err(&s))
   }
 }
 

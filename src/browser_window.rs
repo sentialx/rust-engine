@@ -37,11 +37,13 @@ pub fn create_browser_window(url: String) {
         )
     };
 
-    let get_window_rect = |window: &PistonWindow| -> Rect {
+    let mut scroll_y: f64 = 0.0;
+
+    let get_window_rect = |window: &PistonWindow, scroll_y: f64| -> Rect {
         let window_size = window.size();
         return Rect {
             x: 0.0,
-            y: 0.0,
+            y: scroll_y.clone(),
             width: window_size.width as f64,
             height: window_size.height as f64,
         };
@@ -70,9 +72,9 @@ pub fn create_browser_window(url: String) {
         ]
     };
 
-    let rerender = |window: &PistonWindow| {
+    let rerender = |window: &PistonWindow, scroll_y: f64| {
         let s = Instant::now();
-        let window_rect = get_window_rect(&window);
+        let window_rect = get_window_rect(&window, scroll_y);
         let render_array: Vec<RenderItem> = get_render_array(
             &mut dom_tree.borrow_mut(),
             &window_rect,
@@ -111,10 +113,10 @@ pub fn create_browser_window(url: String) {
         println!("Computing styles took: {:?}", s.elapsed());
     };
 
-    let recalc_all = |window: &PistonWindow, styles: &Vec<StyleRule>| {
+    let recalc_all = |window: &PistonWindow, styles: &Vec<StyleRule>, scroll_y: f64| {
         recompute_styles(&window, &styles);
         reflow();
-        return rerender(&window)
+        return rerender(&window, scroll_y);
     };
 
     let refresh = |window: &PistonWindow, u: String| {
@@ -124,26 +126,59 @@ pub fn create_browser_window(url: String) {
         let style = get_styles(dom_tree.borrow_mut().clone(), None);
         *parsed_css.borrow_mut() = parse_css(&style);
 
+        println!("Styles: {:?}", parsed_css.borrow_mut());
+
         return [default_styles.clone(), parsed_css.borrow_mut().clone()].concat()
     };
 
     styles = refresh(&window, url.clone());
-    render_array = recalc_all(&window, &styles);
+    render_array = recalc_all(&window, &styles, scroll_y);
+
+    let mut pressed_up = false;
+    let mut pressed_down = false;
 
     while let Some(event) = window.next() {
         let mouse = event.mouse_cursor_args();
 
+        // key down
+
         if let Some(Button::Keyboard(key)) = event.press_args() {
             if key == Key::F5 {
                 styles = refresh(&window, url.clone());
-                render_array = recalc_all(&window, &styles);
+                render_array = recalc_all(&window, &styles, scroll_y);
+            }
+
+            if key == Key::Up {
+                pressed_up = true;
+            } else if key == Key::Down {
+                pressed_down = true;
             }
         };
+
+        if let Some(Button::Keyboard(key)) = event.release_args() {
+            if key == Key::Up {
+                pressed_up = false;
+            } else if key == Key::Down {
+                pressed_down = false;
+            }
+        };
+
+        if pressed_up {
+            scroll_y -= 10.0;
+        }
+
+        if pressed_down {
+            scroll_y += 10.0;
+        }
+
+        if pressed_down || pressed_up {
+            render_array = rerender(&window, scroll_y);
+        }
 
         // on resize
         if let Some(size) = event.resize_args() {
             reflow();
-            render_array = rerender(&window);
+            render_array = rerender(&window, scroll_y);
         }
 
         let mut mouse_x = 0.0;
@@ -167,11 +202,13 @@ pub fn create_browser_window(url: String) {
             clear([1.0, 1.0, 1.0, 1.0], graphics);
 
             for item in &render_array {
+                let item_y = item.y - scroll_y;
+
                 if item.background_color != (0.0, 0.0, 0.0, 0.0) {
                     rectangle(
                         color_conv(item.background_color),
                         [0.0, 0.0, item.width, item.height],
-                        context.transform.trans(item.x, item.y),
+                        context.transform.trans(item.x, item_y),
                         graphics,
                     );
                 }
@@ -189,7 +226,7 @@ pub fn create_browser_window(url: String) {
                             &context.draw_state,
                             context
                                 .transform
-                                .trans(item.x, item.y + item.height - 4.0)
+                                .trans(item.x, item_y + item.height - 4.0)
                                 .zoom(0.5),
                             graphics,
                         )
@@ -199,7 +236,7 @@ pub fn create_browser_window(url: String) {
                         rectangle(
                             color,
                             [0.0, 0.0, item.width, 1.0],
-                            context.transform.trans(item.x, item.y + item.height - 3.0),
+                            context.transform.trans(item.x, item_y + item.height - 3.0),
                             graphics,
                         );
                     }

@@ -53,6 +53,13 @@ pub fn rect_contains(rect: &Rect, x: f64, y: f64) -> bool {
     return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
 }
 
+pub fn is_in_viewport(rect: &Rect, viewport: &Rect) -> bool {
+    return rect.x + rect.width >= viewport.x
+        && rect.x <= viewport.x + viewport.width
+        && rect.y + rect.height >= viewport.y
+        && rect.y <= viewport.y + viewport.height;
+}
+
 pub fn should_rerender(
     mouse_x: f64,
     mouse_y: f64,
@@ -92,10 +99,37 @@ pub fn element_matches_hover_selector(element: &DomElement, selector: &str) -> b
     selector.to_uppercase() == element.tag_name.clone() + ":HOVER"
 }
 
+pub fn element_matches_single_selector(element: &DomElement, selector: &str) -> bool {
+    if selector == "*" {
+        return true;
+    }
+
+    if selector.to_uppercase() == element.tag_name {
+        return true;
+    }
+
+    if selector.starts_with('#') && element.attributes.contains_key("id") {
+        return element.attributes.get("id").unwrap() == &selector[1..];
+    }
+
+    if selector.starts_with(".") && element.attributes.contains_key("class") {
+        let classes = element.attributes.get("class").unwrap().split(" ").collect::<Vec<&str>>();
+        return classes.contains(&&selector[1..]);
+    }
+
+    return false;
+}
+
 pub fn element_matches_selector(element: &DomElement, selector: &str) -> bool {
-    selector.to_uppercase() == element.tag_name
-        || selector == "*"
-        || (element_matches_hover_selector(&element, selector) && element.is_hovered)
+    let selectors = selector.split(",").collect::<Vec<&str>>();
+
+    for s in selectors {
+        if element_matches_single_selector(element, s.trim()) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 pub fn compute_styles(
@@ -236,6 +270,11 @@ pub fn compute_styles(
         let margin_left = get_numeric_declaration_value("margin-left");
         let margin_right = get_numeric_declaration_value("margin-right");
 
+        let padding_top = get_numeric_declaration_value("padding-top");
+        let padding_bottom = get_numeric_declaration_value("padding-bottom");
+        let padding_left = get_numeric_declaration_value("padding-left");
+        let padding_right = get_numeric_declaration_value("padding-right");
+
         let element = &mut tree[i];
 
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE" {
@@ -249,12 +288,19 @@ pub fn compute_styles(
                 bottom: margin_bottom,
                 left: margin_left,
             },
+            padding: Margin {
+                top: padding_top,
+                right: padding_right,
+                bottom: padding_bottom,
+                left: padding_left,
+            },
             background_color: background_color,
             color: color,
             font_size: font_size,
             font_path: font_path.to_string(),
             text_decoration: text_decoration.to_string(),
             display: display.to_string(),
+            float: get_declaration_value(&element.style, "float", "none"),
         });
     }
 }
@@ -264,6 +310,10 @@ pub struct ReflowContext {
     pub x: f64,
     pub y: f64,
     pub adjacent_margin_bottom: f64,
+}
+
+fn is_horizontal_layout(computed_style: &ComputedStyle) -> bool {
+    return computed_style.display == "inline-block" || computed_style.display == "inline" || computed_style.float != "none";
 }
 
 pub fn reflow(
@@ -306,14 +356,14 @@ pub fn reflow(
             let prev_computed_style = previous_element.computed_style.as_ref().unwrap();
             let prev_computed_flow = previous_element.computed_flow.as_ref().unwrap();
 
-            if prev_computed_style.display == "inline-block" {
+            if is_horizontal_layout(prev_computed_style) {
                 y = prev_computed_flow.y;
             }
 
-            let should_continue_horizontal_layout = computed_style.display == "inline-block"
-                && prev_computed_style.display == "inline-block";
+            let should_continue_horizontal_layout = is_horizontal_layout(computed_style)
+                && is_horizontal_layout(prev_computed_style);
 
-            if computed_style.display == "inline-block" && should_continue_horizontal_layout {
+            if is_horizontal_layout(computed_style) && should_continue_horizontal_layout {
                 // Horizontal layout
                 x = prev_computed_flow.x + prev_computed_flow.width;
                 context.adjacent_margin_bottom = 0.0;
@@ -339,12 +389,15 @@ pub fn reflow(
 
         let mut adjacent_margin_bottom = 0.0;
 
+        width = computed_style.padding.left + computed_style.padding.right;
+        height = computed_style.padding.top + computed_style.padding.bottom;
+
         if element.children.len() > 0
             && element.tag_name != "SCRIPT"
             && element.tag_name != "STYLE"
         {
-            context.x = x;
-            context.y = y;
+            context.x = x + computed_style.padding.left;
+            context.y = y + computed_style.padding.top;
 
             reflow(
                 &mut element.children,
@@ -353,19 +406,20 @@ pub fn reflow(
             );
 
             for el in &element.children {
-                let computed_flow = el.computed_flow.as_ref();
-                let computed_style = el.computed_style.as_ref();
-                if computed_flow.is_none() || computed_style.is_none() {
+                let el_computed_flow = el.computed_flow.as_ref();
+                let el_computed_style = el.computed_style.as_ref();
+                if el_computed_flow.is_none() || el_computed_style.is_none() {
                     continue;
                 }
-                let computed_flow = computed_flow.unwrap();
-                let computed_style = computed_style.unwrap();
+                let el_computed_flow = el_computed_flow.unwrap();
+                let el_computed_style = el_computed_style.unwrap();
                 width = f64::max(
-                    computed_flow.width + (computed_flow.x - x) + computed_style.margin.right,
+                    el_computed_flow.width + (el_computed_flow.x - x) + el_computed_style.margin.right + computed_style.padding.right,
                     width,
                 );
+                
                 height = f64::max(
-                    computed_flow.height + (computed_flow.y - y) + computed_style.margin.bottom,
+                    el_computed_flow.height + (el_computed_flow.y - y) + el_computed_style.margin.bottom + computed_style.padding.bottom,
                     height,
                 );
             }
@@ -442,8 +496,14 @@ pub fn get_render_array(
             continue;
         }
         let computed_flow = computed_flow.unwrap();
+        let rect = Rect {
+            x: computed_flow.x,
+            y: computed_flow.y,
+            width: computed_flow.width,
+            height: computed_flow.height,
+        };
 
-        let is_in_viewport = rect_contains(viewport, computed_flow.x, computed_flow.y);
+        let is_in_viewport = is_in_viewport(viewport, &rect);
         if element.children.len() > 0
             && element.tag_name != "SCRIPT"
             && element.tag_name != "STYLE"
