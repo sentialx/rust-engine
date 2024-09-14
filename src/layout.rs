@@ -113,8 +113,9 @@ pub fn element_matches_single_selector(element: &DomElement, selector: &str) -> 
     }
 
     if selector.starts_with(".") && element.attributes.contains_key("class") {
+        let selector_classes = selector.split(".").collect::<Vec<&str>>()[1..].to_vec();
         let classes = element.attributes.get("class").unwrap().split(" ").collect::<Vec<&str>>();
-        return classes.contains(&&selector[1..]);
+        return selector_classes.iter().all(|c| classes.contains(c));
     }
 
     return false;
@@ -130,6 +131,44 @@ pub fn element_matches_selector(element: &DomElement, selector: &str) -> bool {
     }
 
     return false;
+}
+
+pub fn get_element_at(
+    tree: &Vec<DomElement>,
+    x: f64,
+    y: f64,
+) -> Option<&DomElement> {
+    let elements_len = tree.len();
+
+    for i in 0..elements_len {
+        let element = &tree[i];
+        let computed_flow = element.computed_flow.as_ref();
+        if computed_flow.is_none() {
+            continue;
+        }
+        let computed_flow = computed_flow.unwrap();
+        let rect = Rect {
+            x: computed_flow.x,
+            y: computed_flow.y,
+            width: computed_flow.width,
+            height: computed_flow.height,
+        };
+
+        let element = &tree[i];
+
+        if element.children.len() > 0 {
+            let child = get_element_at(&element.children, x, y);
+            if child.is_some() {
+                return child;
+            } else if rect_contains(&rect, x, y) {
+                return Some(element);
+            }
+        } else if rect_contains(&rect, x, y) {
+            return Some(element);
+        }
+    }
+
+    return None;
 }
 
 pub fn compute_styles(
@@ -372,7 +411,7 @@ pub fn reflow(
                 y = reserved_block_y;
                 y += f64::max(computed_style.margin.bottom, computed_style.margin.top);
 
-                context.adjacent_margin_bottom = prev_computed_flow.adjacent_margin_bottom;
+                // context.adjacent_margin_bottom = prev_computed_flow.adjacent_margin_bottom;
             }
 
             x += computed_style.margin.right;

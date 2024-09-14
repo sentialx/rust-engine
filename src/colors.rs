@@ -39,6 +39,26 @@ pub fn parse_css_color(s: &str) -> Result<ColorTupleA, String> {
       Err(_) => Err(make_parse_css_err(&s)),
     }
   } else {
+    if s.starts_with("rgb") {
+      let start = s.find("(").unwrap_or(0) + 1;
+      let end = s.find(")").unwrap_or(0);
+      let parts = s[start..end].split(",").collect::<Vec<&str>>();
+
+      if parts.len() == 3 {
+        let r = parts[0].trim().parse::<f64>().unwrap_or(0.0);
+        let g = parts[1].trim().parse::<f64>().unwrap_or(0.0);
+        let b = parts[2].trim().parse::<f64>().unwrap_or(0.0);
+
+        return Ok((r, g, b, 255.0));
+      } else if parts.len() == 4 {
+        let r = parts[0].trim().parse::<f64>().unwrap_or(0.0);
+        let g = parts[1].trim().parse::<f64>().unwrap_or(0.0);
+        let b = parts[2].trim().parse::<f64>().unwrap_or(0.0);
+        let a = parts[3].trim().parse::<f64>().unwrap_or(0.0);
+
+        return Ok((r, g, b, a * 255.0));
+      }
+    }
     Err(make_parse_css_err(&s))
   }
 }

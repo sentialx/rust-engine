@@ -4,7 +4,9 @@ use crate::debug::*;
 use crate::html::*;
 use crate::layout::*;
 use crate::styles::*;
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::fmt::format;
 use std::time::Instant;
 
 extern crate find_folder;
@@ -137,6 +139,12 @@ pub fn create_browser_window(url: String) {
     let mut pressed_up = false;
     let mut pressed_down = false;
 
+    let mut mouse_x = 0.0;
+    let mut mouse_y = 0.0;
+
+    let mut el_txt = "".to_string();
+    let mut element: Option<&DomElement> = None;
+    
     while let Some(event) = window.next() {
         let mouse = event.mouse_cursor_args();
 
@@ -173,6 +181,7 @@ pub fn create_browser_window(url: String) {
 
         if pressed_down || pressed_up {
             render_array = rerender(&window, scroll_y);
+            println!("items: {:?}", render_array);
         }
 
         // on resize
@@ -181,12 +190,14 @@ pub fn create_browser_window(url: String) {
             render_array = rerender(&window, scroll_y);
         }
 
-        let mut mouse_x = 0.0;
-        let mut mouse_y = 0.0;
+
 
         if mouse.is_some() {
             mouse_x = mouse.unwrap()[0];
             mouse_y = mouse.unwrap()[1];
+
+            // get dom element at mouse position
+            
 
             // if should_rerender(
             //     mouse_x,
@@ -198,8 +209,19 @@ pub fn create_browser_window(url: String) {
             // }
         }
 
+        let mut dom_tree = dom_tree.borrow_mut();
+        let element = get_element_at(&dom_tree, mouse_x, mouse_y + scroll_y);
+        if element.is_some() {
+            let el = element.unwrap();
+            el_txt = format!("{:?} {:#?} {:#?}", el.tag_name, el.attributes, el.computed_style);
+        }
+
+        let window_size = &window.size();
+
         window.draw_2d(&event, |context, graphics, device| {
             clear([1.0, 1.0, 1.0, 1.0], graphics);
+
+            let mut font_path = "".to_string();
 
             for item in &render_array {
                 let item_y = item.y - scroll_y;
@@ -216,6 +238,7 @@ pub fn create_browser_window(url: String) {
                 if item.text != "" {
                     let mut glyphs_map = glyphs_map.borrow_mut();
                     let glyphs = glyphs_map.get_mut(&item.font_path).unwrap();
+                    font_path = item.font_path.clone();
 
                     let color = color_conv(item.color);
 
@@ -242,6 +265,52 @@ pub fn create_browser_window(url: String) {
                     }
                     glyphs.factory.encoder.flush(device);
                 }
+
+                
+            }
+
+            if element.is_some() {
+                let mut glyphs_map = glyphs_map.borrow_mut();
+                let glyphs = glyphs_map.get_mut(&font_path).unwrap();
+
+                let el = element.unwrap();
+                let computed_flow = el.computed_flow.as_ref().unwrap();
+                let el_y = computed_flow.y - scroll_y;
+
+                rectangle(
+                    [1.0, 0.0, 0.5, 0.1],
+                    [0.0, 0.0, computed_flow.width, computed_flow.height],
+                    context.transform.trans(computed_flow.x, el_y),
+                    graphics,
+                );
+
+                let dev_tools_width = 256.0;    
+                let dev_tools_x = window_size.width - dev_tools_width;
+            
+                rectangle(
+                    [255.0, 255.0, 255.0, 255.0],
+                    [0.0, 0.0, dev_tools_width, window_size.height as f64],
+                    context.transform.trans(dev_tools_x, 0.0),
+                    graphics,
+                );
+
+                // split newlines
+                let mut lines = el_txt.split("\n");
+                for (i, line) in lines.enumerate() {
+                    text::Text::new_color([0.0, 0.0,0.0, 255.0], 2 * ((14.0 - 2.0) as u32))
+                        .draw(
+                            &line,
+                            glyphs,
+                            &context.draw_state,
+                            context
+                                .transform
+                                    .trans(dev_tools_x,64.0 + 14.0 * i as f64)
+                                    .zoom(0.5),
+                            graphics,
+                        )
+                        .unwrap();
+                }
+            
             }
         });
     }
