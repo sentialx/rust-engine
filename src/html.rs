@@ -39,6 +39,14 @@ pub struct ComputedStyle {
   pub text_decoration: String,
   pub display: String,
   pub float: String,
+  pub hoverable: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextLine {
+  pub text: String,
+  pub x: f64,
+  pub y: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +57,7 @@ pub struct ComputedFlow {
   pub height: f64,
   pub adjacent_margin_bottom: f64,
   pub hover_rect: Rect,
+  // pub text_lines: Vec<TextLine>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,7 +140,7 @@ fn get_node_type(token: &str) -> NodeType {
   return NodeType::Text;
 }
 
-fn tokenize(html: String) -> Vec<String> {
+pub fn tokenize(html: String) -> Vec<String> {
   let mut tokens: Vec<String> = vec![];
 
   let mut capturing = false;
@@ -147,7 +156,7 @@ fn tokenize(html: String) -> Vec<String> {
     if (!code_block && c == '\n') || c == '\r' || c == '\t' {
       continue;
     }
-    if c == '<' || (code_block && c == '\n' && c != '<') {
+    if (c == '<' || (code_block && c == '\n' && c != '<')) && !ignore {
       if capturing {
         captured_text = captured_text.to_string();
         if captured_text != "" {
@@ -163,10 +172,12 @@ fn tokenize(html: String) -> Vec<String> {
       captured_text = String::from("");
     } else if c == '>' || i == len - 1 {
       if ignore
-        && (captured_text == "</script"
-          || captured_text == "</style"
-          || captured_text.ends_with("--"))
-      {
+        && (captured_text.ends_with("--"))
+        {
+          ignore = false;
+        }
+        
+        if ignore && (captured_text.ends_with("</script") || captured_text.ends_with("</style")) {
         ignore = false;
       }
 
@@ -185,11 +196,29 @@ fn tokenize(html: String) -> Vec<String> {
       }
 
       if !ignore && captured_text != "" {
+        let mut add_suffix = "";
+        
+        if captured_text.ends_with("</script>") {
+          add_suffix = "</script>";
+          captured_text = captured_text.replace("</script>", "");
+        }
+
+        if captured_text.ends_with("</style>") {
+          add_suffix = "</style>";
+          captured_text = captured_text.replace("</style>", "");
+        }
+
         tokens.push(captured_text.clone());
+
+        if add_suffix != "" {
+          tokens.push(add_suffix.to_string());
+        }
 
         if captured_text.starts_with("<script") || captured_text.starts_with("<style") {
           ignore = true;
         }
+
+ 
 
         captured_text = String::from("");
       }
