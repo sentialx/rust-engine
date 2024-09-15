@@ -46,6 +46,9 @@ impl RenderItem {
 }
 
 pub fn hit_test_element(element: &DomElement, x: f64, y: f64) -> bool {
+    if element.computed_flow.is_none() {
+        return false;
+    }
     return rect_contains(&element.computed_flow.as_ref().unwrap().hover_rect, x, y);
 }
 
@@ -74,12 +77,14 @@ pub fn should_rerender(
         let mut hovered = false;
         let mut element = &mut tree[i];
 
-        for style_rule in style {
-            if element_matches_hover_selector(&element, &style_rule.selector) {
-                hovered = hit_test_element(&element, mouse_x, mouse_y);
-            }
+        if element.computed_style.is_none() {
+            continue;
         }
 
+        if element.computed_style.as_ref().unwrap().hoverable {
+            hovered = hit_test_element(&element, mouse_x, mouse_y);
+        }
+       
         if hovered != element.is_hovered {
             element.is_hovered = hovered;
             dirty = true;
@@ -99,33 +104,34 @@ pub fn element_matches_hover_selector(element: &DomElement, selector: &str) -> b
     selector.to_uppercase() == element.tag_name.clone() + ":HOVER"
 }
 
-pub fn element_matches_single_selector(element: &DomElement, selector: &str) -> bool {
-    if selector == "*" {
+pub fn element_matches_single_selector(element: &DomElement, selector: &str, pseudo: &str) -> bool {
+    if selector == "*".to_string() + pseudo {
         return true;
     }
 
-    if selector.to_uppercase() == element.tag_name {
+    if selector.to_uppercase() == element.tag_name.to_string() + pseudo {
         return true;
     }
 
     if selector.starts_with('#') && element.attributes.contains_key("id") {
-        return element.attributes.get("id").unwrap() == &selector[1..];
+        return element.attributes.get("id").unwrap().to_string() + pseudo == &selector[1..];
     }
 
     if selector.starts_with(".") && element.attributes.contains_key("class") {
         let selector_classes = selector.split(".").collect::<Vec<&str>>()[1..].to_vec();
-        let classes = element.attributes.get("class").unwrap().split(" ").collect::<Vec<&str>>();
-        return selector_classes.iter().all(|c| classes.contains(c));
+        let classes = element.attributes.get("class").unwrap().split(" ").map(|c| c.to_string() + pseudo).collect::<Vec<String>>();
+        // println!("{:?}", classes);
+        return selector_classes.iter().all(|c| classes.contains(&c.to_string()));
     }
 
     return false;
 }
 
-pub fn element_matches_selector(element: &DomElement, selector: &str) -> bool {
+pub fn element_matches_selector(element: &DomElement, selector: &str, pseudo: &str) -> bool {
     let selectors = selector.split(",").collect::<Vec<&str>>();
 
     for s in selectors {
-        if element_matches_single_selector(element, s.trim()) {
+        if element_matches_single_selector(element, s.trim(), pseudo) {
             return true;
         }
     }
@@ -184,15 +190,40 @@ pub fn compute_styles(
         let mut new_inherit_declarations = inherit_declarations.clone();
 
         let mut element = &mut tree[i];
+        let mut hoverable = false;
         element.style = HashMap::new();
         {
             for style_rule in style {
-                if element_matches_selector(&element, &style_rule.selector) {
+                if element_matches_selector(&element, &style_rule.selector, "") {
                     for declaration in &style_rule.declarations {
                         element
                             .style
                             .insert(declaration.0.clone(), declaration.1.clone());
                     }
+                }
+
+                if element_matches_selector(&element, &style_rule.selector, ":HOVER") {
+                    hoverable = true;
+                    if element.is_hovered {
+                        for declaration in &style_rule.declarations {
+                            element
+                                .style
+                                .insert(declaration.0.clone(), declaration.1.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // parse style attribute
+        let style_attribute = element.attributes.get("style");
+        if style_attribute.is_some() {
+            let style_attribute = "{".to_string() + style_attribute.unwrap() + "}";
+            let rules = parse_css(&style_attribute);
+            for rule in rules {
+                for declaration in &rule.declarations {
+
+                element.style.insert(declaration.0.clone(), declaration.1.clone());
                 }
             }
         }
@@ -340,6 +371,7 @@ pub fn compute_styles(
             text_decoration: text_decoration.to_string(),
             display: display.to_string(),
             float: get_declaration_value(&element.style, "float", "none"),
+            hoverable: hoverable,
         });
     }
 }
@@ -484,6 +516,11 @@ pub fn reflow(
                     .replace("&nbsp;", " ")
                     .replace("&gt;", ">")
                     .replace("&lt;", "<");
+
+
+                // text wrapping
+
+
                 let size = measure_text(
                     element.node_value.clone(),
                     computed_style.font_size,
