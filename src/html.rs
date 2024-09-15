@@ -160,7 +160,7 @@ pub fn tokenize(html: String) -> Vec<String> {
       if capturing {
         captured_text = captured_text.to_string();
         if captured_text != "" {
-          tokens.push(captured_text.clone());
+          tokens.push(captured_text.clone().trim().to_string());
           if code_block && c == '\n' {
             tokens.push("<br/>".to_string());
           }

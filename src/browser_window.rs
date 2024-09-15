@@ -107,7 +107,7 @@ pub fn create_browser_window(url: String) {
         let closure_ref = RefCell::new(|text: String, font_size: f64, font_family: String| {
             let mut glyphs_map = glyphs_map.borrow_mut();
             let glyphs = glyphs_map.get_mut(font_family.as_str()).unwrap();
-            return 0.5 * glyphs.width(2 * (font_size - 2.0) as u32, &text).unwrap();
+            return 0.5 * glyphs.width(2 * (font_size) as u32, &text).unwrap();
         });
 
         reflow(
@@ -277,7 +277,7 @@ pub fn create_browser_window(url: String) {
 
                         let color = color_conv(item.color);
 
-                        text::Text::new_color(color, 2 * ((item.font_size - 2.0) as u32))
+                        text::Text::new_color(color, 2 * ((item.font_size) as u32))
                             .draw(
                                 &item.text,
                                 glyphs,
