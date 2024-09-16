@@ -308,7 +308,11 @@ pub fn reflow(
             let prev_computed_flow = previous_element.computed_flow.as_ref().unwrap();
 
             if is_horizontal_layout(prev_style) {
-                y = prev_computed_flow.continue_y;
+                if comp_style.display == "inline-block" || comp_style.float != "none" {
+                    y = prev_computed_flow.y;
+                } else {
+                    y = prev_computed_flow.continue_y;
+                }
             }
 
             let should_continue_horizontal_layout = is_horizontal_layout(style)
@@ -316,8 +320,12 @@ pub fn reflow(
 
             if is_horizontal_layout(style) && should_continue_horizontal_layout {
                 // Horizontal layout
+                if comp_style.display == "inline-block" || comp_style.float != "none" {
+                    x = prev_computed_flow.x + prev_computed_flow.width;
+                } else {
+                    x = prev_computed_flow.continue_x;
+                }
                 // x = prev_computed_flow.x + prev_computed_flow.width;
-                x = prev_computed_flow.continue_x;
                 context.adjacent_margin_bottom = 0.0;
             } else {
                 // Vertical layout
@@ -438,7 +446,7 @@ pub fn reflow(
                 let mut w = 0.0;
 
                 let mut ly = y;
-                let mut lx = continue_x;
+                let mut lx = x;
                 let mut lw = 0.0;
 
                 for word in words {
@@ -467,6 +475,14 @@ pub fn reflow(
 
                     line += format!(" {}", word).as_str();
                 }
+
+                let size = measure_text(
+                    line.clone(),
+                    comp_style.font_size,
+                    style.font.get_path(),
+                );
+
+                lw = size.0;
 
                 lines.push(TextLine {
                     text: line.clone(),

@@ -191,7 +191,7 @@ pub fn create_browser_window(url: String) {
 
         // scroll event
         if let Some(args) = event.mouse_scroll_args() {
-            scroll_y -= args[1] as f32 * 24.0;
+            scroll_y -= args[1] as f32 * 1.0;
             render_array = rerender(&window, scroll_y);
         }
 
@@ -327,12 +327,12 @@ pub fn create_browser_window(url: String) {
                     //     g,
                     // );
                     
-                    // rectangle(
-                    //     [1.0, 0.0, 0.5, 1.0],
-                    //     [0.0, 0.0, 128.0, 18.0],
-                    //     c.transform.trans(computed_flow.x as f64, el_y - 18.0),
-                    //     g,
-                    // );
+                    rectangle(
+                        [1.0, 0.0, 0.5, 1.0],
+                        [0.0, 0.0, 128.0, 18.0],
+                        c.transform.trans(computed_flow.x as f64, el_y - 18.0),
+                        g,
+                    );
 
                     // // split newlines
                     if glyphs_map.get_mut(&font_path).is_some() {
