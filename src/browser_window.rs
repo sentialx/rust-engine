@@ -48,17 +48,17 @@ pub fn create_browser_window(url: String) {
         )
     };
 
-    let mut scroll_y: f64 = 0.0;
+    let mut scroll_y: f32 = 0.0;
 
 
 
-    let get_window_rect = |window: &PistonWindow, scroll_y: f64| -> Rect {
+    let get_window_rect = |window: &PistonWindow, scroll_y: f32| -> Rect {
         let window_size = window.size();
         return Rect {
             x: 0.0,
             y: scroll_y.clone(),
-            width: window_size.width as f64,
-            height: window_size.height as f64,
+            width: window_size.width as f32,
+            height: window_size.height as f32,
         };
     };
 
@@ -83,10 +83,10 @@ pub fn create_browser_window(url: String) {
         //     (c.2 / 255.0) as f32,
         //     (c.3 / 255.0) as f32,
         // ]
-        [c.0 as f32, c.1 as f32, c.2 as f32, c.3 as f32]
+        [c.0 as f32 / 255.0, c.1 as f32 / 255.0, c.2 as f32 / 255.0, c.3 as f32]
     };
 
-    let rerender = |window: &PistonWindow, scroll_y: f64| {
+    let rerender = |window: &PistonWindow, scroll_y: f32| {
         let s = Instant::now();
         let window_rect = get_window_rect(&window, scroll_y);
         let render_array: Vec<RenderItem> =
@@ -102,9 +102,9 @@ pub fn create_browser_window(url: String) {
         return render_array;
     };
 
-    let reflow = || {
+    let reflow = |window: &PistonWindow, scroll_y: f32| {
         let s = Instant::now();
-        let closure_ref = RefCell::new(|text: String, font_size: f64, font_family: String| {
+        let closure_ref = RefCell::new(|text: String, font_size: f32, font_family: String| {
             let mut glyphs_map = glyphs_map.borrow_mut();
             let glyphs = glyphs_map.get_mut(font_family.as_str()).unwrap();
             return 0.5 * glyphs.width(2 * (font_size) as u32, &text).unwrap();
@@ -114,11 +114,12 @@ pub fn create_browser_window(url: String) {
             &mut dom_tree.borrow_mut(),
             &move |text, font_size, font_family| {
                 return (
-                    (closure_ref.borrow_mut())(text, font_size, font_family),
+                    (closure_ref.borrow_mut())(text, font_size, font_family) as f32,
                     font_size - 2.0 + 8.0,
                 );
             },
             None,
+            &get_window_rect(&window, scroll_y),
         );
         println!("Reflow took: {:?}", s.elapsed());
     };
@@ -129,9 +130,9 @@ pub fn create_browser_window(url: String) {
         println!("Computing styles took: {:?}", s.elapsed());
     };
 
-    let recalc_all = |window: &PistonWindow, styles: &Vec<StyleRule>, scroll_y: f64| {
+    let recalc_all = |window: &PistonWindow, styles: &Vec<StyleRule>, scroll_y: f32| {
         recompute_styles(&window, &styles);
-        reflow();
+        reflow(&window, scroll_y);
         return rerender(&window, scroll_y);
     };
 
@@ -139,12 +140,10 @@ pub fn create_browser_window(url: String) {
         let contents = fs::read_to_string(u.clone()).expect("error while reading the file");
         *dom_tree.borrow_mut() = parse_html(&contents);
 
-        println!("{:#?}", tokenize(contents));
-
         let style = get_styles(dom_tree.borrow_mut().clone(), None);
         *parsed_css.borrow_mut() = parse_css(&style);
 
-        println!("Styles: {:?}", parsed_css.borrow_mut());
+        // println!("Styles: {:#?}", parsed_css.borrow_mut());
 
         return [default_styles.clone(), parsed_css.borrow_mut().clone()].concat();
     };
@@ -192,7 +191,7 @@ pub fn create_browser_window(url: String) {
 
         // scroll event
         if let Some(args) = event.mouse_scroll_args() {
-            scroll_y -= args[1] * 1.0;
+            scroll_y -= args[1] as f32 * 24.0;
             render_array = rerender(&window, scroll_y);
         }
 
@@ -204,7 +203,7 @@ pub fn create_browser_window(url: String) {
             scroll_y += 4.0;
         }
 
-        scroll_y = f64::max(0.0, scroll_y);
+        scroll_y = f32::max(0.0, scroll_y);
 
         if pressed_down || pressed_up {
             render_array = rerender(&window, scroll_y);
@@ -213,13 +212,13 @@ pub fn create_browser_window(url: String) {
 
         // on resize
         if let Some(size) = event.resize_args() {
-            reflow();
+            reflow(&window, scroll_y);
             render_array = rerender(&window, scroll_y);
         }
 
         if mouse.is_some() {
-            mouse_x = mouse.unwrap()[0];
-            mouse_y = mouse.unwrap()[1];
+            mouse_x = mouse.unwrap()[0] as f32;
+            mouse_y = mouse.unwrap()[1] as f32;
 
             // get dom element at mouse position
 
@@ -260,74 +259,80 @@ pub fn create_browser_window(url: String) {
                 let mut glyphs_map = glyphs_map.borrow_mut();
 
                 for item in &render_array {
-                    let item_y = item.y - scroll_y;
+                    let item_y = item.y as f64 - scroll_y as f64;
                     let glyphs = glyphs_map.get_mut(&item.font_path).unwrap();
 
                     if item.background_color != (0.0, 0.0, 0.0, 0.0) {
                         rectangle(
                             color_conv(item.background_color),
-                            [0.0, 0.0, item.width, item.height],
-                            c.transform.trans(item.x, item_y),
+                            [0.0, 0.0, item.width as f64, item.height as f64],
+                            c.transform.trans(item.x as f64, item_y),
                             g,
                         );
                     }
 
-                    if item.text != "" {
+                    if item.text_lines.len() > 0 {
                         font_path = item.font_path.clone();
 
                         let color = color_conv(item.color);
 
-                        text::Text::new_color(color, 2 * ((item.font_size) as u32))
+                        for line in &item.text_lines {
+                            let ly = line.y as f64 - scroll_y as f64;
+                            text::Text::new_color(color, 2 * ((item.font_size) as u32))
                             .draw(
-                                &item.text,
+                                &line.text,
                                 glyphs,
                                 &c.draw_state,
                                 c.transform
-                                    .trans(item.x, item_y + item.height - 4.0)
+                                    .trans(line.x as f64, ly + (line.height as f64) - 4.0 )
                                     .zoom(0.5),
                                 g,
                             )
                             .unwrap();
 
-                        if item.underline {
-                            rectangle(
-                                color,
-                                [0.0, 0.0, item.width, 1.0],
-                                c.transform.trans(item.x, item_y + item.height - 3.0),
-                                g,
-                            );
+                            if item.underline {
+                                rectangle(
+                                    color,
+                                    [0.0, 0.0, item.width as f64, 1.0],
+                                    c.transform.trans(line.x as f64, ly + line.height as f64 - 3.0),
+                                    g,
+                                );
+                            }
                         }
+                       
+
+                       
                     }
                 }
 
                 if element.is_some() {
                     let el = element.unwrap();
                     let computed_flow = el.computed_flow.as_ref().unwrap();
-                    let el_y = computed_flow.y - scroll_y;
+                    let el_y = computed_flow.y as f64 - scroll_y as f64;
 
                     rectangle(
                         [1.0, 0.0, 0.5, 0.1],
-                        [0.0, 0.0, computed_flow.width, computed_flow.height],
-                        c.transform.trans(computed_flow.x, el_y),
+                        [0.0, 0.0, computed_flow.width as f64, computed_flow.height as f64],
+                        c.transform.trans(computed_flow.x as f64, el_y),
                         g,
                     );
 
                     let dev_tools_width = 256.0;
                     let dev_tools_x = window_size.width - dev_tools_width;
 
-                    rectangle(
-                        [255.0, 255.0, 255.0, 255.0],
-                        [0.0, 0.0, dev_tools_width, window_size.height as f64],
-                        c.transform.trans(dev_tools_x, 0.0),
-                        g,
-                    );
+                    // rectangle(
+                    //     [255.0, 255.0, 255.0, 255.0],
+                    //     [0.0, 0.0, dev_tools_width, window_size.height as f64],
+                    //     c.transform.trans(dev_tools_x, 0.0),
+                    //     g,
+                    // );
                     
-                    rectangle(
-                        [1.0, 0.0, 0.5, 1.0],
-                        [0.0, 0.0, 128.0, 18.0],
-                        c.transform.trans(computed_flow.x, el_y - 18.0),
-                        g,
-                    );
+                    // rectangle(
+                    //     [1.0, 0.0, 0.5, 1.0],
+                    //     [0.0, 0.0, 128.0, 18.0],
+                    //     c.transform.trans(computed_flow.x as f64, el_y - 18.0),
+                    //     g,
+                    // );
 
                     // // split newlines
                     if glyphs_map.get_mut(&font_path).is_some() {
@@ -340,33 +345,33 @@ pub fn create_browser_window(url: String) {
                             format!(
                                 "{:?} {:?}x{:?}",
                                 el.tag_name,
-                                f64::trunc(computed_flow.width * 10.0) / 10.0,
-                                f64::trunc(computed_flow.height * 10.0) / 10.0
+                                f64::trunc(computed_flow.width as f64 * 10.0) / 10.0,
+                                f64::trunc(computed_flow.height as f64 * 10.0) / 10.0
                             )
                             .as_str(),
                             glyphs,
                             &c.draw_state,
                             c.transform
-                                .trans(computed_flow.x, el_y - 4.0 as f64)
+                                .trans(computed_flow.x as f64, el_y - 4.0 as f64)
                                 .zoom(0.5),
                             g,
                         )
                         .unwrap();
 
-                    let mut lines = el_txt.split("\n");
-                    for (i, line) in lines.enumerate() {
-                        text::Text::new_color([0.0, 0.0, 0.0, 255.0], 2 * ((14.0 - 2.0) as u32))
-                            .draw(
-                                &line,
-                                glyphs,
-                                &c.draw_state,
-                                c.transform
-                                    .trans(dev_tools_x, 64.0 + 14.0 * i as f64)
-                                    .zoom(0.5),
-                                g,
-                            )
-                            .unwrap();
-                    }
+                    // let mut lines = el_txt.split("\n");
+                    // for (i, line) in lines.enumerate() {
+                    //     text::Text::new_color([0.0, 0.0, 0.0, 255.0], 2 * (12.0 as u32))
+                    //         .draw(
+                    //             &line,
+                    //             glyphs,
+                    //             &c.draw_state,
+                    //             c.transform
+                    //                 .trans(dev_tools_x, 8.0 + 12.0 * i as f64)
+                    //                 .zoom(0.5),
+                    //             g,
+                    //         )
+                    //         .unwrap();
+                    // }
                 }
                 }
 

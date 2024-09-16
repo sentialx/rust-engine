@@ -1,7 +1,10 @@
 use crate::colors::ColorTupleA;
+use crate::css::parse_css;
 use crate::layout::*;
+use crate::styles::{ComputedStyle, Style};
 use crate::utils::*;
 use std::collections::HashMap;
+use std::fmt::format;
 use std::hash::Hash;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,43 +24,25 @@ pub enum TagType {
 }
 
 #[derive(Clone, Debug)]
-pub struct Margin {
-  pub top: f64,
-  pub right: f64,
-  pub bottom: f64,
-  pub left: f64,
-}
-
-#[derive(Clone, Debug)]
-pub struct ComputedStyle {
-  pub margin: Margin,
-  pub padding: Margin,
-  pub background_color: ColorTupleA,
-  pub color: ColorTupleA,
-  pub font_size: f64,
-  pub font_path: String,
-  pub text_decoration: String,
-  pub display: String,
-  pub float: String,
-  pub hoverable: bool,
+pub struct ComputedFlow {
+  pub x: f32,
+  pub y: f32,
+  pub width: f32,
+  pub height: f32,
+  pub adjacent_margin_bottom: f32,
+  pub hover_rect: Rect,
+  pub continue_x: f32,
+  pub continue_y: f32,
+  // pub text_lines: Vec<TextLine>,
 }
 
 #[derive(Clone, Debug)]
 pub struct TextLine {
   pub text: String,
-  pub x: f64,
-  pub y: f64,
-}
-
-#[derive(Clone, Debug)]
-pub struct ComputedFlow {
-  pub x: f64,
-  pub y: f64,
-  pub width: f64,
-  pub height: f64,
-  pub adjacent_margin_bottom: f64,
-  pub hover_rect: Rect,
-  // pub text_lines: Vec<TextLine>,
+  pub x: f32,
+  pub y: f32,
+  pub width: f32,
+  pub height: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -70,10 +55,12 @@ pub struct DomElement {
   pub inner_html: String,
   pub outer_html: String,
   pub tag_name: String,
-  pub style: HashMap<String, String>,
+  pub style: Style,
+  pub inherited_style: Option<Style>,
   pub is_hovered: bool,
   pub computed_flow: Option<ComputedFlow>,
   pub computed_style: Option<ComputedStyle>,
+  pub lines: Vec<TextLine>,
 }
 
 impl DomElement {
@@ -87,11 +74,28 @@ impl DomElement {
       outer_html: "".to_string(),
       node_value: "".to_string(),
       tag_name: "".to_string(),
-      style: HashMap::new(),
+      style: Style::new(),
+      inherited_style: None,
       computed_flow: None,
       computed_style: None,
       is_hovered: false,
+      lines: vec![],
     }
+  }
+
+  pub fn set_attribute(&mut self, key: String, value: String) {
+    if key == "style" {
+      let val = format!("{{{}}}", value);
+      let mut rules = parse_css(&val);
+      for rule in rules.iter_mut() {
+        for decl in rule.declarations.iter_mut() {
+          decl.important = true;
+        }
+        self.style.insert_declarations(&rule.declarations);
+      }
+    }
+
+    self.attributes.insert(key, value);
   }
 }
 
@@ -252,8 +256,7 @@ fn get_opening_tag<'a>(tag_name: &str, element: *const DomElement) -> Option<&'a
   }
 }
 
-fn get_attributes(source: String, tag_name: String) -> HashMap<String, String> {
-  let mut map = HashMap::new();
+fn set_attributes(el: &mut DomElement, source: String, tag_name: String) {
   let mut attr = KeyValue::new();
 
   let mut capturing_value = false;
@@ -284,7 +287,7 @@ fn get_attributes(source: String, tag_name: String) -> HashMap<String, String> {
           attr.1 = attr.1.trim().to_string();
         }
 
-        map.insert(attr.0.clone(), attr.1.clone());
+        el.set_attribute(attr.0.clone(), attr.1.clone());
       }
 
       attr = KeyValue::new();
@@ -293,8 +296,6 @@ fn get_attributes(source: String, tag_name: String) -> HashMap<String, String> {
       inside_quotes = false;
     }
   }
-
-  return map;
 }
 
 fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
@@ -330,7 +331,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
         match node_type {
           NodeType::Element => {
             element.tag_name = tag_name.clone();
-            element.attributes = get_attributes(token.clone(), tag_name.clone());
+            set_attributes(&mut element, token.clone(), tag_name.clone());
           }
           NodeType::Text => {
             element.node_value = token;
