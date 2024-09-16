@@ -7,6 +7,8 @@ mod layout;
 mod styles;
 mod utils;
 mod lisia_colors;
+mod css_value;
+mod properties;
 
 use std::string::String;
 use browser_window::*;
