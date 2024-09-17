@@ -24,8 +24,7 @@ impl FontSize {
     }
   }
 
-  pub fn evaluate(&mut self) -> &Self {
-    let ctx = ScalarEvaluationContext { percent_base: 16.0 };
+  pub fn evaluate(&mut self, ctx: &ScalarEvaluationContext) -> &Self {
     match &mut self.value {
       Some(value) => {
         value.evaluate(&ctx);

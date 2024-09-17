@@ -3,6 +3,7 @@ use crate::css::*;
 use crate::html::*;
 use crate::styles::*;
 use crate::utils::*;
+use crate::TextMeasurer;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -174,7 +175,7 @@ pub fn get_element_at(
             } else if rect_contains(&rect, x, y) {
                 return Some(element);
             }
-        } else if rect_contains(&rect, x, y) {
+        } else if rect_contains(&rect, x, y) && element.node_type != NodeType::Text {
             return Some(element);
         }
     }
@@ -202,14 +203,6 @@ pub fn compute_styles(
             //     println!("{:#?}", style_rule.declarations);
             // }
             if element_matches_selector(&element, &style_rule.selector, "") {
-                for decl in &style_rule.declarations {
-                    if decl.key == "margin-left" {
-                    if style_rule.selector != "" {
-                        println!("{:#?}", style_rule.selector);
-                        }
-                    }
-                }
-                
                 element.style.insert_declarations(&style_rule.declarations);
             }
 
@@ -235,6 +228,7 @@ pub struct ReflowContext {
     pub y: f32,
     pub rel_x: f32,
     pub rel_y: f32,
+    pub font_size: f32,
     pub layout_x_start: Option<f32>,
     pub adjacent_margin_bottom: f32,
 }
@@ -245,7 +239,7 @@ fn is_horizontal_layout(computed_style: &Style) -> bool {
 
 pub fn reflow(
     tree: &mut Vec<DomElement>,
-    measure_text: &dyn Fn(String, f32, String) -> (f32, f32),
+    text_measurer: &mut dyn TextMeasurer,
     context: Option<ReflowContext>,
     viewport: &Rect,
 ) {
@@ -256,6 +250,7 @@ pub fn reflow(
         y: 0.0,
         rel_x: 0.0,
         rel_y: 0.0,
+        font_size: 16.0,
         layout_x_start: None,
         adjacent_margin_bottom: 0.0,
     });
@@ -276,16 +271,24 @@ pub fn reflow(
 
         let mut max_width = viewport.width;
 
+        // let parent_style = unsafe { 
+        //     match tree[i].parent_node.as_ref() {
+        //         Some(p) => p.inherited_style.as_ref(),
+        //         None => None,
+        //     }
+        // };
         let style = tree[i].inherited_style.as_mut().unwrap();
 
         if style.display.get() == "none" {
             continue;
         }
 
-        style.margin.evaluate();
-        style.padding.evaluate();
-        style.font_size.evaluate();
-        style.inset.evaluate();
+        let scalar_context = ScalarEvaluationContext::from_parent(context.font_size, context.font_size);
+
+        style.margin.evaluate(&scalar_context);
+        style.padding.evaluate(&scalar_context);
+        style.font_size.evaluate(&scalar_context);
+        style.inset.evaluate(&scalar_context);
 
         let style = tree[i].inherited_style.as_ref().unwrap();
 
@@ -330,17 +333,19 @@ pub fn reflow(
             } else {
                 // Vertical layout
                 y = reserved_block_y;
-                y += f32::max(comp_style.margin.bottom, comp_style.margin.top);
+                // Collapse margins
+                y += f32::max(prev_style.margin.bottom.get(), comp_style.margin.top);
 
                 // context.adjacent_margin_bottom = prev_computed_flow.adjacent_margin_bottom;
             }
 
             x += comp_style.margin.right;
         } else {
-            if context.layout_x_start.is_none() && is_horizontal_layout(style) {
-                context.layout_x_start = Some(x);
-            }
             y += f32::max(0.0, comp_style.margin.top - previous_margin_bottom);
+        }
+
+        if context.layout_x_start.is_none() && is_horizontal_layout(style) && comp_style.display == "inline" {
+            context.layout_x_start = Some(x);
         }
 
         last_element = Some(i);
@@ -379,7 +384,7 @@ pub fn reflow(
 
             reflow(
                 &mut element.children,
-                measure_text,
+                text_measurer,
                 Some(context.clone()),
                 viewport,
             );
@@ -423,9 +428,6 @@ pub fn reflow(
             }
         }
 
-
-        
-
         match element.node_type {
             NodeType::Text => {
                 element.node_value = element
@@ -434,76 +436,34 @@ pub fn reflow(
                     .replace("&gt;", ">")
                     .replace("&lt;", "<");
 
-
-                // text wrapping
-                let words = element.node_value.split(" ").collect::<Vec<&str>>();
-                let mut line = "".to_string();
-                let mut lines: Vec<TextLine> = vec![];
-
-                let space_size = measure_text(" ".to_string(), comp_style.font_size, style.font.get_path());
-
-                let mut h = 0.0;
-                let mut w = 0.0;
-
-                let mut ly = y;
-                let mut lx = x;
-                let mut lw = 0.0;
-
-                for word in words {
-                    let size = measure_text(
-                        line.clone() + " " + word,
-                        comp_style.font_size,
-                        style.font.get_path(),
-                    );
-
-                    lw = size.0;
-                    w = f32::max(w, size.0);
-
-                    if size.0 + lx > max_width {
-                        lines.push(TextLine {
-                            text: line.clone(),
-                            x: lx,
-                            y: ly,
-                            width: lw,
-                            height: size.1,
-                        });
-                        h += space_size.1;
-                        ly += space_size.1;
-                        lx = context.layout_x_start.unwrap_or(x);
-                        line = "".to_string();
-                    }
-
-                    line += format!(" {}", word).as_str();
-                }
-
-                let size = measure_text(
-                    line.clone(),
+                let lines = wrap_text(
+                    element.node_value.clone(),
+                    max_width,
+                    text_measurer,
                     comp_style.font_size,
                     style.font.get_path(),
+                    x,
+                    y,
+                    context.layout_x_start.unwrap_or(x),
                 );
 
-                lw = size.0;
+                if lines.len() > 0 {
+                    let last = lines.last().unwrap();
+                    continue_x = last.x + last.width;
+                    continue_y = last.y;
 
-                lines.push(TextLine {
-                    text: line.clone(),
-                    x: lx,
-                    y: ly,
-                    width: lw,
-                    height: space_size.1,
-                });
-                h += space_size.1;
-
-                continue_x = lx + lw;
-                continue_y = ly;
+                    if lines.len() == 1 {
+                        width = last.width;
+                    } else {
+                        let first = lines.first().unwrap();
+                        width = first.width;
+                    }
+                    for line in &lines {
+                        height += line.height;
+                    }
+                }
                 
                 element.lines = lines;
-                // let size = measure_text(
-                //     element.node_value.clone(),
-                //     comp_style.font_size,
-                //     style.font.get_path(),
-                // );
-                width = w;
-                height = h;
             }
             _ => {}
         }
@@ -538,6 +498,71 @@ pub fn reflow(
             },
         });
     }
+}
+
+pub fn wrap_text(
+    text: String,
+    max_width: f32,
+    text_measurer: &mut dyn TextMeasurer,
+    font_size: f32,
+    font_path: String,
+    x: f32,
+    y: f32,
+    layout_x_start: f32,
+) -> Vec<TextLine> {
+    let words = text.split(" ").collect::<Vec<&str>>();
+    let mut line = "".to_string();
+    let mut lines: Vec<TextLine> = vec![];
+
+    let space_size = text_measurer.measure(" ", font_size, &font_path);
+
+    let mut lx = x;
+    let mut ly = y;
+    let mut lw = 0.0;
+
+    for word in words {
+        let size = text_measurer.measure(
+            &line,
+            font_size,
+            &font_path,
+        );
+
+        let word_space = format!(" {}", word);
+        let word_size =  text_measurer.measure(
+            &word_space,
+            font_size,
+            &font_path,
+        );
+
+        lw = size.0;
+
+        if size.0 + lx + word_size.0 > max_width {
+            lines.push(TextLine {
+                text: line.clone(),
+                x: lx,
+                y: ly,
+                width: lw,
+                height: size.1,
+            });
+            ly += space_size.1;
+            lx = layout_x_start;
+            line = "".to_string();
+            lw = 0.0;
+        }
+
+        line += word_space.as_str();
+        lw += word_size.0;
+    }
+
+    lines.push(TextLine {
+        text: line.clone(),
+        x: lx,
+        y: ly,
+        width: lw,
+        height: space_size.1,
+    });
+
+    return lines;
 }
 
 pub fn get_render_array(

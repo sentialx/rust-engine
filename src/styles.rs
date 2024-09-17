@@ -22,8 +22,21 @@ pub struct StyleScalar {
   calculated: Option<f32>,
 }
 
+#[derive(Clone, Debug)]
 pub struct ScalarEvaluationContext {
   pub percent_base: f32,
+  pub em_base: f32,
+  pub rem_base: f32,
+}
+
+impl ScalarEvaluationContext {
+  pub fn from_parent(font_size: f32, percent_base: f32) -> ScalarEvaluationContext {
+    ScalarEvaluationContext {
+      percent_base: percent_base,
+      em_base: font_size,
+      rem_base: font_size,
+    }
+  }
 }
 
 impl StyleScalar {
@@ -43,8 +56,14 @@ impl StyleScalar {
       CssValue::Size(size) => {
         match size.unit {
           CssSizeUnit::Percent => {
-            // self.calculated = Some(ctx.percent_base * size.value / 100.0);
+            self.calculated = Some(ctx.percent_base * size.value / 100.0);
           }
+          CssSizeUnit::Em => {
+            self.calculated = Some(ctx.em_base * size.value);
+          }
+          // CssSizeUnit::Rem => {
+          //   self.calculated = Some(ctx.rem_base * size.value);
+          // }
           CssSizeUnit::Px => {
             self.calculated = Some(size.value);
           }
