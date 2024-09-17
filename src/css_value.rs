@@ -111,8 +111,7 @@ pub fn tokenize_css_value(value: &str) -> Vec<CssToken> {
 
         let token_type = if (c.is_numeric()
             || (c == '.'
-                && tokens.len() > 0
-                && tokens.last().unwrap().type_ == CssTokenType::Number))
+                && curr_token.type_ == CssTokenType::Number))
             && (curr_token.type_ != CssTokenType::String)
         {
             CssTokenType::Number

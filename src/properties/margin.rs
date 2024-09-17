@@ -32,8 +32,7 @@ impl Margin {
     }
   }
 
-  pub fn evaluate(&mut self) -> &Self {
-    let ctx = ScalarEvaluationContext { percent_base: 0.0 };
+  pub fn evaluate(&mut self, ctx: &ScalarEvaluationContext) -> &Self {
     self.top.evaluate(&ctx);
     self.right.evaluate(&ctx);
     self.bottom.evaluate(&ctx);
