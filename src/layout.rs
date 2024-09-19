@@ -1,9 +1,9 @@
 use crate::colors::*;
 use crate::css::*;
 use crate::html::*;
+use crate::render_frame::TextMeasurer;
 use crate::styles::*;
 use crate::utils::*;
-use crate::TextMeasurer;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -85,7 +85,7 @@ pub fn should_rerender(
         // if element.computed_style.as_ref().unwrap().hoverable {
         //     hovered = hit_test_element(&element, mouse_x, mouse_y);
         // }
-       
+
         if hovered != element.is_hovered {
             element.is_hovered = hovered;
             dirty = true;
@@ -105,51 +105,7 @@ pub fn element_matches_hover_selector(element: &DomElement, selector: &str) -> b
     selector.to_uppercase() == element.tag_name.clone() + ":HOVER"
 }
 
-pub fn element_matches_single_selector(element: &DomElement, selector: &str, pseudo: &str) -> bool {
-    if selector == "*".to_string() + pseudo {
-        return true;
-    }
-
-    if selector.to_uppercase() == element.tag_name.to_string() + pseudo {
-        return true;
-    }
-
-    if selector.starts_with('#') && element.attributes.contains_key("id") {
-        return element.attributes.get("id").unwrap().to_string() + pseudo == &selector[1..];
-    }
-
-    if selector.starts_with(".") && element.attributes.contains_key("class") {
-        let selector_classes = selector.split(".").collect::<Vec<&str>>()[1..].to_vec();
-        if pseudo != "" {
-            let classes = element.attributes.get("class").unwrap().split(" ").map(|c| c.to_string() + pseudo).collect::<Vec<String>>();
-            return selector_classes.iter().all(|c| classes.contains(&c.to_string()));
-        } else {
-            let classes = element.attributes.get("class").unwrap().split(" ").collect::<Vec<&str>>();
-            return selector_classes.iter().all(|c| classes.contains(&c));
-        }
-        
-    }
-
-    return false;
-}
-
-pub fn element_matches_selector(element: &DomElement, selector: &str, pseudo: &str) -> bool {
-    let selectors = selector.split(",").collect::<Vec<&str>>();
-
-    for s in selectors {
-        if element_matches_single_selector(element, s.trim(), pseudo) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-pub fn get_element_at(
-    tree: &Vec<DomElement>,
-    x: f32,
-    y: f32,
-) -> Option<&DomElement> {
+pub fn get_element_at(tree: &Vec<DomElement>, x: f32, y: f32) -> Option<&DomElement> {
     let elements_len = tree.len();
 
     for i in 0..elements_len {
@@ -183,10 +139,97 @@ pub fn get_element_at(
     return None;
 }
 
+pub fn element_matches_selector(
+    element: &DomElement,
+    selector: &CssSelector,
+    parents: &[*mut DomElement],
+) -> bool {
+    match selector {
+        CssSelector::Tag(tag) => element.tag_name.eq_ignore_ascii_case(tag) || tag == "*",
+        CssSelector::Id(id) => element.attributes.get("id").map_or(false, |v| v == id),
+        CssSelector::Class(class) => {
+            element.class_list.iter().any(|c| c == class)
+            // element.attributes.get("class").map_or(false, |v| v.split_whitespace().any(|c| c == class))
+        }
+        CssSelector::Attribute {
+            name,
+            operator,
+            value,
+        } => match operator {
+            Some(op) => match element.attributes.get(name) {
+                Some(attr_value) => match op.as_str() {
+                    "=" => value.is_some() && attr_value == value.as_deref().unwrap(),
+                    "~=" => attr_value
+                        .split_whitespace()
+                        .any(|part| part == value.as_deref().unwrap()),
+                    "|=" => {
+                        attr_value == value.as_deref().unwrap()
+                            || attr_value.starts_with(&(value.clone().unwrap() + "-"))
+                    }
+                    "^=" => attr_value.starts_with(value.as_deref().unwrap()),
+                    "$=" => attr_value.ends_with(value.as_deref().unwrap()),
+                    "*=" => attr_value.contains(value.as_deref().unwrap()),
+                    _ => false,
+                },
+                None => false,
+            },
+            None => element.attributes.contains_key(name),
+        },
+        CssSelector::PseudoClass(pseudo) => {
+            // Handle pseudo-classes
+            false // For now, we just return true
+        }
+        CssSelector::PseudoElement(pseudo) => {
+            // Handle pseudo-elements
+            false // For now, we just return true
+        }
+        CssSelector::Combinator {
+            combinator,
+            selectors,
+        } => match combinator.as_str() {
+            ">" => parents.last().map_or(false, |parent| {
+                selectors.iter().all(|selector| {
+                    element_matches_selector(
+                        unsafe { &**parent },
+                        selector,
+                        &parents[..parents.len() - 1],
+                    )
+                })
+            }),
+            " " => parents.iter().rev().any(|parent| {
+                selectors.iter().all(|selector| {
+                    element_matches_selector(
+                        unsafe { &**parent },
+                        selector,
+                        &parents[..parents.len() - 1],
+                    )
+                })
+            }),
+            // "+" => parents.last().map_or(false, |parent| element_matches_selector(parent, selector, &parents[..parents.len()-1])),
+            // "~" => parents.iter().rev().any(|parent| element_matches_selector(parent, selector, &parents[..parents.len()-1])),
+            _ => false,
+        },
+        CssSelector::OrGroup { selectors } => {
+            selectors.len() > 0
+                && selectors
+                    .iter()
+                    .any(|s| element_matches_selector(element, s, parents))
+        }
+        CssSelector::AndGroup { selectors } => {
+            selectors.len() > 0
+                && selectors
+                    .iter()
+                    .all(|s| element_matches_selector(element, s, parents))
+        }
+        _ => false,
+    }
+}
+
 pub fn compute_styles(
     tree: &mut Vec<DomElement>,
     style: &Vec<StyleRule>,
     parent_style: Option<&Style>,
+    parents: &mut Vec<*mut DomElement>,
 ) {
     let elements_len = tree.len();
 
@@ -199,25 +242,28 @@ pub fn compute_styles(
         let element = &mut tree[i];
         let mut hoverable = false;
         for style_rule in style {
-            // if style_rule.selector == "li" {
-            //     println!("{:#?}", style_rule.declarations);
-            // }
-            if element_matches_selector(&element, &style_rule.selector, "") {
+            if element_matches_selector(&element, &style_rule.selector, parents) {
                 element.style.insert_declarations(&style_rule.declarations);
+                element.matched_selectors.push(style_rule.selector.to_string());
             }
-
-            // if element_matches_selector(&element, &style_rule.selector, ":HOVER") {
-            //     hoverable = true;
-            // }
         }
 
         let inherited_styles = element.style.create_inherited(&parent_style);
         element.inherited_style = Some(inherited_styles);
-    
+
         let element = &mut tree[i];
 
-        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE" {
-            compute_styles(&mut element.children, style, Some(element.inherited_style.as_ref().unwrap()));
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
+        {
+            let el: *mut DomElement = element;
+            parents.push(el);
+            compute_styles(
+                &mut element.children,
+                style,
+                Some(element.inherited_style.as_ref().unwrap()),
+                parents,
+            );
+            parents.pop();
         }
     }
 }
@@ -234,7 +280,9 @@ pub struct ReflowContext {
 }
 
 fn is_horizontal_layout(computed_style: &Style) -> bool {
-    return computed_style.display.get() == "inline-block" || computed_style.display.get() == "inline" || computed_style.float.get() != "none";
+    return computed_style.display.get() == "inline-block"
+        || computed_style.display.get() == "inline"
+        || computed_style.float.get() != "none";
 }
 
 pub fn reflow(
@@ -271,7 +319,7 @@ pub fn reflow(
 
         let mut max_width = viewport.width;
 
-        // let parent_style = unsafe { 
+        // let parent_style = unsafe {
         //     match tree[i].parent_node.as_ref() {
         //         Some(p) => p.inherited_style.as_ref(),
         //         None => None,
@@ -283,7 +331,8 @@ pub fn reflow(
             continue;
         }
 
-        let scalar_context = ScalarEvaluationContext::from_parent(context.font_size, context.font_size);
+        let scalar_context =
+            ScalarEvaluationContext::from_parent(context.font_size, context.font_size);
 
         style.margin.evaluate(&scalar_context);
         style.padding.evaluate(&scalar_context);
@@ -305,7 +354,9 @@ pub fn reflow(
 
         let previous_margin_bottom = context.adjacent_margin_bottom;
 
-        if last_element.is_some() && (comp_style.position != "absolute" || comp_style.position != "fixed") {
+        if last_element.is_some()
+            && (comp_style.position != "absolute" && comp_style.position != "fixed")
+        {
             let previous_element = &tree[last_element.unwrap()];
             let prev_style = previous_element.inherited_style.as_ref().unwrap();
             let prev_computed_flow = previous_element.computed_flow.as_ref().unwrap();
@@ -318,8 +369,8 @@ pub fn reflow(
                 }
             }
 
-            let should_continue_horizontal_layout = is_horizontal_layout(style)
-                && is_horizontal_layout(prev_style);
+            let should_continue_horizontal_layout =
+                is_horizontal_layout(style) && is_horizontal_layout(prev_style);
 
             if is_horizontal_layout(style) && should_continue_horizontal_layout {
                 // Horizontal layout
@@ -344,7 +395,10 @@ pub fn reflow(
             y += f32::max(0.0, comp_style.margin.top - previous_margin_bottom);
         }
 
-        if context.layout_x_start.is_none() && is_horizontal_layout(style) && comp_style.display == "inline" {
+        if context.layout_x_start.is_none()
+            && is_horizontal_layout(style)
+            && comp_style.display == "inline"
+        {
             context.layout_x_start = Some(x);
         }
 
@@ -352,7 +406,7 @@ pub fn reflow(
 
         let element = &mut tree[i];
         element.computed_style = Some(comp_style);
-        
+
         let comp_style = element.computed_style.as_ref().unwrap();
         let style = element.inherited_style.as_ref().unwrap();
 
@@ -366,14 +420,15 @@ pub fn reflow(
         let mut continue_x = x + width + comp_style.margin.right;
         let mut continue_y = y + height + comp_style.margin.bottom;
 
-        if element.children.len() > 0
-            && element.tag_name != "SCRIPT"
-            && element.tag_name != "STYLE"
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
             context.x = x + comp_style.padding.left;
             context.y = y + comp_style.padding.top;
 
-            if comp_style.position == "absolute" || comp_style.position == "fixed" || comp_style.position == "relative" {
+            if comp_style.position == "absolute"
+                || comp_style.position == "fixed"
+                || comp_style.position == "relative"
+            {
                 context.rel_x = context.x;
                 context.rel_y = context.y;
             }
@@ -397,16 +452,23 @@ pub fn reflow(
                 }
                 let el_computed_flow = el_computed_flow.unwrap();
                 let el_computed_style = el_computed_style.unwrap();
-                if el_computed_style.position == "absolute" || el_computed_style.position == "fixed" {
+                if el_computed_style.position == "absolute" || el_computed_style.position == "fixed"
+                {
                     continue;
                 }
                 width = f32::max(
-                    el_computed_flow.width + (el_computed_flow.x - x) + el_computed_style.margin.right + comp_style.padding.right,
+                    el_computed_flow.width
+                        + (el_computed_flow.x - x)
+                        + el_computed_style.margin.right
+                        + comp_style.padding.right,
                     width,
                 );
-                
+
                 height = f32::max(
-                    el_computed_flow.height + (el_computed_flow.y - y) + el_computed_style.margin.bottom + comp_style.padding.bottom,
+                    el_computed_flow.height
+                        + (el_computed_flow.y - y)
+                        + el_computed_style.margin.bottom
+                        + comp_style.padding.bottom,
                     height,
                 );
 
@@ -462,7 +524,7 @@ pub fn reflow(
                         height += line.height;
                     }
                 }
-                
+
                 element.lines = lines;
             }
             _ => {}
@@ -474,7 +536,6 @@ pub fn reflow(
                 if comp_style.position != "absolute" && comp_style.position != "fixed" {
                     reserved_block_y = f32::max(height + y, reserved_block_y);
                 }
-               
             }
         }
 
@@ -521,18 +582,10 @@ pub fn wrap_text(
     let mut lw = 0.0;
 
     for word in words {
-        let size = text_measurer.measure(
-            &line,
-            font_size,
-            &font_path,
-        );
+        let size = text_measurer.measure(&line, font_size, &font_path);
 
         let word_space = format!(" {}", word);
-        let word_size =  text_measurer.measure(
-            &word_space,
-            font_size,
-            &font_path,
-        );
+        let word_size = text_measurer.measure(&word_space, font_size, &font_path);
 
         lw = size.0;
 
@@ -565,10 +618,7 @@ pub fn wrap_text(
     return lines;
 }
 
-pub fn get_render_array(
-    tree: &mut Vec<DomElement>,
-    viewport: &Rect,
-) -> Vec<RenderItem> {
+pub fn get_render_array(tree: &mut Vec<DomElement>, viewport: &Rect) -> Vec<RenderItem> {
     let mut array: Vec<RenderItem> = vec![];
 
     for i in 0..tree.len() {
@@ -591,10 +641,7 @@ pub fn get_render_array(
             && element.tag_name != "STYLE"
             && is_in_viewport
         {
-            let children_render_items = get_render_array(
-                &mut element.children,
-                viewport,
-            );
+            let children_render_items = get_render_array(&mut element.children, viewport);
             array.extend(children_render_items);
         }
 
@@ -606,13 +653,10 @@ pub fn get_render_array(
         }
         let computed_style = computed_style.unwrap();
 
-        let has_something_to_render = element.node_value != ""
-            || computed_style.background_color != (0.0, 0.0, 0.0, 0.0);
+        let has_something_to_render =
+            element.node_value != "" || computed_style.background_color != (0.0, 0.0, 0.0, 0.0);
         // The element has nothing to render
-        if !has_something_to_render
-            || !is_in_viewport
-            || computed_style.display == "none"
-        {
+        if !has_something_to_render || !is_in_viewport || computed_style.display == "none" {
             continue;
         }
 

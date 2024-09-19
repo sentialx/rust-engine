@@ -61,6 +61,8 @@ pub struct DomElement {
   pub computed_flow: Option<ComputedFlow>,
   pub computed_style: Option<ComputedStyle>,
   pub lines: Vec<TextLine>,
+  pub class_list: Vec<String>,
+  pub matched_selectors: Vec<String>,
 }
 
 impl DomElement {
@@ -80,6 +82,8 @@ impl DomElement {
       computed_style: None,
       is_hovered: false,
       lines: vec![],
+      class_list: vec![],
+      matched_selectors: vec![],
     }
   }
 
@@ -93,6 +97,11 @@ impl DomElement {
         }
         self.style.insert_declarations(&rule.declarations);
       }
+    }
+
+    if key == "class" {
+      let classes = value.split(" ").collect::<Vec<&str>>();
+      self.class_list = classes.iter().map(|x| x.to_string()).collect();
     }
 
     self.attributes.insert(key, value);

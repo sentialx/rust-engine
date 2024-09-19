@@ -45,7 +45,7 @@ impl StyleScalar {
   }
 
   pub fn zero() -> StyleScalar {
-    StyleScalar { value: CssValue::Number(0.0), calculated: Some(0.0) }
+    StyleScalar { value: CssValue::Invalid, calculated: Some(0.0) }
   }
 
   pub fn evaluate(&mut self, ctx: &ScalarEvaluationContext) -> &Self {
@@ -98,7 +98,7 @@ pub struct Declaration {
 #[derive(Clone, Debug)]
 pub struct StyleRule {
   pub css: String,
-  pub selector: String,
+  pub selector: CssSelector,
   pub declarations: Vec<Declaration>,
 }
 
@@ -106,7 +106,7 @@ impl StyleRule {
   pub fn new() -> StyleRule {
     StyleRule {
       css: "".to_string(),
-      selector: "".to_string(),
+      selector: CssSelector::AndGroup { selectors: vec![] },
       declarations: vec![],
     }
   }
