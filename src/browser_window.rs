@@ -62,7 +62,7 @@ pub fn create_browser_window(url: String) {
     let opengl = OpenGL::V3_2;
     let mut gl = GlGraphics::new(opengl);
 
-    let devtools_width = 600.0;
+    let devtools_width = 300.0;
 
     let window_size = window.size();
     let viewport = Rect {
@@ -106,7 +106,7 @@ pub fn create_browser_window(url: String) {
 
         // scroll event
         if let Some(args) = event.mouse_scroll_args() {
-            render_frame.scroll_y -= args[1] as f32 * 1.0;
+            render_frame.scroll_y -= args[1] as f32 * 24.0;
             render_frame.fast_render();
         }
 

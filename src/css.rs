@@ -233,7 +233,7 @@ impl CssSelector {
       CssSelector::Combinator { combinator, selectors } => {
         if is_parent_combinator(combinator) {
           // reversed tree
-          println!("{:#?}", self);
+        //   println!("{:#?}", self);
           let selectors = selectors.iter().map(|s| s.to_string()).rev().collect::<Vec<String>>();
           // insert combinators between selectors
           let selectors = selectors.iter().enumerate().map(|(i, s)| {
