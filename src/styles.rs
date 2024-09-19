@@ -183,9 +183,6 @@ impl Style {
       }
 
       if declaration.important {
-        if declaration.key == "margin-left" {
-          println!("inserting margin-left: {:?}", declaration);
-        }
         self.inserted.insert(declaration.key.clone());
         
       }
