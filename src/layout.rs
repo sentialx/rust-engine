@@ -275,6 +275,9 @@ pub struct ReflowContext {
     pub rel_x: f32,
     pub rel_y: f32,
     pub font_size: f32,
+    pub parent_width: f32,
+    pub parent_height: f32,
+    pub parent_max_width: f32,
     pub layout_x_start: Option<f32>,
     pub adjacent_margin_bottom: f32,
 }
@@ -293,31 +296,36 @@ pub fn reflow(
 ) {
     let elements_len = tree.len();
 
-    let mut context = context.unwrap_or(ReflowContext {
+    let mut sibling_context = context.unwrap_or(ReflowContext {
         x: 0.0,
         y: 0.0,
         rel_x: 0.0,
         rel_y: 0.0,
         font_size: 16.0,
+        parent_width: viewport.width,
+        parent_height: viewport.height,
+        parent_max_width: viewport.width,
         layout_x_start: None,
         adjacent_margin_bottom: 0.0,
     });
 
-    let x_base = context.x;
-    let y_base = context.y;
+    let x_base = sibling_context.x;
+    let y_base = sibling_context.y;
 
     let mut reserved_block_y = y_base;
 
     let mut last_element: Option<usize> = None;
 
     for i in 0..elements_len {
+        let mut context = sibling_context.clone();
+
         let mut x = x_base;
         let mut y = y_base;
 
         let mut width = 0.0;
         let mut height = 0.0;
 
-        let mut max_width = viewport.width;
+        let mut max_width = context.parent_max_width;
 
         // let parent_style = unsafe {
         //     match tree[i].parent_node.as_ref() {
@@ -325,19 +333,33 @@ pub fn reflow(
         //         None => None,
         //     }
         // };
+        // let tag_name = tree[i].tag_name.clone();
         let style = tree[i].inherited_style.as_mut().unwrap();
 
         if style.display.get() == "none" {
             continue;
         }
 
-        let scalar_context =
+        let font_scalar_ctx =
             ScalarEvaluationContext::from_parent(context.font_size, context.font_size);
+        let parent_width_scalar_ctx = ScalarEvaluationContext::from_parent(context.font_size, context.parent_width);
+        let parent_height_scalar_ctx = ScalarEvaluationContext::from_parent(context.font_size, context.parent_height);
 
-        style.margin.evaluate(&scalar_context);
-        style.padding.evaluate(&scalar_context);
-        style.font_size.evaluate(&scalar_context);
-        style.inset.evaluate(&scalar_context);
+        style.margin.evaluate(&font_scalar_ctx);
+        style.padding.evaluate(&font_scalar_ctx);
+        style.font_size.evaluate(&font_scalar_ctx);
+        style.inset.evaluate(&font_scalar_ctx);
+        style.width.evaluate(&parent_width_scalar_ctx);
+        style.height.evaluate(&parent_height_scalar_ctx);
+
+        if style.width.has_numeric_value() {
+            max_width = style.width.get();
+            width = style.width.get();
+        }
+
+        if style.height.has_numeric_value() {
+            height = style.height.get();
+        }
 
         let style = tree[i].inherited_style.as_ref().unwrap();
 
@@ -375,7 +397,7 @@ pub fn reflow(
             if is_horizontal_layout(style) && should_continue_horizontal_layout {
                 // Horizontal layout
                 if comp_style.display == "inline-block" || comp_style.float != "none" {
-                    x = prev_computed_flow.x + prev_computed_flow.width;
+                    x = prev_computed_flow.x + prev_computed_flow.width + prev_style.margin.right.get();
                 } else {
                     x = prev_computed_flow.continue_x;
                 }
@@ -395,12 +417,14 @@ pub fn reflow(
             y += f32::max(0.0, comp_style.margin.top - previous_margin_bottom);
         }
 
-        if context.layout_x_start.is_none()
+        if sibling_context.layout_x_start.is_none()
             && is_horizontal_layout(style)
             && comp_style.display == "inline"
         {
-            context.layout_x_start = Some(x);
+            sibling_context.layout_x_start = Some(x);
         }
+
+        context.layout_x_start = sibling_context.layout_x_start;
 
         last_element = Some(i);
 
@@ -414,8 +438,15 @@ pub fn reflow(
 
         let mut adjacent_margin_bottom = 0.0;
 
-        width = comp_style.padding.left + comp_style.padding.right;
-        height = comp_style.padding.top + comp_style.padding.bottom;
+        if style.width.has_numeric_value() {
+            context.parent_width = width;
+        }
+        if style.height.has_numeric_value() {
+            context.parent_height = height;
+        }
+
+        width += comp_style.padding.left + comp_style.padding.right;
+        height += comp_style.padding.top + comp_style.padding.bottom;
 
         let mut continue_x = x + width + comp_style.margin.right;
         let mut continue_y = y + height + comp_style.margin.bottom;
@@ -424,6 +455,8 @@ pub fn reflow(
         {
             context.x = x + comp_style.padding.left;
             context.y = y + comp_style.padding.top;
+
+            context.parent_max_width = max_width;
 
             if comp_style.position == "absolute"
                 || comp_style.position == "fixed"
@@ -456,21 +489,25 @@ pub fn reflow(
                 {
                     continue;
                 }
-                width = f32::max(
-                    el_computed_flow.width
-                        + (el_computed_flow.x - x)
-                        + el_computed_style.margin.right
-                        + comp_style.padding.right,
-                    width,
-                );
+                if !style.width.has_numeric_value() {
+                    width = f32::max(
+                        el_computed_flow.width
+                            + (el_computed_flow.x - x)
+                            + el_computed_style.margin.right
+                            + comp_style.padding.right,
+                        width,
+                    );
+                }
 
-                height = f32::max(
-                    el_computed_flow.height
-                        + (el_computed_flow.y - y)
-                        + el_computed_style.margin.bottom
-                        + comp_style.padding.bottom,
-                    height,
-                );
+                if !style.height.has_numeric_value() {
+                    height = f32::max(
+                        el_computed_flow.height
+                            + (el_computed_flow.y - y)
+                            + el_computed_style.margin.bottom
+                            + comp_style.padding.bottom,
+                        height,
+                    );
+                }
 
                 continue_x = el_computed_flow.continue_x;
                 continue_y = el_computed_flow.continue_y;
@@ -514,14 +551,19 @@ pub fn reflow(
                     continue_x = last.x + last.width;
                     continue_y = last.y;
 
-                    if lines.len() == 1 {
-                        width = last.width;
-                    } else {
-                        let first = lines.first().unwrap();
-                        width = first.width;
+                    if !style.width.has_numeric_value() {
+                        if lines.len() == 1 {
+                            width = last.width;
+                        } else {
+                            let first = lines.first().unwrap();
+                            width = first.width;
+                        }
                     }
-                    for line in &lines {
-                        height += line.height;
+                    if !style.height.has_numeric_value() {
+                        for line in &lines {
+                            height += line.height;
+                        }
+                        height += 8.0;
                     }
                 }
 
@@ -589,7 +631,7 @@ pub fn wrap_text(
 
         lw = size.0;
 
-        if size.0 + lx + word_size.0 > max_width {
+        if size.0 + (lx - layout_x_start) + word_size.0 > max_width {
             lines.push(TextLine {
                 text: line.clone(),
                 x: lx,

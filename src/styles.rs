@@ -135,6 +135,8 @@ pub struct ComputedStyle {
   pub background_color: ColorTupleA,
   pub position: String,
   pub inset: ComputedMargin,
+  pub width: f32,
+  pub height: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +152,8 @@ pub struct Style {
   pub background_color: Color,
   pub position: StringProperty,
   pub inset: Margin,
+  pub width: MarginComponent,
+  pub height: MarginComponent,
   inserted: HashSet<String>,
 }
 
@@ -167,6 +171,9 @@ impl Style {
       background_color: Color::empty(false, (0.0, 0.0, 0.0, 0.0)),
       position: StringProperty::empty(false, "static"),
       inset: Margin::empty(),
+      width: MarginComponent::empty(),
+      height: MarginComponent::empty(),
+
       inserted: HashSet::new(),
     }
   }
@@ -213,6 +220,8 @@ impl Style {
         "bottom" => self.inset.bottom = MarginComponent::from_value(declaration.value.clone()),
         "left" => self.inset.left = MarginComponent::from_value(declaration.value.clone()),
         "inset" => self.inset = Margin::from_value(declaration.value.clone()),
+        "width" => self.width = MarginComponent::from_value(declaration.value.clone()),
+        "height" => self.height = MarginComponent::from_value(declaration.value.clone()),
         _ => {}
       }
     }
@@ -231,6 +240,9 @@ impl Style {
       background_color: self.background_color.create_inherited(&inherit_style.background_color),
       position: self.position.create_inherited(&inherit_style.position),
       inset: self.inset.create_inherited(inherit_style),
+      width: self.width.create_inherited(inherit_style),
+      height: self.height.create_inherited(inherit_style),
+
       inserted: self.inserted.clone(),
     }
   }
@@ -250,6 +262,8 @@ impl Style {
       background_color: self.background_color.get(),
       position: self.position.get(),
       inset: self.inset.to_computed(),
+      width: self.width.get(),
+      height: self.height.get(),
     }
   }
 }

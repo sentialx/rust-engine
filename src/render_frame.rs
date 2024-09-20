@@ -35,7 +35,7 @@ impl TextMeasurer for GlyphsTextMeasurer<'_> {
         let glyphs = glyphs_map.get_mut(font_family).unwrap();
         return (
             0.5 * glyphs.width(2 * (font_size) as u32, text).unwrap() as f32,
-            font_size - 2.0 + 8.0,
+            font_size + 8.0,
         );
     }
 }
