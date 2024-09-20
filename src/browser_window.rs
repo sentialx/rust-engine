@@ -79,6 +79,9 @@ pub fn create_browser_window(url: String) {
 
     render_frame.load_url(&url);
 
+    let zoom = 1.0;
+    let devtools_zoom = 0.65;
+
     while let Some(event) = window.next() {
         let mouse = event.mouse_cursor_args();
 
@@ -154,7 +157,7 @@ pub fn create_browser_window(url: String) {
         }
 
         let dom_tree = &render_frame.dom_tree;
-        let element = get_element_at(&dom_tree, mouse_x, mouse_y + render_frame.scroll_y);
+        let element = get_element_at(&dom_tree, mouse_x / zoom as f32, (mouse_y + render_frame.scroll_y) / (zoom as f32));
         if element.is_some() {
             let el = element.unwrap();
             el_txt = format!(
@@ -183,7 +186,7 @@ pub fn create_browser_window(url: String) {
                         rectangle(
                             css_color_to_piston(item.background_color),
                             [0.0, 0.0, item.width as f64, item.height as f64],
-                            c.transform.trans(item.x as f64, item_y),
+                            c.transform.trans(item.x as f64 * zoom, item_y * zoom).zoom(zoom),
                             g,
                         );
                     }
@@ -195,14 +198,15 @@ pub fn create_browser_window(url: String) {
 
                         for line in &item.text_lines {
                             let ly = line.y as f64 - render_frame.scroll_y as f64;
-                            text::Text::new_color(color, 2 * ((item.font_size) as u32))
+                            text::Text::new_color(color, (2 * (item.font_size) as u32))
                                 .draw(
                                     &line.text,
                                     glyphs,
                                     &c.draw_state,
                                     c.transform
-                                        .trans(line.x as f64, ly + (line.height as f64) - 4.0)
-                                        .zoom(0.5),
+                                        .trans(line.x as f64 * zoom, (ly + (line.height as f64)) * zoom)
+                                        .zoom(0.5)
+                                        .zoom(zoom),
                                     g,
                                 )
                                 .unwrap();
@@ -212,7 +216,8 @@ pub fn create_browser_window(url: String) {
                                     color,
                                     [0.0, 0.0, item.width as f64, 1.0],
                                     c.transform
-                                        .trans(line.x as f64, ly + line.height as f64 - 3.0),
+                                        .trans(line.x as f64 * zoom, (ly + line.height as f64 + 1.0) * zoom)
+                                        .zoom(zoom),
                                     g,
                                 );
                             }
@@ -250,14 +255,14 @@ pub fn create_browser_window(url: String) {
                             computed_flow.width as f64,
                             computed_flow.height as f64,
                         ],
-                        c.transform.trans(computed_flow.x as f64, el_y),
+                        c.transform.trans(computed_flow.x as f64 * zoom, el_y * zoom).zoom(zoom),
                         g,
                     );
 
                     rectangle(
                         [1.0, 0.0, 0.5, 1.0],
                         [0.0, 0.0, 128.0, 18.0],
-                        c.transform.trans(computed_flow.x as f64, el_y - 18.0),
+                        c.transform.trans(computed_flow.x as f64 * zoom, (el_y - 18.0) * zoom).zoom(zoom),
                         g,
                     );
 
@@ -266,8 +271,8 @@ pub fn create_browser_window(url: String) {
                         let glyphs = glyphs_map.get_mut(&font_path).unwrap();
 
                         text::Text::new_color(
-                            [255.0, 255.0, 255.0, 255.0],
-                            2 * ((14.0 - 2.0) as u32),
+                            [1.0, 1.0, 1.0, 1.0],
+                            2 * 14,
                         )
                         .draw(
                             format!(
@@ -280,22 +285,25 @@ pub fn create_browser_window(url: String) {
                             glyphs,
                             &c.draw_state,
                             c.transform
-                                .trans(computed_flow.x as f64, el_y - 4.0 as f64)
-                                .zoom(0.5),
+                                .trans(computed_flow.x as f64 * zoom, el_y as f64 * zoom)
+                                .zoom(0.5)
+                                .zoom(zoom),
                             g,
                         )
                         .unwrap();
 
                         let mut lines = el_txt.split("\n");
                         for (i, line) in lines.enumerate() {
-                            text::Text::new_color([0.0, 0.0, 0.0, 255.0], 2 * (12.0 as u32))
+                            let font_size = 16.0;
+                            text::Text::new_color([0.0, 0.0, 0.0, 1.0], 2 * font_size as u32)
                                 .draw(
                                     &line,
                                     glyphs,
                                     &c.draw_state,
                                     c.transform
-                                        .trans(dev_tools_x as f64, 8.0 + 12.0 * i as f64)
-                                        .zoom(0.5),
+                                        .trans(dev_tools_x as f64, (font_size + 5.0) * i as f64 * devtools_zoom)
+                                        .zoom(0.5)
+                                        .zoom(devtools_zoom),
                                     g,
                                 )
                                 .unwrap();
