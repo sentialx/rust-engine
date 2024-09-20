@@ -13,10 +13,13 @@ mod render_frame;
 
 use std::string::String;
 use browser_window::*;
+use css::parse_css;
 
 fn main() {
 create_browser_window(String::from("index.html"));
 
+    let s = parse_css("xd { background-color: black;");
+    // println!("{:#?}", s);
     // selector_tests();
 }
 
