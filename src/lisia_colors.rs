@@ -31,6 +31,11 @@ impl Color {
     }
 }
 
+pub fn match_named_color(color: &str) -> Option<[f32; 4]> {
+    let named_colors = get_named_colors();
+    named_colors.get(color).map(|c| *c)
+}
+
 fn get_named_colors() -> HashMap<&'static str, [f32; 4]> {
     let mut colors = HashMap::new();
     colors.insert("aliceblue", [250.0, 235.0, 215.0, 255.0]);

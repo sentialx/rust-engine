@@ -1,4 +1,4 @@
-use crate::{colors::{hex_to_rgb, ColorTupleA}, css_value::CssValue, styles::{PropertyImpl, Style, StyleScalar}};
+use crate::{colors::{hex_to_rgb, ColorTupleA}, css_value::CssValue, lisia_colors::match_named_color, styles::{PropertyImpl, Style, StyleScalar}};
 
 #[derive(Clone, Debug)]
 pub struct Color {
@@ -41,14 +41,21 @@ impl Color {
                 "transparent" => {
                   self.value = Some((0.0, 0.0, 0.0, 0.0));
                 },
-                _ => {
-                  if value.starts_with("#") { 
+                _ if value.starts_with("#") => {
+                   
                     let color = hex_to_rgb(value);
                     let is_ok = color.is_ok();
                     let c = &color.unwrap_or((0.0, 0.0, 0.0));
                     self.value = Some((c.0, c.1, c.2, if is_ok { 1.0 } else { 0.0 }));
-                  }
+                  
                 },
+                _ => {
+                  let c = match_named_color(value);
+                  if c.is_some() {
+                    let c = c.unwrap();
+                    self.value = Some((c[0], c[1], c[2], 1.0));
+                  }
+                }
               }
             },
             CssValue::Function(func) => {

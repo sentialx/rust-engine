@@ -661,7 +661,7 @@ pub fn get_render_array(tree: &mut Vec<DomElement>, viewport: &Rect) -> Vec<Rend
         }
 
         let style = element.inherited_style.as_ref().unwrap();
-
+        
         match element.node_type {
             NodeType::Comment => {}
             _ => {
@@ -675,8 +675,7 @@ pub fn get_render_array(tree: &mut Vec<DomElement>, viewport: &Rect) -> Vec<Rend
                     font_size: computed_style.font_size,
                     font_path: style.font.get_path(),
                     color: computed_style.color,
-                    underline: element.node_value != ""
-                        && computed_style.text_decoration == "underline",
+                    underline: computed_style.text_decoration == "underline",
                 };
                 array.insert(0, item);
             }

@@ -432,7 +432,14 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
 
     let chars = css.chars().enumerate();
 
+    let mut inside_media_query = false;
+    let mut inside_rule = false;
+
     for (i, c) in chars {
+        if inside_media_query && c != '}' {
+            continue;
+        }
+
         if (c == '/' || c == '*') && captured_code.ends_with("/") && !inside_comment {
             inside_comment = true;
         } else if inside_comment {
@@ -467,6 +474,13 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
         }
 
         if c == '{' {
+            if captured_text.trim().starts_with("@") {
+                inside_media_query = true;
+                is_capturing_selector = false;
+                captured_text = "".to_string();
+                continue;
+            }
+            inside_rule = true;
             style_rule.selector = parse_css_selector(&tokenize_css_selector(&captured_text));
             captured_text = "".to_string();
             is_capturing_selector = false;
@@ -474,6 +488,16 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
             declaration.key = captured_text.trim().to_string();
             captured_text = "".to_string();
         } else if c == ';' || c == '}' {
+            if inside_media_query && inside_rule {
+                inside_rule = false;
+                continue;
+            }
+
+            if inside_media_query && !inside_rule {
+                inside_media_query = false;
+                continue;
+            }
+
             if (declaration.key != "") {
                 let mut text = captured_text.trim().to_string();
                 let important = text.ends_with("!important");

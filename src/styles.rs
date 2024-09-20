@@ -162,7 +162,7 @@ impl Style {
       font_size: FontSize::empty(),
       display: StringProperty::empty(false, "inline"),
       float: StringProperty::empty(false, "none"),
-      text_decoration: StringProperty::empty(false, "none"),
+      text_decoration: StringProperty::empty(true, "none"),
       color: Color::empty(true, (0.0, 0.0, 0.0, 1.0)),
       background_color: Color::empty(false, (0.0, 0.0, 0.0, 0.0)),
       position: StringProperty::empty(false, "static"),
