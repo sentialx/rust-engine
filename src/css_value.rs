@@ -21,6 +21,7 @@ pub struct CssToken {
 pub enum CssSizeUnit {
     Px,
     Em,
+    Rem,
     Percent,
 }
 
@@ -44,6 +45,17 @@ pub enum CssOperator {
     Subtract,
     Multiply,
     Divide,
+}
+
+impl CssOperator {
+    pub fn to_string(&self) -> String {
+        match self {
+            CssOperator::Add => "+".to_string(),
+            CssOperator::Subtract => "-".to_string(),
+            CssOperator::Multiply => "*".to_string(),
+            CssOperator::Divide => "/".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +87,28 @@ impl CssValue {
     pub fn inherit() -> CssValue {
         CssValue::String("inherit".to_string())
     }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            CssValue::Size(size) => format!("{}{:?}", size.value, size.unit),
+            CssValue::String(s) => s.clone(),
+            CssValue::Number(n) => n.to_string(),
+            CssValue::Function(func) => {
+                let args = func.args.iter().map(|arg| arg.to_string()).collect::<Vec<String>>();
+                format!("{}({})", func.name, args.join(", "))
+            }
+            CssValue::Binary(expr) => {
+                let left = expr.left.as_ref().unwrap().to_string();
+                let right = expr.right.as_ref().unwrap().to_string();
+                format!("{} {} {}", left, expr.operator.to_string(), right)
+            }
+            CssValue::Multiple(values) => {
+                let values = values.iter().map(|value| value.to_string()).collect::<Vec<String>>();
+                values.join(", ")
+            }
+            CssValue::Invalid => "Invalid".to_string(),
+        }
+    }
 }
 
 pub fn char_to_operator(c: char) -> Option<CssOperator> {
@@ -92,6 +126,7 @@ pub fn str_to_unit(s: &str) -> Option<CssSizeUnit> {
         "px" => Some(CssSizeUnit::Px),
         "em" => Some(CssSizeUnit::Em),
         "%" => Some(CssSizeUnit::Percent),
+        // "rem" => Some(CssSizeUnit::Rem),
         _ => None,
     }
 }

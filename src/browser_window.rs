@@ -159,9 +159,14 @@ pub fn create_browser_window(url: String) {
         let element = get_element_at(&render_frame.render_array, mouse_x / zoom as f32, (mouse_y + render_frame.scroll_y) / (zoom as f32));
         if element.is_some() {
             let el = element.unwrap().borrow();
-            el_txt = format!(
-                "{:?}\n{:#?}\n{:#?}\n{:#?}",
-                el.tag_name, el.attributes, el.matched_selectors, el.computed_style
+            let mut rules = "".to_string();
+            for rule in &el.matched_styles {
+                rules += &(format!("{}", rule.to_string()) + "\n");
+            }
+            el_txt = rules;
+            el_txt += &format!(
+                "{:?}\n{:#?}\n{:#?}",
+                el.tag_name, el.attributes, el.computed_style
             );
         }
 
@@ -300,7 +305,7 @@ pub fn create_browser_window(url: String) {
                                     glyphs,
                                     &c.draw_state,
                                     c.transform
-                                        .trans(dev_tools_x as f64, (font_size + 5.0) * i as f64 * devtools_zoom)
+                                        .trans(dev_tools_x as f64 + 8.0, (font_size + 5.0) * i as f64 * devtools_zoom + 16.0)
                                         .zoom(0.5)
                                         .zoom(devtools_zoom),
                                     g,
