@@ -70,14 +70,14 @@ pub fn tokenize_css_selector(input: &str) -> Vec<CssSelectorToken> {
             }
             '[' => {
                 chars.next();
-                let attribute = collect_while(&mut chars, |c| c != ']' && c != '=' && c != '~');
+                let attribute = collect_while(&mut chars, |c| c != ']' && c != '=' && c != '~' && c != '*' && c != '|' && c != '$' && c != '^');
                 tokens.push(CssSelectorToken {
                     token_type: CssSelectorTokenType::Attribute,
                     value: attribute.trim().to_string(),
                 });
 
                 if let Some(&next_ch) = chars.peek() {
-                    if next_ch == '=' || next_ch == '~' {
+                    if next_ch == '=' || next_ch == '~' || next_ch == '*' || next_ch == '|' || next_ch == '$' || next_ch == '^' {
                         let operator = chars.next().unwrap().to_string();
                         tokens.push(CssSelectorToken {
                             token_type: CssSelectorTokenType::AttributeOperator,
@@ -143,8 +143,8 @@ pub fn tokenize_css_selector(input: &str) -> Vec<CssSelectorToken> {
                 value: "*".to_string(),
               });
             }
-            _ if ch.is_alphanumeric() => {
-                let value = collect_while(&mut chars, |c| c.is_alphanumeric() || c == '-');
+            _ if ch.is_alphanumeric() || ch == '_' || ch == '-' => {
+                let value = collect_while(&mut chars, |c| c.is_alphanumeric() || c == '-' || c == '_');
                 tokens.push(CssSelectorToken {
                     token_type: CssSelectorTokenType::Tag,
                     value,
@@ -328,14 +328,14 @@ pub fn parse_css_selector(tokens: &[CssSelectorToken]) -> CssSelector {
                     }
                 }
 
+                if operator.is_some() {
+                    tokens.next(); // Consume AttributeOperator
+                }
+
                 if let Some(val) = tokens.peek() {
                     if matches!(val.token_type, CssSelectorTokenType::AttributeValue) {
                         value = Some(val.value.clone());
                     }
-                }
-
-                if operator.is_some() {
-                    tokens.next(); // Consume AttributeOperator
                 }
 
                 if value.is_some() {
@@ -436,7 +436,24 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
     let mut inside_rule = false;
 
     for (i, c) in chars {
-        if inside_media_query && c != '}' {
+        if inside_media_query {
+            if c == '}' {
+                if inside_rule {
+                    inside_rule = false;
+                    captured_text = "".to_string();
+                    captured_code = "".to_string();
+                    continue;
+                }
+
+                if !inside_rule {
+                    inside_media_query = false;
+                    captured_text = "".to_string();
+                    captured_code = "".to_string();
+                    continue;
+                }
+            } else if c == '{' {
+                inside_rule = true;
+            }
             continue;
         }
 
@@ -474,10 +491,11 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
         }
 
         if c == '{' {
-            if captured_text.trim().starts_with("@") {
+            if captured_code.trim().starts_with("@") {
                 inside_media_query = true;
                 is_capturing_selector = false;
                 captured_text = "".to_string();
+                captured_code = "".to_string();
                 continue;
             }
             inside_rule = true;
@@ -488,16 +506,6 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
             declaration.key = captured_text.trim().to_string();
             captured_text = "".to_string();
         } else if c == ';' || c == '}' {
-            if inside_media_query && inside_rule {
-                inside_rule = false;
-                continue;
-            }
-
-            if inside_media_query && !inside_rule {
-                inside_media_query = false;
-                continue;
-            }
-
             if (declaration.key != "") {
                 let mut text = captured_text.trim().to_string();
                 let important = text.ends_with("!important");

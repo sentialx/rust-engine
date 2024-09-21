@@ -38,7 +38,7 @@ impl FontSize {
 impl PropertyImpl for FontSize {
   fn create_inherited(&self, inherit_style: &Style) -> FontSize {
     let mut size = self.clone();
-    if self.value.is_none() {
+    if (self.value.is_none()) || (self.value.is_some() && self.value.as_ref().unwrap().value.is_inherit()) {
       size = inherit_style.font_size.clone();
     }
     size

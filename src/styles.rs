@@ -137,6 +137,7 @@ pub struct ComputedStyle {
   pub inset: ComputedMargin,
   pub width: f32,
   pub height: f32,
+  pub white_space: String,
 }
 
 #[derive(Clone, Debug)]
@@ -154,6 +155,7 @@ pub struct Style {
   pub inset: Margin,
   pub width: MarginComponent,
   pub height: MarginComponent,
+  pub white_space: StringProperty,
   inserted: HashSet<String>,
 }
 
@@ -173,6 +175,7 @@ impl Style {
       inset: Margin::empty(),
       width: MarginComponent::empty(),
       height: MarginComponent::empty(),
+      white_space: StringProperty::empty(false, "normal"),
 
       inserted: HashSet::new(),
     }
@@ -222,6 +225,7 @@ impl Style {
         "inset" => self.inset = Margin::from_value(declaration.value.clone()),
         "width" => self.width = MarginComponent::from_value(declaration.value.clone()),
         "height" => self.height = MarginComponent::from_value(declaration.value.clone()),
+        "white-space" => self.white_space.from_value(declaration.value.clone()),
         _ => {}
       }
     }
@@ -242,6 +246,7 @@ impl Style {
       inset: self.inset.create_inherited(inherit_style),
       width: self.width.create_inherited(inherit_style),
       height: self.height.create_inherited(inherit_style),
+      white_space: self.white_space.create_inherited(&inherit_style.white_space),
 
       inserted: self.inserted.clone(),
     }
@@ -264,32 +269,33 @@ impl Style {
       inset: self.inset.to_computed(),
       width: self.width.get(),
       height: self.height.get(),
+      white_space: self.white_space.get(),
     }
   }
 }
 
-pub fn get_styles(tree: Vec<DomElement>, parent: Option<DomElement>) -> String {
-  let mut style: String = "".to_string();
+// pub fn get_styles(tree: Vec<DomElement>, parent: Option<DomElement>) -> String {
+//   let mut style: String = "".to_string();
 
-  for element in tree {
-    if element.children.len() > 0 && element.tag_name != "SCRIPT" {
-      style += &get_styles(element.children.clone(), Some(element.clone()));
-    }
-    match element.node_type {
-      NodeType::Text => match &parent {
-        Some(p) => {
-          if p.tag_name == "STYLE" {
-            style += &element.node_value;
-          }
-        }
-        None => {}
-      },
-      _ => {}
-    }
-  }
+//   for element in tree {
+//     if element.children.len() > 0 && element.tag_name != "SCRIPT" {
+//       style += &get_styles(element.children.clone(), Some(element.clone()));
+//     }
+//     match element.node_type {
+//       NodeType::Text => match &parent {
+//         Some(p) => {
+//           if p.tag_name == "STYLE" {
+//             style += &element.node_value;
+//           }
+//         }
+//         None => {}
+//       },
+//       _ => {}
+//     }
+//   }
 
-  return style;
-}
+//   return style;
+// }
 
 pub fn get_declaration_value(
   declarations: &HashMap<String, String>,

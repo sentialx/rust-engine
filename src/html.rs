@@ -3,9 +3,11 @@ use crate::css::parse_css;
 use crate::layout::*;
 use crate::styles::{ComputedStyle, Style};
 use crate::utils::*;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::format;
 use std::hash::Hash;
+use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeType {
@@ -47,9 +49,9 @@ pub struct TextLine {
 
 #[derive(Clone, Debug)]
 pub struct DomElement {
-  pub children: Vec<DomElement>,
+  pub children: Vec<Rc<RefCell<DomElement>>>,
   pub attributes: HashMap<String, String>,
-  pub parent_node: *mut DomElement,
+  pub parent_node: Option<Rc<RefCell<DomElement>>>,
   pub node_value: String,
   pub node_type: NodeType,
   pub inner_html: String,
@@ -70,7 +72,7 @@ impl DomElement {
     DomElement {
       children: vec![],
       attributes: HashMap::new(),
-      parent_node: std::ptr::null_mut(),
+      parent_node: None,
       node_type,
       inner_html: "".to_string(),
       outer_html: "".to_string(),
@@ -251,17 +253,17 @@ pub fn tokenize(html: String) -> Vec<String> {
   return tokens;
 }
 
-fn get_opening_tag<'a>(tag_name: &str, element: *const DomElement) -> Option<&'a DomElement> {
-  if element == std::ptr::null_mut() {
+fn get_opening_tag(tag_name: &str, element: Option<Rc<RefCell<DomElement>>>) -> Option<Rc<RefCell<DomElement>>> {
+  if element.is_none() {
     return None;
   }
 
-  unsafe {
-    if (*element).tag_name == tag_name {
-      return Some(&*element);
-    } else {
-      return get_opening_tag(tag_name, (*element).parent_node);
-    }
+
+  let el = element.clone();
+  if el.unwrap().borrow().tag_name == tag_name {
+    return Some(element.clone().unwrap().clone());
+  } else {
+    return get_opening_tag(tag_name, element.unwrap().borrow().parent_node.clone());
   }
 }
 
@@ -307,10 +309,10 @@ fn set_attributes(el: &mut DomElement, source: String, tag_name: String) {
   }
 }
 
-fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
-  let mut elements: Vec<DomElement> = vec![];
+fn build_tree(tokens: Vec<String>) -> Vec<Rc<RefCell<DomElement>>> {
+  let mut elements: Vec<Rc<RefCell<DomElement>>> = vec![];
 
-  let mut parent: *mut DomElement = std::ptr::null_mut();
+  let mut parent: Option<Rc<RefCell<DomElement>>> = None;
 
   for token in tokens {
     let tag_name = get_tag_name(&token);
@@ -319,23 +321,21 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
 
     match tag_type {
       TagType::Closing => {
-        if parent != std::ptr::null_mut() {
-          unsafe {
-            if (*parent).tag_name == tag_name.to_string() {
-              parent = (*parent).parent_node;
-            } else {
-              let opening_element = get_opening_tag(&tag_name, &*parent);
-              match opening_element {
-                Some(el) => parent = (*el).parent_node,
-                None => {}
-              }
+        if parent.is_some() {
+          if parent.clone().unwrap().borrow().tag_name == tag_name {
+            parent = parent.unwrap().borrow().parent_node.clone();
+          } else {
+            let opening_element = get_opening_tag(&tag_name, parent.clone());
+            match opening_element {
+              Some(el) => parent = el.borrow().parent_node.clone(),
+              None => {}
             }
           }
         }
       }
       _ => {
         let mut element = DomElement::new(node_type.clone());
-        let element_new_ptr: *mut DomElement;
+        let mut el_new_ptr: Option<Rc<RefCell<DomElement>>> = None;
 
         match node_type {
           NodeType::Element => {
@@ -352,21 +352,19 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
           _ => {}
         }
 
-        if parent != std::ptr::null_mut() {
-          unsafe {
-            element.parent_node = parent;
-            (*parent).children.push(element);
-            element_new_ptr = (*parent).children.last_mut().unwrap();
-          }
+        if parent.is_some() {
+          element.parent_node = Some(parent.clone().unwrap());
+          parent.clone().unwrap().borrow_mut().children.push(Rc::new(RefCell::new(element)));
+          el_new_ptr = Some(parent.clone().unwrap().borrow().children.last().unwrap().clone());
         } else {
-          elements.push(element);
-          element_new_ptr = elements.last_mut().unwrap();
+          elements.push(Rc::new(RefCell::new(element.clone())));
+          el_new_ptr = Some(elements.last().unwrap().clone());
         }
 
         match node_type {
           NodeType::Element => match tag_type {
             TagType::Opening => {
-              parent = element_new_ptr;
+              parent = el_new_ptr;
             }
             _ => {}
           },
@@ -379,7 +377,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<DomElement> {
   return elements;
 }
 
-pub fn parse_html(html: &str) -> Vec<DomElement> {
+pub fn parse_html(html: &str) -> Vec<Rc<RefCell<DomElement>>> {
   let tokens = tokenize(html.to_string());
   let elements = build_tree(tokens);
 
