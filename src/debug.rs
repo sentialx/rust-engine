@@ -25,9 +25,9 @@ pub fn print_dom(tree: Vec<DomElement>, level: Option<i32>) -> String {
       }
     }
 
-    if element.children.len() > 0 {
-      result += &print_dom(element.children, Some(l + 1));
-    }
+    // if element.children.len() > 0 {
+    //   result += &print_dom(element.children, Some(l + 1));
+    // }
   }
 
   return result;

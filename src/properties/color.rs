@@ -3,17 +3,18 @@ use crate::{colors::{hex_to_rgb, ColorTupleA}, css_value::CssValue, lisia_colors
 #[derive(Clone, Debug)]
 pub struct Color {
   value: Option<ColorTupleA>,
+  css_value: CssValue,
   inheritable: bool,
   default: ColorTupleA,
 }
 
 impl Color {
-  pub fn new(value: ColorTupleA, inheritable: bool, default: ColorTupleA) -> Color {
-    Color { value: Some(value), inheritable, default }
+  pub fn new(css_value: CssValue, value: ColorTupleA, inheritable: bool, default: ColorTupleA) -> Color {
+    Color { value: Some(value), inheritable, default, css_value }
   }
 
   pub fn empty(inheritable: bool, default: ColorTupleA) -> Color {
-    Color { value: None, inheritable, default }
+    Color { value: None, inheritable, default, css_value: CssValue::String("initial".to_string()) }
   }
 
   pub fn get(&self) -> ColorTupleA {
@@ -25,7 +26,7 @@ impl Color {
 
   pub fn create_inherited(&self, inherit: &Color) -> Color {
     let mut size = self.clone();
-    if (self.value.is_none() && self.inheritable) {
+    if (self.value.is_none() && self.inheritable) || (self.css_value.is_inherit()) {
       size = inherit.clone();
     }
     size
@@ -35,6 +36,7 @@ impl Color {
     match value {
       CssValue::Multiple(values) => {
         if values.len() > 0 {
+          self.css_value = values[0].clone();
           match &values[0] {
             CssValue::String(value) => {
               match value.as_str() {

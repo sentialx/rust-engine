@@ -5,15 +5,15 @@ use piston_window::CharacterCache;
 use crate::{
     css::parse_css,
     html::{parse_html, DomElement},
-    layout::{compute_styles, get_render_array, reflow, Rect, RenderItem},
-    styles::{get_styles, StyleRule},
+    layout::{compute_styles, get_render_array, propagate_styles, reflow, Rect, RenderItem},
+    styles::StyleRule,
 };
 
 pub struct RenderFrame<'a> {
     pub viewport: Rect,
     pub scroll_y: f32,
     pub render_array: Vec<RenderItem>,
-    pub dom_tree: Vec<DomElement>,
+    pub dom_tree: Vec<Rc<RefCell<DomElement>>>,
     pub parsed_css: Vec<StyleRule>,
     pub styles: Vec<StyleRule>,
     pub url: String,
@@ -64,7 +64,7 @@ impl<'a> RenderFrame<'a> {
         let contents = fs::read_to_string(self.url.clone()).expect("error while reading the file");
         self.dom_tree = parse_html(&contents);
 
-        let style = get_styles(self.dom_tree.clone(), None);
+        let style = fs::read_to_string("style.css").expect("error while reading the file");
         self.parsed_css = parse_css(&style);
 
         self.styles = [self.default_styles.clone(), self.parsed_css.clone()].concat();
@@ -102,8 +102,11 @@ impl<'a> RenderFrame<'a> {
 
     pub fn compute_styles(&mut self) {
         let s = Instant::now();
-        compute_styles(&mut self.dom_tree, &self.styles, None, &mut vec![]);
+        compute_styles(&mut self.dom_tree, &self.styles, &mut vec![]);
         println!("Computing styles took: {:?}", s.elapsed());
+        let s = Instant::now();
+        propagate_styles(&mut self.dom_tree, None);
+        println!("Propagating styles took: {:?}", s.elapsed());
     }
 
     pub fn render(&mut self) {

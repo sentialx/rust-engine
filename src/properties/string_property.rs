@@ -28,7 +28,7 @@ impl StringProperty {
 
   pub fn create_inherited(&self, inherit: &StringProperty) -> StringProperty {
     let mut size = self.clone();
-    if self.value.is_none() && self.inheritable {
+    if (self.value.is_none() && self.inheritable) || (self.value.is_some() && self.value.as_ref().unwrap().is_inherit()) {
       size = inherit.clone();
     }
     size

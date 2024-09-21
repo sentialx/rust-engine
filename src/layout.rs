@@ -4,7 +4,10 @@ use crate::html::*;
 use crate::render_frame::TextMeasurer;
 use crate::styles::*;
 use crate::utils::*;
+use std::cell::Ref;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Instant;
 
 #[derive(Clone, Debug)]
@@ -27,6 +30,7 @@ pub struct RenderItem {
     pub background_color: ColorTupleA,
     pub color: ColorTupleA,
     pub underline: bool,
+    pub element: Option<Rc<RefCell<DomElement>>>,
 }
 
 impl RenderItem {
@@ -42,6 +46,7 @@ impl RenderItem {
             font_path: S(""),
             text_lines: vec![],
             underline: false,
+            element: None,
         }
     }
 }
@@ -67,7 +72,7 @@ pub fn is_in_viewport(rect: &Rect, viewport: &Rect) -> bool {
 pub fn should_rerender(
     mouse_x: f32,
     mouse_y: f32,
-    tree: &mut Vec<DomElement>,
+    tree: &Vec<Rc<RefCell<DomElement>>>,
     style: &Vec<StyleRule>,
 ) -> bool {
     let mut dirty = false;
@@ -76,7 +81,7 @@ pub fn should_rerender(
 
     for i in 0..elements_len {
         let mut hovered = false;
-        let mut element = &mut tree[i];
+        let element = &tree[i].borrow();
 
         if element.computed_style.is_none() {
             continue;
@@ -87,12 +92,12 @@ pub fn should_rerender(
         // }
 
         if hovered != element.is_hovered {
-            element.is_hovered = hovered;
+            // element.is_hovered = hovered;
             dirty = true;
         }
 
         if element.children.len() > 0 {
-            if should_rerender(mouse_x, mouse_y, &mut element.children, style) {
+            if should_rerender(mouse_x, mouse_y, &element.children, style) {
                 return true;
             }
         }
@@ -105,16 +110,25 @@ pub fn element_matches_hover_selector(element: &DomElement, selector: &str) -> b
     selector.to_uppercase() == element.tag_name.clone() + ":HOVER"
 }
 
-pub fn get_element_at(tree: &Vec<DomElement>, x: f32, y: f32) -> Option<&DomElement> {
-    let elements_len = tree.len();
+pub fn get_element_at(
+    render_items: &Vec<RenderItem>,
+    x: f32,
+    y: f32,
+) -> Option<&Rc<RefCell<DomElement>>> {
+    for i in (0..render_items.len()).rev() {
+        let item = &render_items[i];
 
-    for i in 0..elements_len {
-        let element = &tree[i];
-        let computed_flow = element.computed_flow.as_ref();
-        if computed_flow.is_none() {
+        let element = match &item.element {
+            Some(e) => e,
+            None => continue,
+        };
+        let element = element.borrow();
+
+        if element.node_type == NodeType::Text {
             continue;
         }
-        let computed_flow = computed_flow.unwrap();
+
+        let computed_flow = element.computed_flow.as_ref().unwrap();
         let rect = Rect {
             x: computed_flow.x,
             y: computed_flow.y,
@@ -122,17 +136,8 @@ pub fn get_element_at(tree: &Vec<DomElement>, x: f32, y: f32) -> Option<&DomElem
             height: computed_flow.height,
         };
 
-        let element = &tree[i];
-
-        if element.children.len() > 0 {
-            let child = get_element_at(&element.children, x, y);
-            if child.is_some() {
-                return child;
-            } else if rect_contains(&rect, x, y) {
-                return Some(element);
-            }
-        } else if rect_contains(&rect, x, y) && element.node_type != NodeType::Text {
-            return Some(element);
+        if rect_contains(&rect, x, y) {
+            return Some(item.element.as_ref().unwrap());
         }
     }
 
@@ -159,16 +164,16 @@ pub fn element_matches_selector(
             Some(op) => match element.attributes.get(name) {
                 Some(attr_value) => match op.as_str() {
                     "=" => value.is_some() && attr_value == value.as_deref().unwrap(),
-                    "~=" => attr_value
+                    "~" => attr_value
                         .split_whitespace()
                         .any(|part| part == value.as_deref().unwrap()),
-                    "|=" => {
+                    "|" => {
                         attr_value == value.as_deref().unwrap()
                             || attr_value.starts_with(&(value.clone().unwrap() + "-"))
                     }
-                    "^=" => attr_value.starts_with(value.as_deref().unwrap()),
-                    "$=" => attr_value.ends_with(value.as_deref().unwrap()),
-                    "*=" => attr_value.contains(value.as_deref().unwrap()),
+                    "^" => attr_value.starts_with(value.as_deref().unwrap()),
+                    "$" => attr_value.ends_with(value.as_deref().unwrap()),
+                    "*" => attr_value.contains(value.as_deref().unwrap()),
                     _ => false,
                 },
                 None => false,
@@ -226,45 +231,47 @@ pub fn element_matches_selector(
 }
 
 pub fn compute_styles(
-    tree: &mut Vec<DomElement>,
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
     style: &Vec<StyleRule>,
-    parent_style: Option<&Style>,
     parents: &mut Vec<*mut DomElement>,
 ) {
-    let elements_len = tree.len();
+    for i in 0..tree.len() {
+        let mut element = tree[i].borrow_mut();
+        let mut hoverable = false;
+        for style_rule in style {
+            if element_matches_selector(&element, &style_rule.selector, parents) {
+                element.style.insert_declarations(&style_rule.declarations);
+                element
+                    .matched_selectors
+                    .push(style_rule.selector.to_string());
+            }
+        }
 
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
+        {
+            parents.push(tree[i].as_ptr());
+            compute_styles(&mut element.children, style, parents);
+            parents.pop();
+        }
+    }
+}
+
+pub fn propagate_styles(tree: &mut Vec<Rc<RefCell<DomElement>>>, parent_style: Option<&Style>) {
     let parent_style = match parent_style {
         Some(s) => s,
         None => &Style::new(),
     };
 
-    for i in 0..elements_len {
-        let element = &mut tree[i];
-        let mut hoverable = false;
-        for style_rule in style {
-            if element_matches_selector(&element, &style_rule.selector, parents) {
-                element.style.insert_declarations(&style_rule.declarations);
-                element.matched_selectors.push(style_rule.selector.to_string());
-            }
-        }
-
+    for i in 0..tree.len() {
+        let mut element = tree[i].borrow_mut();
         let inherited_styles = element.style.create_inherited(&parent_style);
-        element.inherited_style = Some(inherited_styles);
-
-        let element = &mut tree[i];
 
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
-            let el: *mut DomElement = element;
-            parents.push(el);
-            compute_styles(
-                &mut element.children,
-                style,
-                Some(element.inherited_style.as_ref().unwrap()),
-                parents,
-            );
-            parents.pop();
+            propagate_styles(&mut element.children, Some(&inherited_styles));
         }
+
+        element.inherited_style = Some(inherited_styles);
     }
 }
 
@@ -288,15 +295,18 @@ fn is_horizontal_layout(computed_style: &Style) -> bool {
         || computed_style.float.get() != "none";
 }
 
+fn uses_absolute_positioning(computed_style: &ComputedStyle) -> bool {
+    return computed_style.position == "absolute"
+        || computed_style.position == "fixed";
+}
+
 pub fn reflow(
-    tree: &mut Vec<DomElement>,
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
     text_measurer: &mut dyn TextMeasurer,
-    context: Option<ReflowContext>,
+    context: Option<&mut ReflowContext>,
     viewport: &Rect,
 ) {
-    let elements_len = tree.len();
-
-    let mut sibling_context = context.unwrap_or(ReflowContext {
+    let mut default_context = ReflowContext {
         x: 0.0,
         y: 0.0,
         rel_x: 0.0,
@@ -307,7 +317,9 @@ pub fn reflow(
         parent_max_width: viewport.width,
         layout_x_start: None,
         adjacent_margin_bottom: 0.0,
-    });
+    };
+
+    let sibling_context = context.unwrap_or(&mut default_context);
 
     let x_base = sibling_context.x;
     let y_base = sibling_context.y;
@@ -316,16 +328,14 @@ pub fn reflow(
 
     let mut last_element: Option<usize> = None;
 
-    for i in 0..elements_len {
-        let mut context = sibling_context.clone();
-
+    for i in 0..tree.len() {
         let mut x = x_base;
         let mut y = y_base;
 
         let mut width = 0.0;
         let mut height = 0.0;
 
-        let mut max_width = context.parent_max_width;
+        let mut max_width = sibling_context.parent_max_width;
 
         // let parent_style = unsafe {
         //     match tree[i].parent_node.as_ref() {
@@ -334,150 +344,205 @@ pub fn reflow(
         //     }
         // };
         // let tag_name = tree[i].tag_name.clone();
-        let style = tree[i].inherited_style.as_mut().unwrap();
-
-        if style.display.get() == "none" {
-            continue;
-        }
-
-        let font_scalar_ctx =
-            ScalarEvaluationContext::from_parent(context.font_size, context.font_size);
-        let parent_width_scalar_ctx = ScalarEvaluationContext::from_parent(context.font_size, context.parent_width);
-        let parent_height_scalar_ctx = ScalarEvaluationContext::from_parent(context.font_size, context.parent_height);
-
-        style.margin.evaluate(&font_scalar_ctx);
-        style.padding.evaluate(&font_scalar_ctx);
-        style.font_size.evaluate(&font_scalar_ctx);
-        style.inset.evaluate(&font_scalar_ctx);
-        style.width.evaluate(&parent_width_scalar_ctx);
-        style.height.evaluate(&parent_height_scalar_ctx);
-
-        if style.width.has_numeric_value() {
-            max_width = style.width.get();
-            width = style.width.get();
-        }
-
-        if style.height.has_numeric_value() {
-            height = style.height.get();
-        }
-
-        let style = tree[i].inherited_style.as_ref().unwrap();
-
-        let comp_style = style.to_computed_style();
-
-        if comp_style.position == "absolute" || comp_style.position == "fixed" {
-            if style.inset.top.has_numeric_value() {
-                y = style.inset.top.get() + context.rel_y;
-            }
-            if style.inset.left.has_numeric_value() {
-                x = style.inset.left.get() + context.rel_x;
-            }
-        }
-
-        let previous_margin_bottom = context.adjacent_margin_bottom;
-
-        if last_element.is_some()
-            && (comp_style.position != "absolute" && comp_style.position != "fixed")
         {
-            let previous_element = &tree[last_element.unwrap()];
-            let prev_style = previous_element.inherited_style.as_ref().unwrap();
-            let prev_computed_flow = previous_element.computed_flow.as_ref().unwrap();
+            let mut element = tree[i].borrow_mut();
+            let style = element.inherited_style.as_mut().unwrap();
 
-            if is_horizontal_layout(prev_style) {
-                if comp_style.display == "inline-block" || comp_style.float != "none" {
-                    y = prev_computed_flow.y;
-                } else {
-                    y = prev_computed_flow.continue_y;
+            if style.display.get() == "none" {
+                continue;
+            }
+
+            let font_scalar_ctx = ScalarEvaluationContext::from_parent(
+                sibling_context.font_size,
+                sibling_context.font_size,
+            );
+            let parent_width_scalar_ctx = ScalarEvaluationContext::from_parent(
+                sibling_context.font_size,
+                sibling_context.parent_width,
+            );
+            let parent_height_scalar_ctx = ScalarEvaluationContext::from_parent(
+                sibling_context.font_size,
+                sibling_context.parent_height,
+            );
+
+            style.margin.evaluate(&font_scalar_ctx);
+            style.padding.evaluate(&font_scalar_ctx);
+            style.font_size.evaluate(&font_scalar_ctx);
+            style.inset.evaluate(&font_scalar_ctx);
+            style.width.evaluate(&parent_width_scalar_ctx);
+            style.height.evaluate(&parent_height_scalar_ctx);
+
+            if style.width.has_numeric_value() {
+                max_width = style.width.get();
+                width = style.width.get();
+            }
+
+            if style.height.has_numeric_value() {
+                height = style.height.get();
+            }
+        }
+
+        {
+            let mut element = tree[i].borrow_mut();
+            let comp_style = element
+                .inherited_style
+                .as_ref()
+                .unwrap()
+                .to_computed_style();
+            element.computed_style = Some(comp_style);
+        }
+        {
+            let element = tree[i].borrow();
+            let comp_style = element.computed_style.as_ref().unwrap();
+            let style = element.inherited_style.as_ref().unwrap();
+
+            if uses_absolute_positioning(comp_style) {
+                if style.inset.top.has_numeric_value() {
+                    y = style.inset.top.get() + sibling_context.rel_y;
+                }
+                if style.inset.left.has_numeric_value() {
+                    x = style.inset.left.get() + sibling_context.rel_x;
                 }
             }
 
-            let should_continue_horizontal_layout =
-                is_horizontal_layout(style) && is_horizontal_layout(prev_style);
+            let previous_margin_bottom = sibling_context.adjacent_margin_bottom;
 
-            if is_horizontal_layout(style) && should_continue_horizontal_layout {
-                // Horizontal layout
-                if comp_style.display == "inline-block" || comp_style.float != "none" {
-                    x = prev_computed_flow.x + prev_computed_flow.width + prev_style.margin.right.get();
-                } else {
-                    x = prev_computed_flow.continue_x;
+            if last_element.is_some()
+                && !uses_absolute_positioning(comp_style)
+            {
+                let previous_element = &tree[last_element.unwrap()].borrow();
+                let prev_style = previous_element.inherited_style.as_ref().unwrap();
+                let prev_computed_flow = previous_element.computed_flow.as_ref().unwrap();
+
+                if is_horizontal_layout(prev_style) {
+                    if comp_style.display == "inline-block" || comp_style.float != "none" {
+                        y = prev_computed_flow.y;
+                    } else {
+                        y = prev_computed_flow.continue_y;
+                    }
                 }
-                // x = prev_computed_flow.x + prev_computed_flow.width;
-                context.adjacent_margin_bottom = 0.0;
+
+                let should_continue_horizontal_layout =
+                    is_horizontal_layout(style) && is_horizontal_layout(prev_style);
+
+                if is_horizontal_layout(style) && should_continue_horizontal_layout {
+                    // Horizontal layout
+                    if comp_style.display == "inline-block" || comp_style.float != "none" {
+                        x = prev_computed_flow.x
+                            + prev_computed_flow.width
+                            + prev_style.margin.right.get();
+                    } else {
+                        x = prev_computed_flow.continue_x;
+                    }
+                    // x = prev_computed_flow.x + prev_computed_flow.width;
+                    sibling_context.adjacent_margin_bottom = 0.0;
+                } else {
+                    // Vertical layout
+                    y = reserved_block_y;
+                    // Collapse margins
+                    y += f32::max(prev_style.margin.bottom.get(), comp_style.margin.top);
+
+                    // context.adjacent_margin_bottom = prev_computed_flow.adjacent_margin_bottom;
+                }
+
+                x += comp_style.margin.right;
             } else {
-                // Vertical layout
-                y = reserved_block_y;
-                // Collapse margins
-                y += f32::max(prev_style.margin.bottom.get(), comp_style.margin.top);
-
-                // context.adjacent_margin_bottom = prev_computed_flow.adjacent_margin_bottom;
+                y += f32::max(0.0, comp_style.margin.top - previous_margin_bottom);
             }
 
-            x += comp_style.margin.right;
-        } else {
-            y += f32::max(0.0, comp_style.margin.top - previous_margin_bottom);
+            if sibling_context.layout_x_start.is_none()
+                && is_horizontal_layout(style)
+                && comp_style.display == "inline"
+            {
+                sibling_context.layout_x_start = Some(x);
+            }
         }
-
-        if sibling_context.layout_x_start.is_none()
-            && is_horizontal_layout(style)
-            && comp_style.display == "inline"
-        {
-            sibling_context.layout_x_start = Some(x);
-        }
-
-        context.layout_x_start = sibling_context.layout_x_start;
 
         last_element = Some(i);
 
-        let element = &mut tree[i];
-        element.computed_style = Some(comp_style);
-
-        let comp_style = element.computed_style.as_ref().unwrap();
-        let style = element.inherited_style.as_ref().unwrap();
-
-        x += comp_style.margin.left;
+        let mut continue_x = 0.0;
+        let mut continue_y = 0.0;
 
         let mut adjacent_margin_bottom = 0.0;
 
-        if style.width.has_numeric_value() {
-            context.parent_width = width;
+        let has_children = {
+            let element = tree[i].borrow();
+            element.children.len() > 0
+                && element.tag_name != "SCRIPT"
+                && element.tag_name != "STYLE"
+        };
+
+        let mut parent_context: Option<ReflowContext> = None;
+
+        if has_children {
+            let element = tree[i].borrow();
+            let style = element.inherited_style.as_ref().unwrap();
+
+            parent_context = Some(sibling_context.clone());
+            let parent_context = parent_context.as_mut().unwrap();
+
+            if style.width.has_numeric_value() {
+                parent_context.parent_width = width;
+            }
+            if style.height.has_numeric_value() {
+                parent_context.parent_height = height;
+            }
         }
-        if style.height.has_numeric_value() {
-            context.parent_height = height;
-        }
 
-        width += comp_style.padding.left + comp_style.padding.right;
-        height += comp_style.padding.top + comp_style.padding.bottom;
-
-        let mut continue_x = x + width + comp_style.margin.right;
-        let mut continue_y = y + height + comp_style.margin.bottom;
-
-        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
-            context.x = x + comp_style.padding.left;
-            context.y = y + comp_style.padding.top;
+            let element = tree[i].borrow();
+            let comp_style = element.computed_style.as_ref().unwrap();
 
-            context.parent_max_width = max_width;
+            x += comp_style.margin.left;
 
-            if comp_style.position == "absolute"
-                || comp_style.position == "fixed"
+            width += comp_style.padding.left + comp_style.padding.right;
+            height += comp_style.padding.top + comp_style.padding.bottom;
+
+            continue_x = x + width + comp_style.margin.right;
+            continue_y = y + height + comp_style.margin.bottom;
+        }
+
+        if has_children {
+            let parent_context = parent_context.as_mut().unwrap();
+
+            let element = tree[i].borrow();
+            let comp_style = element.computed_style.as_ref().unwrap();
+
+            parent_context.layout_x_start = sibling_context.layout_x_start;
+
+            parent_context.x = x + comp_style.padding.left;
+            parent_context.y = y + comp_style.padding.top;
+
+            parent_context.parent_max_width = max_width;
+
+            if uses_absolute_positioning(comp_style)
                 || comp_style.position == "relative"
             {
-                context.rel_x = context.x;
-                context.rel_y = context.y;
+                parent_context.rel_x = parent_context.x;
+                parent_context.rel_y = parent_context.y;
             }
 
             if comp_style.display != "inline" {
-                context.layout_x_start = None;
+                parent_context.layout_x_start = None;
             }
+        }
+
+        if has_children {
+            let mut parent_context = parent_context.unwrap();
+            let mut element = tree[i].borrow_mut();
 
             reflow(
                 &mut element.children,
                 text_measurer,
-                Some(context.clone()),
+                Some(&mut parent_context),
                 viewport,
             );
 
+            let comp_style = element.computed_style.as_ref().unwrap();
+            let style = element.inherited_style.as_ref().unwrap();
+
             for el in &element.children {
+                let el = el.borrow();
                 let el_computed_flow = el.computed_flow.as_ref();
                 let el_computed_style = el.computed_style.as_ref();
                 if el_computed_flow.is_none() || el_computed_style.is_none() {
@@ -485,7 +550,7 @@ pub fn reflow(
                 }
                 let el_computed_flow = el_computed_flow.unwrap();
                 let el_computed_style = el_computed_style.unwrap();
-                if el_computed_style.position == "absolute" || el_computed_style.position == "fixed"
+                if uses_absolute_positioning(el_computed_style)
                 {
                     continue;
                 }
@@ -516,6 +581,7 @@ pub fn reflow(
             adjacent_margin_bottom = comp_style.margin.bottom;
 
             for el in &element.children {
+                let el = el.borrow();
                 let computed_flow = el.computed_flow.as_ref();
                 if computed_flow.is_none() {
                     continue;
@@ -527,6 +593,8 @@ pub fn reflow(
             }
         }
 
+        let mut element = tree[i].borrow_mut();
+
         match element.node_type {
             NodeType::Text => {
                 element.node_value = element
@@ -535,16 +603,34 @@ pub fn reflow(
                     .replace("&gt;", ">")
                     .replace("&lt;", "<");
 
-                let lines = wrap_text(
-                    element.node_value.clone(),
-                    max_width,
-                    text_measurer,
-                    comp_style.font_size,
-                    style.font.get_path(),
-                    x,
-                    y,
-                    context.layout_x_start.unwrap_or(x),
-                );
+                let comp_style = element.computed_style.as_ref().unwrap();
+                let style = element.inherited_style.as_ref().unwrap();
+
+                let lines = if style.white_space.get() != "nowrap" {
+                    wrap_text(
+                        element.node_value.clone(),
+                        max_width,
+                        text_measurer,
+                        comp_style.font_size,
+                        style.font.get_path(),
+                        x,
+                        y,
+                        sibling_context.layout_x_start.unwrap_or(x),
+                    )
+                } else {
+                    let size = text_measurer.measure(
+                        &element.node_value,
+                        comp_style.font_size,
+                        &style.font.get_path(),
+                    );
+                    vec![TextLine {
+                        text: element.node_value.clone(),
+                        x: x,
+                        y: y,
+                        width: size.0,
+                        height: size.1,
+                    }]
+                };
 
                 if lines.len() > 0 {
                     let last = lines.last().unwrap();
@@ -575,6 +661,7 @@ pub fn reflow(
         match element.node_type {
             NodeType::Comment => {}
             _ => {
+                let comp_style = element.computed_style.as_ref().unwrap();
                 if comp_style.position != "absolute" && comp_style.position != "fixed" {
                     reserved_block_y = f32::max(height + y, reserved_block_y);
                 }
@@ -660,11 +747,14 @@ pub fn wrap_text(
     return lines;
 }
 
-pub fn get_render_array(tree: &mut Vec<DomElement>, viewport: &Rect) -> Vec<RenderItem> {
+pub fn get_render_array(
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
+    viewport: &Rect,
+) -> Vec<RenderItem> {
     let mut array: Vec<RenderItem> = vec![];
 
     for i in 0..tree.len() {
-        let element = &mut tree[i];
+        let element = &mut tree[i].borrow_mut();
         let computed_flow = element.computed_flow.as_ref();
         if computed_flow.is_none() {
             continue;
@@ -677,33 +767,35 @@ pub fn get_render_array(tree: &mut Vec<DomElement>, viewport: &Rect) -> Vec<Rend
             height: computed_flow.height,
         };
 
-        let is_in_viewport = is_in_viewport(viewport, &rect);
-        if element.children.len() > 0
-            && element.tag_name != "SCRIPT"
-            && element.tag_name != "STYLE"
-            && is_in_viewport
-        {
-            let children_render_items = get_render_array(&mut element.children, viewport);
-            array.extend(children_render_items);
-        }
-
-        let element = &tree[i];
-        let computed_flow = element.computed_flow.as_ref().unwrap();
         let computed_style = element.computed_style.as_ref();
         if computed_style.is_none() {
             continue;
         }
         let computed_style = computed_style.unwrap();
+        if computed_style.display == "none" {
+            continue;
+        }
+
+        let is_in_viewport = is_in_viewport(viewport, &rect);
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
+        {
+            let children_render_items = get_render_array(&mut element.children, viewport);
+            array.extend(children_render_items);
+        }
+
+        // let element = &tree[i];
+        let computed_flow = element.computed_flow.as_ref().unwrap();
+        let computed_style = element.computed_style.as_ref().unwrap();
 
         let has_something_to_render =
             element.node_value != "" || computed_style.background_color != (0.0, 0.0, 0.0, 0.0);
         // The element has nothing to render
-        if !has_something_to_render || !is_in_viewport || computed_style.display == "none" {
+        if !is_in_viewport {
             continue;
         }
 
         let style = element.inherited_style.as_ref().unwrap();
-        
+
         match element.node_type {
             NodeType::Comment => {}
             _ => {
@@ -718,6 +810,7 @@ pub fn get_render_array(tree: &mut Vec<DomElement>, viewport: &Rect) -> Vec<Rend
                     font_path: style.font.get_path(),
                     color: computed_style.color,
                     underline: computed_style.text_decoration == "underline",
+                    element: Some(tree[i].clone()),
                 };
                 array.insert(0, item);
             }

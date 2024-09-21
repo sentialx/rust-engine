@@ -109,7 +109,7 @@ pub fn create_browser_window(url: String) {
 
         // scroll event
         if let Some(args) = event.mouse_scroll_args() {
-            render_frame.scroll_y -= args[1] as f32 * 24.0;
+            render_frame.scroll_y -= args[1] as f32 * 64.0;
             render_frame.fast_render();
         }
 
@@ -156,10 +156,9 @@ pub fn create_browser_window(url: String) {
             // }
         }
 
-        let dom_tree = &render_frame.dom_tree;
-        let element = get_element_at(&dom_tree, mouse_x / zoom as f32, (mouse_y + render_frame.scroll_y) / (zoom as f32));
+        let element = get_element_at(&render_frame.render_array, mouse_x / zoom as f32, (mouse_y + render_frame.scroll_y) / (zoom as f32));
         if element.is_some() {
-            let el = element.unwrap();
+            let el = element.unwrap().borrow();
             el_txt = format!(
                 "{:?}\n{:#?}\n{:#?}\n{:#?}",
                 el.tag_name, el.attributes, el.matched_selectors, el.computed_style
@@ -243,7 +242,7 @@ pub fn create_browser_window(url: String) {
                 );
 
                 if element.is_some() {
-                    let el = element.unwrap();
+                    let el = element.unwrap().borrow();
                     let computed_flow = el.computed_flow.as_ref().unwrap();
                     let el_y = computed_flow.y as f64 - render_frame.scroll_y as f64;
 

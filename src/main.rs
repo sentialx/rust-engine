@@ -18,19 +18,18 @@ use css::parse_css;
 fn main() {
 create_browser_window(String::from("index.html"));
 
-    let s = parse_css("xd { background-color: black;");
     // println!("{:#?}", s);
     // selector_tests();
 }
 
 fn selector_tests() {
-    // let selector = "div#id.class > a[href ~= 'xd'] , a[h] >  b +  div ~ c , cd > e > fg>hj";
-    let selector = "   .fJhMgF.fJhMgF   x  >  d  ";
+    let selector = "div#id.class > a[href ~= 'xd'] , a[h] >  b +  div ~ c , cd > e > fg>hj";
+    // let selector = "   .fJhMgF.fJhMgF   x  >  d  ";
     // let selector = "cd > e > fg > hj, a";
 
     let tokens = css::tokenize_css_selector(selector);
 
-    // println!("{:#?}", tokens);
+    println!("{:#?}", tokens);
 
     let parsed = css::parse_css_selector(&tokens);
     println!("{:#?}", parsed.to_string());
