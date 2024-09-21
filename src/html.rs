@@ -1,7 +1,7 @@
 use crate::colors::ColorTupleA;
 use crate::css::parse_css;
 use crate::layout::*;
-use crate::styles::{ComputedStyle, Style};
+use crate::styles::{ComputedStyle, Style, StyleRule};
 use crate::utils::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -64,7 +64,7 @@ pub struct DomElement {
   pub computed_style: Option<ComputedStyle>,
   pub lines: Vec<TextLine>,
   pub class_list: Vec<String>,
-  pub matched_selectors: Vec<String>,
+  pub matched_styles: Vec<StyleRule>,
 }
 
 impl DomElement {
@@ -85,7 +85,7 @@ impl DomElement {
       is_hovered: false,
       lines: vec![],
       class_list: vec![],
-      matched_selectors: vec![],
+      matched_styles: vec![],
     }
   }
 

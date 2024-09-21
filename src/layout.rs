@@ -241,9 +241,7 @@ pub fn compute_styles(
         for style_rule in style {
             if element_matches_selector(&element, &style_rule.selector, parents) {
                 element.style.insert_declarations(&style_rule.declarations);
-                element
-                    .matched_selectors
-                    .push(style_rule.selector.to_string());
+                element.matched_styles.push(style_rule.clone());
             }
         }
 

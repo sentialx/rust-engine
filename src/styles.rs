@@ -62,7 +62,7 @@ impl StyleScalar {
             self.calculated = Some(ctx.em_base * size.value);
           }
           // CssSizeUnit::Rem => {
-          //   self.calculated = Some(ctx.rem_base * size.value);
+          //   self.calculated = Some(ctx.em_base * size.value);
           // }
           CssSizeUnit::Px => {
             self.calculated = Some(size.value);
@@ -109,6 +109,15 @@ impl StyleRule {
       selector: CssSelector::AndGroup { selectors: vec![] },
       declarations: vec![],
     }
+  }
+
+  pub fn to_string(&self) -> String {
+    let mut decl = "".to_string();
+    for declaration in &self.declarations {
+      decl += (format!("{}: {:#?};", declaration.key, declaration.value.to_string()) + "\n").as_str();
+    }
+
+    return format!("{}\n{}", self.selector.to_string(), decl);
   }
 }
 
