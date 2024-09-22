@@ -102,7 +102,7 @@ impl<'a> RenderFrame<'a> {
 
     pub fn compute_styles(&mut self) {
         let s = Instant::now();
-        compute_styles(&mut self.dom_tree, &self.styles, &mut vec![]);
+        compute_styles(&mut self.dom_tree, &self.styles, &mut vec![], None);
         println!("Computing styles took: {:?}", s.elapsed());
         let s = Instant::now();
         propagate_styles(&mut self.dom_tree, None);

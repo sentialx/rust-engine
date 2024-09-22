@@ -1,0 +1,27 @@
+@media screen {
+  .xd {
+    background-color: #f1f1f1;
+  }
+
+  @media screen {
+    .xdd {
+      background-color: #f1f1f1;
+    }
+    @media screen and {
+      .xdd4 {
+        background-color: #f1f1f1;
+      }
+    }
+    .xdd2 {
+      background-color: #f1f1f1;
+    }
+  }
+
+  .xdd3 {
+    background-color: #f1f1f1;
+  }
+}
+
+.dgfgg {
+  background-color: #f1f1f1;
+}

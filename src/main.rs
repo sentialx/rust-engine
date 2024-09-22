@@ -11,33 +11,27 @@ mod css_value;
 mod properties;
 mod render_frame;
 
-use std::string::String;
+use std::{fs, string::String};
 use browser_window::*;
 use css::parse_css;
 
 fn main() {
-// create_browser_window(String::from("index.html"));
+create_browser_window(String::from("index.html"));
 
-    // println!("{:#?}", s);
-    selector_tests();
+let style = fs::read_to_string("style.css").expect("error while reading the file");
+let parsed_css = parse_css(&style);
+
+for rule in parsed_css {
+    println!("{:#?}", rule.selector.to_string());
+    // println!("{:#?}", rule.declarations);
+}
+// println!("{:#?}", parsed_css);
+
+    // selector_tests();
 }
 
 fn selector_tests() {
-    let selector = "#toggle-all-docs,
-a.anchor,
-.section-header a,
-#src-sidebar a,
-.rust a,
-.sidebar h2 a,
-.sidebar h3 a,
-.mobile-topbar h2 a,
-h1 a,
-.search-results a,
-.stab,
-.result-name i {
-  color: var(--main-color);
-}
-span.enum,
+    let selector = "span.enum,
 a.enum,
 span.struct,
 a.struct,
@@ -48,9 +42,7 @@ a.primitive,
 span.type,
 a.type,
 span.foreigntype,
-a.foreigntype {
-  color: var(--type-link-color);
-}";
+a.foreigntype";
     // let selector = "   .fJhMgF.fJhMgF   x  >  d  ";
     // let selector = "cd > e > fg > hj, a";
 

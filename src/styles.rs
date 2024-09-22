@@ -2,6 +2,7 @@ use crate::colors::ColorTupleA;
 use crate::css::*;
 use crate::css_value::{CssSizeUnit, CssValue};
 use crate::html::{DomElement, NodeType};
+use crate::layout::CssVariablesContext;
 use crate::properties::color::Color;
 use crate::properties::font::{Font, FontFamily, FontWeight};
 use crate::properties::font_size::FontSize;
@@ -61,9 +62,9 @@ impl StyleScalar {
           CssSizeUnit::Em => {
             self.calculated = Some(ctx.em_base * size.value);
           }
-          // CssSizeUnit::Rem => {
-          //   self.calculated = Some(ctx.em_base * size.value);
-          // }
+          CssSizeUnit::Rem => {
+            self.calculated = Some(ctx.em_base * size.value);
+          }
           CssSizeUnit::Px => {
             self.calculated = Some(size.value);
           }
@@ -147,6 +148,7 @@ pub struct ComputedStyle {
   pub width: f32,
   pub height: f32,
   pub white_space: String,
+  pub visibility: String,
 }
 
 #[derive(Clone, Debug)]
@@ -165,7 +167,34 @@ pub struct Style {
   pub width: MarginComponent,
   pub height: MarginComponent,
   pub white_space: StringProperty,
+  pub visibility: StringProperty,
   inserted: HashSet<String>,
+}
+
+fn replace_var(value: &mut CssValue, ctx: &CssVariablesContext) {
+  match value {
+    CssValue::Function(func) => {
+      if func.name == "var(" {
+        let var_name = func.args[0].to_string();
+        let var_value = ctx.variables.get(&("--".to_string() + &var_name));
+        println!("var_name: {:?} {:?}", var_name, var_value);
+        if var_value.is_some() {
+          *value = var_value.unwrap().clone();
+        }
+      } else {
+        for arg in &mut func.args {
+          replace_var(arg, ctx);
+        }
+      }
+    },
+    CssValue::Multiple(values) => {
+      for value in values {
+        replace_var(value, ctx);
+      }
+    },
+    _ => {}
+  }
+
 }
 
 impl Style {
@@ -185,13 +214,14 @@ impl Style {
       width: MarginComponent::empty(),
       height: MarginComponent::empty(),
       white_space: StringProperty::empty(false, "normal"),
+      visibility: StringProperty::empty(false, "visible"),
 
       inserted: HashSet::new(),
     }
   }
 
   // TODO: handle !important
-  pub fn insert_declarations(&mut self, declarations: &Vec<Declaration>) {
+  pub fn insert_declarations(&mut self, declarations: &Vec<Declaration>, ctx: &CssVariablesContext) {
     // remove consequtive non-important declarations
 
     for declaration in declarations {
@@ -205,36 +235,41 @@ impl Style {
         self.inserted.insert(declaration.key.clone());
         
       }
+
+      let mut value = declaration.value.clone();
+
+      replace_var(&mut value, ctx);
       
       match declaration.key.as_str() {
-        "margin-top" => self.margin.top = MarginComponent::from_value(declaration.value.clone()),
-        "margin-right" => self.margin.right = MarginComponent::from_value(declaration.value.clone()),
-        "margin-bottom" => self.margin.bottom = MarginComponent::from_value(declaration.value.clone()),
-        "margin-left" => self.margin.left = MarginComponent::from_value(declaration.value.clone()),
-        "padding-top" => self.padding.top = MarginComponent::from_value(declaration.value.clone()),
-        "padding-right" => self.padding.right = MarginComponent::from_value(declaration.value.clone()),
-        "padding-bottom" => self.padding.bottom = MarginComponent::from_value(declaration.value.clone()),
-        "padding-left" => self.padding.left = MarginComponent::from_value(declaration.value.clone()),
-        "margin" => self.margin = Margin::from_value(declaration.value.clone()),
-        "padding" => self.padding = Margin::from_value(declaration.value.clone()),
-        "font-family" => self.font.family = FontFamily::from_value(declaration.value.clone()),
-        "font-weight" => self.font.weight = FontWeight::from_value(declaration.value.clone()),
-        "font-size" => self.font_size = FontSize::from_value(declaration.value.clone()),
-        "font-style" => self.font.style = FontStyle::from_value(declaration.value.clone()),
-        "display" => self.display.from_value(declaration.value.clone()),
-        "float" => self.float.from_value(declaration.value.clone()),
-        "text-decoration" => self.text_decoration.from_value(declaration.value.clone()),
-        "color" => self.color.from_value(declaration.value.clone()),
-        "background-color" => self.background_color.from_value(declaration.value.clone()),
-        "position" => self.position.from_value(declaration.value.clone()),
-        "top" => self.inset.top = MarginComponent::from_value(declaration.value.clone()),
-        "right" => self.inset.right = MarginComponent::from_value(declaration.value.clone()),
-        "bottom" => self.inset.bottom = MarginComponent::from_value(declaration.value.clone()),
-        "left" => self.inset.left = MarginComponent::from_value(declaration.value.clone()),
-        "inset" => self.inset = Margin::from_value(declaration.value.clone()),
-        "width" => self.width = MarginComponent::from_value(declaration.value.clone()),
-        "height" => self.height = MarginComponent::from_value(declaration.value.clone()),
-        "white-space" => self.white_space.from_value(declaration.value.clone()),
+        "margin-top" => self.margin.top = MarginComponent::from_value(value),
+        "margin-right" => self.margin.right = MarginComponent::from_value(value),
+        "margin-bottom" => self.margin.bottom = MarginComponent::from_value(value),
+        "margin-left" => self.margin.left = MarginComponent::from_value(value),
+        "padding-top" => self.padding.top = MarginComponent::from_value(value),
+        "padding-right" => self.padding.right = MarginComponent::from_value(value),
+        "padding-bottom" => self.padding.bottom = MarginComponent::from_value(value),
+        "padding-left" => self.padding.left = MarginComponent::from_value(value),
+        "margin" => self.margin = Margin::from_value(value),
+        "padding" => self.padding = Margin::from_value(value),
+        "font-family" => self.font.family = FontFamily::from_value(value),
+        "font-weight" => self.font.weight = FontWeight::from_value(value),
+        "font-size" => self.font_size = FontSize::from_value(value),
+        "font-style" => self.font.style = FontStyle::from_value(value),
+        "display" => self.display.from_value(value),
+        "float" => self.float.from_value(value),
+        "text-decoration" => self.text_decoration.from_value(value),
+        "color" => self.color.from_value(value),
+        "background-color" => self.background_color.from_value(value),
+        "position" => self.position.from_value(value),
+        "top" => self.inset.top = MarginComponent::from_value(value),
+        "right" => self.inset.right = MarginComponent::from_value(value),
+        "bottom" => self.inset.bottom = MarginComponent::from_value(value),
+        "left" => self.inset.left = MarginComponent::from_value(value),
+        "inset" => self.inset = Margin::from_value(value),
+        "width" => self.width = MarginComponent::from_value(value),
+        "height" => self.height = MarginComponent::from_value(value),
+        "white-space" => self.white_space.from_value(value),
+        "visibility" => self.visibility.from_value(value),
         _ => {}
       }
     }
@@ -256,6 +291,7 @@ impl Style {
       width: self.width.create_inherited(inherit_style),
       height: self.height.create_inherited(inherit_style),
       white_space: self.white_space.create_inherited(&inherit_style.white_space),
+      visibility: self.visibility.create_inherited(&inherit_style.visibility),
 
       inserted: self.inserted.clone(),
     }
@@ -279,6 +315,7 @@ impl Style {
       width: self.width.get(),
       height: self.height.get(),
       white_space: self.white_space.get(),
+      visibility: self.visibility.get(),
     }
   }
 }

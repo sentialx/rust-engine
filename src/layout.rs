@@ -1,5 +1,6 @@
 use crate::colors::*;
 use crate::css::*;
+use crate::css_value::CssValue;
 use crate::html::*;
 use crate::render_frame::TextMeasurer;
 use crate::styles::*;
@@ -230,17 +231,53 @@ pub fn element_matches_selector(
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CssVariablesContext {
+    pub variables: HashMap<String, CssValue>,
+}
+
+impl CssVariablesContext {
+    pub fn new() -> CssVariablesContext {
+        CssVariablesContext {
+            variables: HashMap::new(),
+        }
+    }
+}
+
 pub fn compute_styles(
     tree: &mut Vec<Rc<RefCell<DomElement>>>,
     style: &Vec<StyleRule>,
     parents: &mut Vec<*mut DomElement>,
+    var_ctx: Option<CssVariablesContext>,
 ) {
+    let is_root = parents.len() == 0;
+
+    let mut var_ctx = var_ctx;
+
+    if var_ctx.is_none() {
+        var_ctx = Some(CssVariablesContext::new());
+
+        for rule in style {
+            if rule.selector.to_string() == ":root" {
+                for decl in &rule.declarations {
+                    if decl.key.starts_with("--") {
+                        var_ctx.as_mut().unwrap().variables.insert(
+                            decl.key.clone(),
+                            decl.value.clone(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     for i in 0..tree.len() {
         let mut element = tree[i].borrow_mut();
         let mut hoverable = false;
+
         for style_rule in style {
             if element_matches_selector(&element, &style_rule.selector, parents) {
-                element.style.insert_declarations(&style_rule.declarations);
+                element.style.insert_declarations(&style_rule.declarations, var_ctx.as_ref().unwrap());
                 element.matched_styles.push(style_rule.clone());
             }
         }
@@ -248,7 +285,7 @@ pub fn compute_styles(
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
             parents.push(tree[i].as_ptr());
-            compute_styles(&mut element.children, style, parents);
+            compute_styles(&mut element.children, style, parents, var_ctx.clone());
             parents.pop();
         }
     }
@@ -295,7 +332,7 @@ fn is_horizontal_layout(computed_style: &Style) -> bool {
 
 fn uses_absolute_positioning(computed_style: &ComputedStyle) -> bool {
     return computed_style.position == "absolute"
-        || computed_style.position == "fixed";
+        || computed_style.position == "fixed" || computed_style.position == "sticky";
 }
 
 pub fn reflow(
@@ -508,8 +545,7 @@ pub fn reflow(
 
             parent_context.layout_x_start = sibling_context.layout_x_start;
 
-            parent_context.x = x + comp_style.padding.left;
-            parent_context.y = y + comp_style.padding.top;
+            
 
             parent_context.parent_max_width = max_width;
 
@@ -518,6 +554,9 @@ pub fn reflow(
             {
                 parent_context.rel_x = parent_context.x;
                 parent_context.rel_y = parent_context.y;
+            } else {
+                parent_context.x = x + comp_style.padding.left;
+                parent_context.y = y + comp_style.padding.top;
             }
 
             if comp_style.display != "inline" {
@@ -660,7 +699,7 @@ pub fn reflow(
             NodeType::Comment => {}
             _ => {
                 let comp_style = element.computed_style.as_ref().unwrap();
-                if comp_style.position != "absolute" && comp_style.position != "fixed" {
+                if !uses_absolute_positioning(comp_style) {
                     reserved_block_y = f32::max(height + y, reserved_block_y);
                 }
             }
@@ -770,7 +809,7 @@ pub fn get_render_array(
             continue;
         }
         let computed_style = computed_style.unwrap();
-        if computed_style.display == "none" {
+        if computed_style.display == "none" || computed_style.visibility == "hidden" {
             continue;
         }
 
