@@ -126,7 +126,7 @@ pub fn str_to_unit(s: &str) -> Option<CssSizeUnit> {
         "px" => Some(CssSizeUnit::Px),
         "em" => Some(CssSizeUnit::Em),
         "%" => Some(CssSizeUnit::Percent),
-        // "rem" => Some(CssSizeUnit::Rem),
+        "rem" => Some(CssSizeUnit::Rem),
         _ => None,
     }
 }
@@ -139,12 +139,32 @@ pub fn tokenize_css_value(value: &str) -> Vec<CssToken> {
         type_: CssTokenType::End,
     };
 
+    let mut quotes = "".to_string();
+
+    let mut escape = false;
+
     for c in value.chars() {
         let operator = char_to_operator(c);
 
         let last_type = curr_token.type_.clone();
 
-        let token_type = if (c.is_numeric()
+        let mut token_type = CssTokenType::String;
+
+        if quotes != "" {
+            if quotes == c.to_string() && !escape {
+                quotes = "".to_string();
+            }
+        } else {
+        token_type = if c == '"' || c == '\'' {
+            if quotes == c.to_string() {
+                quotes = "".to_string();
+                CssTokenType::String
+            } else {
+                quotes = c.to_string();
+                CssTokenType::String
+            }
+        } 
+        else if (c.is_numeric()
             || (c == '.'
                 && curr_token.type_ == CssTokenType::Number))
             && (curr_token.type_ != CssTokenType::String)
@@ -181,6 +201,13 @@ pub fn tokenize_css_value(value: &str) -> Vec<CssToken> {
         } else {
             CssTokenType::String
         };
+    }
+
+    if c == '\\' {
+        escape = true;
+    } else {
+        escape = false;
+    }
 
         let is_unit = last_type == CssTokenType::Number && token_type == CssTokenType::String;
 

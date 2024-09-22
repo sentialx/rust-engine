@@ -433,27 +433,60 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
     let chars = css.chars().enumerate();
 
     let mut inside_media_query = false;
+    let mut query_body_count = 0;
+
+    let mut escape = false;
+
+    let mut no_effect_media_queries = 0;
     let mut inside_rule = false;
 
     for (i, c) in chars {
         if inside_media_query {
             if c == '}' {
-                if inside_rule {
-                    inside_rule = false;
+                if query_body_count > 0 {
+                    query_body_count -= 1;
                     captured_text = "".to_string();
                     captured_code = "".to_string();
                     continue;
                 }
 
-                if !inside_rule {
+                if query_body_count <= 0 {
                     inside_media_query = false;
                     captured_text = "".to_string();
                     captured_code = "".to_string();
+                    is_capturing_selector = true;
+                    query_body_count = 0;
                     continue;
                 }
             } else if c == '{' {
-                inside_rule = true;
+                query_body_count += 1;
             }
+            continue;
+        }
+
+        if c == '}' && no_effect_media_queries > 0 && !inside_rule {
+            no_effect_media_queries -= 1;
+            captured_text = "".to_string();
+            captured_code = "".to_string();
+            continue;
+        }
+
+        if c == '"' || c == '\'' {
+            if inside_quotes == "" {
+                inside_quotes = c.to_string();
+            } else if inside_quotes == c.to_string() && !escape {
+                inside_quotes = "".to_string();
+            }
+        }
+
+        if c == '\\' {
+            escape = true;
+        } else {
+            escape = false;
+        }
+
+        if inside_quotes != "" {
+            captured_text.push(c);
             continue;
         }
 
@@ -467,20 +500,7 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
             }
         }
 
-        if c == '"' || c == '\'' {
-            if inside_quotes == "" {
-                inside_quotes = c.to_string();
-            } else if inside_quotes == c.to_string() {
-                inside_quotes = "".to_string();
-            }
-        }
-
         captured_code.push(c);
-
-        if inside_quotes != "" {
-            captured_text.push(c);
-            continue;
-        }
 
         if inside_comment {
             continue;
@@ -492,8 +512,13 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
 
         if c == '{' {
             if captured_code.trim().starts_with("@") {
-                inside_media_query = true;
-                is_capturing_selector = false;
+                if captured_code.trim() == "@media screen {" {
+                    no_effect_media_queries += 1;
+                } else {
+                    inside_media_query = true;
+                    is_capturing_selector = false;
+                    query_body_count = 0;
+                }
                 captured_text = "".to_string();
                 captured_code = "".to_string();
                 continue;
@@ -505,7 +530,10 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
         } else if c == ':' && !is_capturing_selector {
             declaration.key = captured_text.trim().to_string();
             captured_text = "".to_string();
-        } else if c == ';' || c == '}' {
+        } else if (c == ';' || c == '}') {
+            if is_capturing_selector {
+                println!("Error: Unexpected character: {:?} at position: {:?}", c, i);
+            }
             if (declaration.key != "") {
                 let mut text = captured_text.trim().to_string();
                 let important = text.ends_with("!important");
@@ -515,7 +543,8 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
                 // println!("tokens: {:?} {:?} {:#?}", declaration.key, text, tokenize_css_value(&text));
                 style_rule.declarations.push(Declaration {
                     key: declaration.key.clone(),
-                    value: parse_css_value(tokenize_css_value(&text)),
+                    value:  parse_css_value(tokenize_css_value(&text)),
+                    // value: CssValue::String(text),
                     important,
                 });
                 declaration = CssKeyValue::empty();
@@ -526,6 +555,7 @@ pub fn parse_css(css: &str) -> Vec<StyleRule> {
                 style_rule.css = captured_code.trim().to_string();
                 list.push(style_rule);
                 style_rule = StyleRule::new();
+                inside_rule = false;
                 captured_code = "".to_string();
                 captured_text = "".to_string();
                 is_capturing_selector = true;

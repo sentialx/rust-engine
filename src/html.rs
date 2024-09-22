@@ -65,6 +65,7 @@ pub struct DomElement {
   pub lines: Vec<TextLine>,
   pub class_list: Vec<String>,
   pub matched_styles: Vec<StyleRule>,
+  pub var_contexts: Vec<CssVariablesContext>,
 }
 
 impl DomElement {
@@ -86,10 +87,12 @@ impl DomElement {
       lines: vec![],
       class_list: vec![],
       matched_styles: vec![],
+      var_contexts: vec![],
     }
   }
 
   pub fn set_attribute(&mut self, key: String, value: String) {
+    let empty_ctx = CssVariablesContext::new();
     if key == "style" {
       let val = format!("{{{}}}", value);
       let mut rules = parse_css(&val);
@@ -97,7 +100,7 @@ impl DomElement {
         for decl in rule.declarations.iter_mut() {
           decl.important = true;
         }
-        self.style.insert_declarations(&rule.declarations);
+        self.style.insert_declarations(&rule.declarations, &empty_ctx);
       }
     }
 
