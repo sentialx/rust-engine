@@ -327,7 +327,7 @@ pub struct ReflowContext {
 fn is_horizontal_layout(computed_style: &Style) -> bool {
     return computed_style.display.get() == "inline-block"
         || computed_style.display.get() == "inline"
-        || computed_style.float.get() != "none";
+        || computed_style.float.get() != "none" || computed_style.display.get() == "inline-flex";
 }
 
 fn uses_absolute_positioning(computed_style: &ComputedStyle) -> bool {
@@ -450,7 +450,7 @@ pub fn reflow(
                 let prev_computed_flow = previous_element.computed_flow.as_ref().unwrap();
 
                 if is_horizontal_layout(prev_style) {
-                    if comp_style.display == "inline-block" || comp_style.float != "none" {
+                    if comp_style.display == "inline-block" || comp_style.float != "none" || comp_style.display == "inline-flex" {
                         y = prev_computed_flow.y;
                     } else {
                         y = prev_computed_flow.continue_y;
@@ -462,7 +462,7 @@ pub fn reflow(
 
                 if is_horizontal_layout(style) && should_continue_horizontal_layout {
                     // Horizontal layout
-                    if comp_style.display == "inline-block" || comp_style.float != "none" {
+                    if comp_style.display == "inline-block" || comp_style.float != "none" || comp_style.display == "inline-flex" {
                         x = prev_computed_flow.x
                             + prev_computed_flow.width
                             + prev_style.margin.right.get();
@@ -493,7 +493,9 @@ pub fn reflow(
             }
         }
 
-        last_element = Some(i);
+        if !uses_absolute_positioning(tree[i].borrow().computed_style.as_ref().unwrap()) {
+            last_element = Some(i);
+        }
 
         let mut continue_x = 0.0;
         let mut continue_y = 0.0;
@@ -543,20 +545,16 @@ pub fn reflow(
             let element = tree[i].borrow();
             let comp_style = element.computed_style.as_ref().unwrap();
 
-            parent_context.layout_x_start = sibling_context.layout_x_start;
-
+            parent_context.x = x + comp_style.padding.left;
+            parent_context.y = y + comp_style.padding.top;
             
-
             parent_context.parent_max_width = max_width;
-
+            
             if uses_absolute_positioning(comp_style)
-                || comp_style.position == "relative"
+            || comp_style.position == "relative"
             {
                 parent_context.rel_x = parent_context.x;
                 parent_context.rel_y = parent_context.y;
-            } else {
-                parent_context.x = x + comp_style.padding.left;
-                parent_context.y = y + comp_style.padding.top;
             }
 
             if comp_style.display != "inline" {

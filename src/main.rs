@@ -14,17 +14,23 @@ mod render_frame;
 use std::{fs, string::String};
 use browser_window::*;
 use css::parse_css;
+use css_value::{parse_css_value, tokenize_css_value};
 
 fn main() {
 create_browser_window(String::from("index.html"));
 
-let style = fs::read_to_string("style.css").expect("error while reading the file");
-let parsed_css = parse_css(&style);
+    let val = "rgba(255, 255, 255, 0.4)";
+    let parsed = parse_css_value(tokenize_css_value(val));
 
-for rule in parsed_css {
-    println!("{:#?}", rule.selector.to_string());
-    // println!("{:#?}", rule.declarations);
-}
+    println!("{:#?}", parsed);
+
+// let style = fs::read_to_string("style.css").expect("error while reading the file");
+// let parsed_css = parse_css(&style);
+
+// for rule in parsed_css {
+//     println!("{:#?}", rule.selector.to_string());
+//     // println!("{:#?}", rule.declarations);
+// }
 // println!("{:#?}", parsed_css);
 
     // selector_tests();

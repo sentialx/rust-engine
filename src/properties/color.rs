@@ -67,16 +67,16 @@ impl Color {
                   for arg in &func.args {
                     match arg {
                       CssValue::Number(num) => {
-                        comps.push(num.floor() as i32);
+                        comps.push(num);
                       },
                       _ => {},
                     }
                   }
 
                   if comps.len() == 3 {
-                    self.value = Some((comps[0] as f32, comps[1] as f32, comps[2] as f32, 1.0));
+                    self.value = Some((*comps[0], *comps[1] as f32, *comps[2] as f32, 1.0));
                   } else if comps.len() == 4 {
-                    self.value = Some((comps[0] as f32, comps[1] as f32, comps[2] as f32, (comps[3] as f32)));
+                    self.value = Some((*comps[0] as f32, *comps[1] as f32, *comps[2] as f32, (*comps[3] as f32)));
                   }
                 },
                 _ => {},
