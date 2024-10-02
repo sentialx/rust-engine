@@ -177,7 +177,6 @@ fn replace_var(value: &mut CssValue, ctx: &CssVariablesContext) {
       if func.name == "var(" {
         let var_name = func.args[0].to_string();
         let var_value = ctx.variables.get(&("--".to_string() + &var_name));
-        println!("var_name: {:?} {:?}", var_name, var_value);
         if var_value.is_some() {
           *value = var_value.unwrap().clone();
         }
@@ -260,6 +259,7 @@ impl Style {
         "text-decoration" => self.text_decoration.from_value(value),
         "color" => self.color.from_value(value),
         "background-color" => self.background_color.from_value(value),
+        "background" => self.background_color.from_value(value),
         "position" => self.position.from_value(value),
         "top" => self.inset.top = MarginComponent::from_value(value),
         "right" => self.inset.right = MarginComponent::from_value(value),
