@@ -400,6 +400,25 @@ impl TextMeasurer for MockTextMeasurer {
     }
 }
 
+#[test]
+fn test_wrap_text_respects_layout_start_offset() {
+    let mut text_measurer = MockTextMeasurer;
+    let lines = wrap_text(
+        "Hello world".to_string(),
+        70.0,
+        &mut text_measurer,
+        10.0,
+        "Times New Roman 400.ttf".to_string(),
+        10.0,
+        0.0,
+        0.0,
+    );
+
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].text, "Hello");
+    assert_eq!(lines[1].text, "world");
+}
+
 // Integration tests for actual reflow behavior that previously failed
 // These test the scenarios that caused the layout to break
 

@@ -351,8 +351,9 @@ pub fn wrap_text(
         let word_size = text_measurer.measure(word, font_size, &font_path);
         let space_width = if line.is_empty() { 0.0 } else { space_size.0 };
         let new_line_width = lw + space_width + word_size.0;
+        let line_offset = (lx - layout_x_start).max(0.0);
 
-        if !line.is_empty() && new_line_width > max_width {
+        if !line.is_empty() && line_offset + new_line_width > max_width {
             let line_size = text_measurer.measure(&line, font_size, &font_path);
             lines.push(TextLine {
                 text: line.clone(),
