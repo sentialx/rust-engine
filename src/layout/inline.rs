@@ -50,6 +50,18 @@ impl InlineLayoutStrategy {
             box_data.x = inline_ctx.x;
             box_data.y = inline_ctx.y;
         }
+
+        // Wrap to next line if this inline box would overflow the available width.
+        let max_right = context.x + context.parent_max_width;
+        if inline_ctx.active
+            && box_data.margin_box_width() > 0.0
+            && box_data.x + box_data.margin_box_width() > max_right + 0.01
+        {
+            let next_y = inline_ctx.y + inline_ctx.line_height;
+            inline_ctx.start_new_line(x_base, next_y);
+            box_data.x = inline_ctx.x;
+            box_data.y = inline_ctx.y;
+        }
         
         (box_data.x, box_data.y)
     }

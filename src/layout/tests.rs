@@ -400,6 +400,117 @@ impl TextMeasurer for MockTextMeasurer {
     }
 }
 
+fn css_px(value: f32) -> CssValue {
+    CssValue::Size(CssSize {
+        value,
+        unit: CssSizeUnit::Px,
+    })
+}
+
+fn set_display(style: &mut crate::styles::Style, value: &str) {
+    style.display = StringProperty::new(
+        CssValue::String(value.to_string()),
+        false,
+        "inline",
+    );
+}
+
+fn set_padding(style: &mut crate::styles::Style, top: f32, right: f32, bottom: f32, left: f32) {
+    style.padding = Margin::new(css_px(top), css_px(right), css_px(bottom), css_px(left));
+}
+
+#[test]
+fn test_inline_items_wrap_when_line_overflows() {
+    let mut topbar = DomElement::new(NodeType::Element);
+    topbar.tag_name = "DIV".to_string();
+    set_display(&mut topbar.style, "block");
+    set_padding(&mut topbar.style, 10.0, 10.0, 10.0, 10.0);
+
+    let make_nav_item = |label: &str| {
+        let mut item = DomElement::new(NodeType::Element);
+        item.tag_name = "SPAN".to_string();
+        set_display(&mut item.style, "inline-block");
+        set_padding(&mut item.style, 6.0, 10.0, 6.0, 10.0);
+        let text = create_text_node(label);
+        item.children.push(Rc::new(RefCell::new(text)));
+        Rc::new(RefCell::new(item))
+    };
+
+    let nav1 = make_nav_item("Dashboard");
+    let nav2 = make_nav_item("Projects");
+    let nav3 = make_nav_item("Settings");
+    let nav4 = make_nav_item("Help");
+
+    topbar.children.push(nav1.clone());
+    topbar.children.push(nav2.clone());
+    topbar.children.push(nav3.clone());
+    topbar.children.push(nav4.clone());
+
+    let mut tree: Vec<Rc<RefCell<DomElement>>> = vec![Rc::new(RefCell::new(topbar))];
+    propagate_styles(&mut tree, None);
+
+    let mut text_measurer = MockTextMeasurer;
+    let viewport = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 200.0,
+        height: 200.0,
+    };
+    reflow(&mut tree, &mut text_measurer, None, &viewport);
+
+    let first_y = nav1.borrow().computed_flow.as_ref().unwrap().y;
+    let last_y = nav4.borrow().computed_flow.as_ref().unwrap().y;
+    assert!(
+        last_y > first_y,
+        "expected inline items to wrap to a new line when overflowing"
+    );
+}
+
+#[test]
+fn test_inline_block_shrink_to_fit_uses_child_width() {
+    let mut sidebar = DomElement::new(NodeType::Element);
+    sidebar.tag_name = "DIV".to_string();
+    set_display(&mut sidebar.style, "inline-block");
+    set_padding(&mut sidebar.style, 6.0, 8.0, 6.0, 8.0);
+
+    let mut label = DomElement::new(NodeType::Element);
+    label.tag_name = "DIV".to_string();
+    set_display(&mut label.style, "block");
+    let text = create_text_node("Integrations");
+    label.children.push(Rc::new(RefCell::new(text)));
+    sidebar.children.push(Rc::new(RefCell::new(label)));
+
+    let mut spacer = DomElement::new(NodeType::Element);
+    spacer.tag_name = "DIV".to_string();
+    set_display(&mut spacer.style, "inline-block");
+    set_padding(&mut spacer.style, 6.0, 6.0, 6.0, 6.0);
+    let spacer_text = create_text_node("X");
+    spacer.children.push(Rc::new(RefCell::new(spacer_text)));
+
+    let mut tree: Vec<Rc<RefCell<DomElement>>> = vec![
+        Rc::new(RefCell::new(sidebar)),
+        Rc::new(RefCell::new(spacer)),
+    ];
+    propagate_styles(&mut tree, None);
+
+    let mut text_measurer = MockTextMeasurer;
+    let viewport = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 260.0,
+        height: 200.0,
+    };
+    reflow(&mut tree, &mut text_measurer, None, &viewport);
+
+    let sidebar_flow = tree[0].borrow().computed_flow.as_ref().unwrap().clone();
+    let expected_text_width = "Integrations".len() as f32 * 16.0 * 0.6;
+    let min_width = expected_text_width + 16.0;
+    assert!(
+        sidebar_flow.width >= min_width - 0.5,
+        "inline-block should not collapse below child text width"
+    );
+}
+
 #[test]
 fn test_wrap_text_respects_layout_start_offset() {
     let mut text_measurer = MockTextMeasurer;
