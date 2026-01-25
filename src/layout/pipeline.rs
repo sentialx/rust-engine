@@ -387,8 +387,12 @@ pub fn layout_tree(
         // Calculate available width for children - account for element's position offset
         let content_x =
             node.box_data.x + node.box_data.margin.left + node.box_data.padding.left;
-            let available_content_width =
-                (context.parent_max_width - (content_x - context.x)).max(0.0);
+        let available_content_width =
+            (context.parent_max_width - (content_x - context.x)).max(0.0);
+        let max_content_width_for_line = (available_content_width
+            - node.box_data.padding.right
+            - node.box_data.margin.right)
+            .max(0.0);
 
         // For block elements with auto width, fill the available content width
         let width_is_auto = {
@@ -424,7 +428,12 @@ pub fn layout_tree(
             );
             let parent_content_width = if context.shrink_to_fit || node_is_shrink_to_fit {
                 // Avoid shrink feedback loops: measure children against available width.
-                available_content_width
+                // Inline-like elements should keep full line width and wrap instead of shrinking.
+                if node_is_shrink_to_fit {
+                    available_content_width
+                } else {
+                    max_content_width_for_line
+                }
             } else if node.box_data.content_width > 0.0 {
                 node.box_data.content_width
             } else {
@@ -485,9 +494,11 @@ pub fn layout_tree(
                             child_right - content_left
                         );
                     }
-                    // Also clamp to available content width
-                    node.box_data.content_width =
-                        node.box_data.content_width.min(available_content_width);
+                    // Clamp only for non-inline-like content; inline items should wrap instead.
+                    if !is_shrink_to_fit {
+                        node.box_data.content_width =
+                            node.box_data.content_width.min(max_content_width_for_line);
+                    }
                 } else {
                     // Keep block auto width (already set earlier), but clamp defensively.
                     node.box_data.content_width =
