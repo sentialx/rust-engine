@@ -87,9 +87,9 @@ pub fn build_layout_tree(
             let child_context_opt = if has_children {
                 let shrink_to_fit = context.shrink_to_fit
                     || matches!(
-                    computed_style.display.as_str(),
-                    "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                );
+                        computed_style.display.as_str(),
+                        "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                    );
                 Some(ReflowContext {
                     x: context.x,
                     y: context.y,
@@ -387,8 +387,8 @@ pub fn layout_tree(
         // Calculate available width for children - account for element's position offset
         let content_x =
             node.box_data.x + node.box_data.margin.left + node.box_data.padding.left;
-        let available_content_width =
-            (context.parent_max_width - (content_x - context.x)).max(0.0);
+            let available_content_width =
+                (context.parent_max_width - (content_x - context.x)).max(0.0);
 
         // For block elements with auto width, fill the available content width
         let width_is_auto = {
@@ -414,12 +414,15 @@ pub fn layout_tree(
         }
 
         if !node.children.is_empty() {
-            let child_shrink_to_fit = context.shrink_to_fit
-                || matches!(
-                    node.box_data.computed_style.display.as_str(),
-                    "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                );
-            let parent_content_width = if context.shrink_to_fit {
+            let child_shrink_to_fit = matches!(
+                node.box_data.computed_style.display.as_str(),
+                "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+            );
+            let node_is_shrink_to_fit = matches!(
+                node.box_data.computed_style.display.as_str(),
+                "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+            );
+            let parent_content_width = if context.shrink_to_fit || node_is_shrink_to_fit {
                 // Avoid shrink feedback loops: measure children against available width.
                 available_content_width
             } else if node.box_data.content_width > 0.0 {

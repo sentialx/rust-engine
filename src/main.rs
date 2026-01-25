@@ -1,20 +1,7 @@
-mod browser_window;
-mod colors;
-mod css;
-mod debug;
-mod html;
-mod layout;
-mod styles;
-mod utils;
-mod lisia_colors;
-mod css_value;
-mod properties;
-mod render_frame;
-
-use std::{fs, string::String};
-use browser_window::*;
-use css::parse_css;
-use css_value::{parse_css_value, tokenize_css_value};
+use std::string::String;
+use graviton::browser_window::create_browser_window;
+use graviton::css;
+use graviton::css_value::{parse_css_value, tokenize_css_value};
 
 fn main() {
 create_browser_window(String::from("ui_demo.html"));
