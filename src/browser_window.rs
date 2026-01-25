@@ -109,7 +109,7 @@ pub fn create_browser_window(url: String) {
 
         // scroll event
         if let Some(args) = event.mouse_scroll_args() {
-            render_frame.scroll_y -= args[1] as f32 * 64.0;
+            render_frame.scroll_y -= args[1] as f32 * 1.0;
             render_frame.fast_render();
         }
 
@@ -274,10 +274,7 @@ pub fn create_browser_window(url: String) {
                     if glyphs_map.get_mut(&font_path).is_some() {
                         let glyphs = glyphs_map.get_mut(&font_path).unwrap();
 
-                        text::Text::new_color(
-                            [1.0, 1.0, 1.0, 1.0],
-                            2 * 14,
-                        )
+                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 2 * 12)
                         .draw(
                             format!(
                                 "{:?} {:?}x{:?}",
@@ -289,7 +286,7 @@ pub fn create_browser_window(url: String) {
                             glyphs,
                             &c.draw_state,
                             c.transform
-                                .trans(computed_flow.x as f64 * zoom, el_y as f64 * zoom)
+                                .trans(computed_flow.x as f64 * zoom, (el_y - 2.0) as f64 * zoom)
                                 .zoom(0.5)
                                 .zoom(zoom),
                             g,
