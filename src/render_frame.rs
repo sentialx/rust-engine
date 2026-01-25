@@ -4,10 +4,31 @@ use piston_window::CharacterCache;
 
 use crate::{
     css::parse_css,
-    html::{parse_html, DomElement},
+    html::{parse_html, DomElement, NodeType},
     layout::{compute_styles, get_render_array, propagate_styles, reflow, Rect, RenderItem},
     styles::StyleRule,
 };
+
+/// Recursively extract CSS content from <style> tags in the DOM tree
+fn extract_style_tags(tree: &Vec<Rc<RefCell<DomElement>>>, css: &mut String) {
+    for element in tree {
+        let el = element.borrow();
+
+        if el.tag_name == "STYLE" {
+            for child in &el.children {
+                let child_el = child.borrow();
+                if child_el.node_type == NodeType::Text {
+                    css.push_str(&child_el.node_value);
+                    css.push('\n');
+                }
+            }
+        }
+
+        if !el.children.is_empty() {
+            extract_style_tags(&el.children, css);
+        }
+    }
+}
 
 pub struct RenderFrame<'a> {
     pub viewport: Rect,
@@ -64,9 +85,20 @@ impl<'a> RenderFrame<'a> {
         let contents = fs::read_to_string(self.url.clone()).expect("error while reading the file");
         self.dom_tree = parse_html(&contents);
 
-        let style = fs::read_to_string("style.css").expect("error while reading the file");
-        self.parsed_css = parse_css(&style);
+        let mut embedded_css = String::new();
+        extract_style_tags(&self.dom_tree, &mut embedded_css);
 
+        let embedded_styles = if !embedded_css.is_empty() {
+            parse_css(&embedded_css)
+        } else {
+            vec![]
+        };
+
+        let external_styles = fs::read_to_string("style.css")
+            .map(|style| parse_css(&style))
+            .unwrap_or_else(|_| vec![]);
+
+        self.parsed_css = [embedded_styles, external_styles].concat();
         self.styles = [self.default_styles.clone(), self.parsed_css.clone()].concat();
 
         self.render();

@@ -1,0 +1,328 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>UI Demo</title>
+    <style>
+      /* This demo intentionally sticks to the properties the engine supports:
+         display, margin, padding, background-color, color, font-size,
+         font-weight, font-style, text-decoration, float. */
+
+      body {
+        font-family: "Times New Roman";
+        font-size: 14px;
+        background-color: #f4f5f7;
+      }
+
+      .topbar {
+        display: block;
+        background-color: #111827;
+        color: #ffffff;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
+        margin-bottom: 10px;
+      }
+
+      .brand {
+        display: inline-block;
+        font-size: 18px;
+        font-weight: bold;
+        margin-right: 12px;
+      }
+
+      .nav-item {
+        display: inline-block;
+        background-color: #1f2937;
+        color: #e5e7eb;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        padding-left: 10px;
+        padding-right: 10px;
+        margin-right: 6px;
+      }
+
+      .nav-item:HOVER {
+        background-color: #374151;
+        color: #ffffff;
+        text-decoration: underline;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .sidebar {
+        display: inline-block;
+        background-color: #ffffff;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        padding-left: 10px;
+        padding-right: 10px;
+        margin-right: 10px;
+      }
+
+      .sidebar-title {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 8px;
+      }
+
+      .menu-item {
+        display: block;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        padding-left: 8px;
+        padding-right: 8px;
+        margin-bottom: 4px;
+        background-color: #f3f4f6;
+        color: #111827;
+      }
+
+      .menu-item:HOVER {
+        background-color: #e5e7eb;
+        text-decoration: underline;
+      }
+
+      .content {
+        display: inline-block;
+        background-color: #ffffff;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+
+      .h1 {
+        display: block;
+        font-size: 20px;
+        font-weight: bold;
+        margin-bottom: 8px;
+      }
+
+      .muted {
+        display: block;
+        color: #6b7280;
+        margin-bottom: 10px;
+      }
+
+      .row {
+        display: block;
+        margin-bottom: 10px;
+      }
+
+      .card {
+        display: block;
+        background-color: #f9fafb;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        padding-left: 10px;
+        padding-right: 10px;
+        margin-bottom: 8px;
+      }
+
+      .card:HOVER {
+        background-color: #eef2ff;
+      }
+
+      .card-title {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+
+      .card-body {
+        display: block;
+        color: #374151;
+        margin-bottom: 6px;
+      }
+
+      .pill {
+        display: inline-block;
+        background-color: #111827;
+        color: #ffffff;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        padding-left: 8px;
+        padding-right: 8px;
+        margin-right: 6px;
+        font-size: 12px;
+      }
+
+      .pill:HOVER {
+        background-color: #2563eb;
+        text-decoration: underline;
+      }
+
+      .button {
+        display: inline-block;
+        background-color: #2563eb;
+        color: #ffffff;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        padding-left: 10px;
+        padding-right: 10px;
+        margin-right: 6px;
+        text-decoration: none;
+      }
+
+      .button:HOVER {
+        background-color: #1d4ed8;
+        text-decoration: underline;
+      }
+
+      .button.secondary {
+        background-color: #e5e7eb;
+        color: #111827;
+      }
+
+      .button.secondary:HOVER {
+        background-color: #d1d5db;
+      }
+
+      .field {
+        display: block;
+        background-color: #ffffff;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        padding-left: 10px;
+        padding-right: 10px;
+        margin-bottom: 6px;
+      }
+
+      .field:HOVER {
+        background-color: #f3f4f6;
+      }
+
+      .label {
+        display: inline-block;
+        font-weight: bold;
+        margin-right: 6px;
+      }
+
+      .value {
+        display: inline-block;
+        color: #374151;
+      }
+
+      .link {
+        display: inline-block;
+        color: #2563eb;
+        text-decoration: underline;
+      }
+
+      .link:HOVER {
+        color: #1d4ed8;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <span class="brand">Graviton UI</span>
+      <span class="nav-item">Dashboard</span>
+      <span class="nav-item">Projects</span>
+      <span class="nav-item">Settings</span>
+      <span class="nav-item">Help</span>
+    </div>
+
+    <div class="layout">
+      <div class="sidebar">
+        <div class="sidebar-title">Navigation</div>
+        <div class="menu-item">Overview</div>
+        <div class="menu-item">Activity</div>
+        <div class="menu-item">Team</div>
+        <div class="menu-item">Billing</div>
+        <div class="menu-item">Integrations</div>
+      </div>
+
+      <div class="content">
+        <div class="h1">Dashboard</div>
+        <div class="muted">
+          Hover items to see `:HOVER` styles. This page is built using only the CSS your engine supports.
+        </div>
+
+        <div class="row">
+          <span class="pill">New</span>
+          <span class="pill">Trending</span>
+          <span class="pill">Saved</span>
+          <span class="pill">Archived</span>
+        </div>
+
+        <div class="row">
+          <span class="button">Create</span>
+          <span class="button secondary">Export</span>
+          <span class="button secondary">Share</span>
+          <span class="link">Learn more</span>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Build status</div>
+          <div class="card-body">
+            Last run: successful. Hover this card to highlight it.
+          </div>
+          <div class="card-body">
+            Tip: open Devtools (right panel) and hover elements to inspect computed styles.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Quick settings</div>
+          <div class="field">
+            <span class="label">Theme</span>
+            <span class="value">Light</span>
+          </div>
+          <div class="field">
+            <span class="label">Notifications</span>
+            <span class="value">Enabled</span>
+          </div>
+          <div class="field">
+            <span class="label">Region</span>
+            <span class="value">EU-West</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Recent activity</div>
+          <div class="card-body">- Updated layout engine (text wrapping)</div>
+          <div class="card-body">- Switched parser to HTML5</div>
+          <div class="card-body">- Split Devtools into its own frame</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Input Demo</div>
+          <div class="card-body">Click on any input field below to focus it, then type to enter text. Use arrow keys to move the cursor, and Backspace to delete.</div>
+          
+          <div class="field">
+            <span class="label">Name:</span>
+            <input type="text" value="" />
+          </div>
+          
+          <div class="field">
+            <span class="label">Email:</span>
+            <input type="text" value="user@example.com" />
+          </div>
+          
+          <div class="field">
+            <span class="label">Message:</span>
+            <input type="text" value="Type your message here..." />
+          </div>
+          
+          <div class="field">
+            <span class="label">Empty input:</span>
+            <input type="text" value="" />
+          </div>
+          
+          <div class="card-body" style="margin-top: 10px;">
+            <strong>Keyboard shortcuts:</strong>
+            <div style="margin-top: 4px;">- Click to focus</div>
+            <div>- Type to insert text</div>
+            <div>- Left/Right arrows to move cursor</div>
+            <div>- Home/End to jump to start/end</div>
+            <div>- Backspace to delete</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
