@@ -13,6 +13,8 @@ closure = "0.3.0"
 piston2d-opengl_graphics = "0.89.0"
 regex = "1.12.2"
 rusttype = "0.9"
+html5ever = "0.36.1"
+markup5ever_rcdom = "0.36.0"
 
 [dev-dependencies]
 roxmltree = "0.21"

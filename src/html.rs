@@ -3,6 +3,8 @@ use crate::css::parse_css;
 use crate::layout::*;
 use crate::styles::{ComputedStyle, Style, StyleRule};
 use crate::utils::*;
+use html5ever::{parse_document, tendril::TendrilSink};
+use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::format;
@@ -391,8 +393,63 @@ fn build_tree(tokens: Vec<String>) -> Vec<Rc<RefCell<DomElement>>> {
 }
 
 pub fn parse_html(html: &str) -> Vec<Rc<RefCell<DomElement>>> {
-  let tokens = tokenize(html.to_string());
-  let elements = build_tree(tokens);
+  let dom = parse_document(RcDom::default(), Default::default()).one(html);
+  let mut elements: Vec<Rc<RefCell<DomElement>>> = vec![];
+
+  for child in dom.document.children.borrow().iter() {
+    if let Some(el) = build_dom_from_handle(child, None) {
+      elements.push(el);
+    }
+  }
 
   return elements;
+}
+
+fn build_dom_from_handle(
+  handle: &Handle,
+  parent: Option<Rc<RefCell<DomElement>>>,
+) -> Option<Rc<RefCell<DomElement>>> {
+  let node = match &handle.data {
+    NodeData::Document => {
+      return None;
+    }
+    NodeData::Doctype { name, .. } => {
+      let mut el = DomElement::new(NodeType::DocumentType);
+      el.node_value = name.to_string();
+      Rc::new(RefCell::new(el))
+    }
+    NodeData::Text { contents } => {
+      let mut el = DomElement::new(NodeType::Text);
+      el.node_value = contents.borrow().to_string();
+      Rc::new(RefCell::new(el))
+    }
+    NodeData::Comment { contents } => {
+      let mut el = DomElement::new(NodeType::Comment);
+      el.node_value = contents.to_string();
+      Rc::new(RefCell::new(el))
+    }
+    NodeData::Element { name, attrs, .. } => {
+      let mut el = DomElement::new(NodeType::Element);
+      el.tag_name = name.local.to_string().to_uppercase();
+      for attr in attrs.borrow().iter() {
+        el.set_attribute(attr.name.local.to_string(), attr.value.to_string());
+      }
+      Rc::new(RefCell::new(el))
+    }
+    _ => {
+      return None;
+    }
+  };
+
+  if let Some(parent_node) = parent.clone() {
+    node.borrow_mut().parent_node = Some(parent_node);
+  }
+
+  for child in handle.children.borrow().iter() {
+    if let Some(child_el) = build_dom_from_handle(child, Some(node.clone())) {
+      node.borrow_mut().children.push(child_el);
+    }
+  }
+
+  Some(node)
 }
