@@ -15,6 +15,9 @@ use crate::{
 pub struct HoverInfo {
     pub tag_name: String,
     pub rect: Rect,
+    pub hover_rect: Rect,
+    pub margin: crate::styles::ComputedMargin,
+    pub padding: crate::styles::ComputedMargin,
     pub text_segments: Vec<TextSegmentRect>,
 }
 
@@ -248,6 +251,22 @@ impl Frame {
                         width: flow.width,
                         height: flow.height,
                     };
+                    let hover_rect = flow.hover_rect.clone();
+                    let (margin, padding) = element
+                        .computed_style
+                        .as_ref()
+                        .map(|style| (style.margin.clone(), style.padding.clone()))
+                        .unwrap_or_else(|| (crate::styles::ComputedMargin {
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 0.0,
+                            left: 0.0,
+                        }, crate::styles::ComputedMargin {
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 0.0,
+                            left: 0.0,
+                        }));
 
                     if rect_contains(&rect, x, y) {
                         // Collect text segments from this element and its text children
@@ -258,6 +277,9 @@ impl Frame {
                         result = Some(HoverInfo {
                             tag_name: element.tag_name.clone(),
                             rect: rect.clone(),
+                            hover_rect,
+                            margin,
+                            padding,
                             text_segments,
                         });
 

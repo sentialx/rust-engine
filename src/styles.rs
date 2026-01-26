@@ -122,7 +122,7 @@ impl StyleRule {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ComputedMargin {
   pub top: f32,
   pub right: f32,
