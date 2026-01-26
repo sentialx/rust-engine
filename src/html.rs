@@ -3,7 +3,7 @@ use crate::css::parse_css;
 use crate::layout::*;
 use crate::styles::{ComputedStyle, Style, StyleRule};
 use crate::utils::*;
-use html5ever::{parse_document, tendril::TendrilSink};
+use html5ever::{parse_document, tendril::TendrilSink, ParseOpts, tree_builder::TreeBuilderOpts};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -414,7 +414,15 @@ fn build_tree(tokens: Vec<String>) -> Vec<Rc<RefCell<DomElement>>> {
 }
 
 pub fn parse_html(html: &str) -> Vec<Rc<RefCell<DomElement>>> {
-  let dom = parse_document(RcDom::default(), Default::default()).one(html);
+  // Disable scripting so <noscript> content is parsed as HTML
+  let opts = ParseOpts {
+    tree_builder: TreeBuilderOpts {
+      scripting_enabled: false,
+      ..Default::default()
+    },
+    ..Default::default()
+  };
+  let dom = parse_document(RcDom::default(), opts).one(html);
   let mut elements: Vec<Rc<RefCell<DomElement>>> = vec![];
 
   for child in dom.document.children.borrow().iter() {

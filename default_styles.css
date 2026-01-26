@@ -305,6 +305,10 @@ link {
   display: none;
 }
 
+main {
+  display: block;
+}
+
 map {
   display: inline;
 }
