@@ -126,6 +126,69 @@ pub struct ReflowContext {
 /// Helper to check if element uses absolute positioning
 pub fn uses_absolute_positioning(computed_style: &ComputedStyle) -> bool {
     computed_style.position == "absolute"
-        || computed_style.position == "fixed" 
+        || computed_style.position == "fixed"
         || computed_style.position == "sticky"
+}
+
+/// Cached data from previous block for margin collapsing
+#[derive(Clone, Copy)]
+pub struct PrevBlockData {
+    pub y: f32,
+    pub border_box_height: f32,
+    pub margin_bottom: f32,
+}
+
+/// State for laying out siblings within a container
+/// Tracks both block and inline layout state
+pub struct SiblingLayoutState {
+    /// Y position where next block should start (shared between block/inline)
+    pub reserved_block_y: f32,
+    /// Data from previous block (for margin collapsing)
+    pub prev_block: Option<PrevBlockData>,
+    /// Inline layout state
+    pub inline_ctx: InlineContext,
+}
+
+impl SiblingLayoutState {
+    pub fn new(y: f32, line_start_x: f32, max_width: f32) -> Self {
+        let mut inline_ctx = InlineContext::new(line_start_x, y, max_width);
+        inline_ctx.active = true;
+        SiblingLayoutState {
+            reserved_block_y: y,
+            prev_block: None,
+            inline_ctx,
+        }
+    }
+
+    /// Flush pending inline content before laying out a block
+    pub fn flush_inline(&mut self) {
+        if self.inline_ctx.x > self.inline_ctx.line_start_x {
+            self.reserved_block_y = self.reserved_block_y.max(
+                self.inline_ctx.y + self.inline_ctx.line_height
+            );
+        }
+    }
+
+    /// Reset inline context after a block element
+    fn reset_inline_after_block(&mut self) {
+        self.inline_ctx = InlineContext::new(
+            self.inline_ctx.line_start_x,
+            self.reserved_block_y,
+            self.inline_ctx.max_width,
+        );
+        self.inline_ctx.active = true;
+    }
+
+    /// Update state after laying out a block element
+    pub fn after_block(&mut self, y: f32, border_box_height: f32, margin_bottom: f32) {
+        self.prev_block = Some(PrevBlockData { y, border_box_height, margin_bottom });
+        self.reset_inline_after_block();
+    }
+
+    /// Update state after laying out inline content
+    pub fn after_inline(&mut self) {
+        self.reserved_block_y = self.reserved_block_y.max(
+            self.inline_ctx.y + self.inline_ctx.line_height
+        );
+    }
 }
