@@ -61,6 +61,12 @@ pub fn is_in_viewport(rect: &Rect, viewport: &Rect) -> bool {
         && rect.y <= viewport.y + viewport.height;
 }
 
+/// Check if rect is completely below the viewport (can skip descendants for vertical layouts)
+#[inline]
+pub fn is_below_viewport(rect: &Rect, viewport: &Rect) -> bool {
+    rect.y > viewport.y + viewport.height
+}
+
 pub fn get_element_at(
     render_items: &Vec<RenderItem>,
     x: f32,
@@ -540,12 +546,31 @@ pub fn get_render_array(
     tree: &mut Vec<Rc<RefCell<DomElement>>>,
     viewport: &Rect,
 ) -> Vec<RenderItem> {
+    let mut stats = RenderStats::default();
+    get_render_array_inner(tree, viewport, &mut stats)
+}
+
+#[derive(Default)]
+struct RenderStats {
+    traversed: usize,
+    in_viewport: usize,
+    skipped_below: usize,
+    skipped_no_flow: usize,
+}
+
+fn get_render_array_inner(
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
+    viewport: &Rect,
+    stats: &mut RenderStats,
+) -> Vec<RenderItem> {
     let mut array: Vec<RenderItem> = vec![];
 
     for i in 0..tree.len() {
+        stats.traversed += 1;
         let element = &mut tree[i].borrow_mut();
         let computed_flow = element.computed_flow.as_ref();
         if computed_flow.is_none() {
+            stats.skipped_no_flow += 1;
             continue;
         }
         let computed_flow = computed_flow.unwrap();
@@ -558,6 +583,7 @@ pub fn get_render_array(
 
         let computed_style = element.computed_style.as_ref();
         if computed_style.is_none() {
+            stats.skipped_no_flow += 1;
             continue;
         }
         let computed_style = computed_style.unwrap();
@@ -565,43 +591,64 @@ pub fn get_render_array(
             continue;
         }
 
-        let is_in_viewport = is_in_viewport(viewport, &rect);
+        // Early termination: if element is completely below viewport, skip it and all children
+        // (For vertical layouts, children are typically within parent bounds)
+        if is_below_viewport(&rect, viewport) {
+            stats.skipped_below += 1;
+            continue;
+        }
+
+        let in_viewport = is_in_viewport(viewport, &rect);
 
         // Add the current element first (for correct z-order: parent before children)
         let computed_flow = element.computed_flow.as_ref().unwrap();
         let computed_style = element.computed_style.as_ref().unwrap();
 
-        let has_something_to_render =
-            element.node_value != "" || computed_style.background_color != (0.0, 0.0, 0.0, 0.0);
+        // Check if background is visible (has color AND rect overlaps viewport)
+        let has_visible_background = computed_style.background_color.3 > 0.0 && in_viewport;
 
-        if is_in_viewport {
-            let style = element.inherited_style.as_ref().unwrap();
+        // Filter text segments to only those in viewport
+        let visible_text_segments: Vec<_> = element.text_segments.iter()
+            .filter(|seg| {
+                let seg_bottom = seg.y + seg.height;
+                seg_bottom > viewport.y && seg.y < viewport.y + viewport.height
+            })
+            .cloned()
+            .collect();
 
-            match element.node_type {
-                NodeType::Comment => {}
-                _ => {
-                    let item = RenderItem {
-                        x: computed_flow.x,
-                        y: computed_flow.y,
-                        width: computed_flow.width,
-                        height: computed_flow.height,
-                        background_color: computed_style.background_color,
-                        text_segments: element.text_segments.clone(),
-                        font_size: computed_style.font_size,
-                        font_path: style.font.get_path(),
-                        color: computed_style.color,
-                        underline: computed_style.text_decoration == "underline",
-                        element: Some(tree[i].clone()),
-                    };
-                    array.push(item);
-                }
+        // Only create RenderItem if there's something visible to render
+        if has_visible_background || !visible_text_segments.is_empty() {
+            stats.in_viewport += 1;
+
+            if element.node_type != NodeType::Comment {
+                let style = element.inherited_style.as_ref().unwrap();
+                let item = RenderItem {
+                    x: computed_flow.x,
+                    y: computed_flow.y,
+                    width: computed_flow.width,
+                    height: computed_flow.height,
+                    background_color: if has_visible_background {
+                        computed_style.background_color
+                    } else {
+                        (0.0, 0.0, 0.0, 0.0)
+                    },
+                    text_segments: visible_text_segments,
+                    font_size: computed_style.font_size,
+                    font_path: style.font.get_path(),
+                    color: computed_style.color,
+                    underline: computed_style.text_decoration == "underline",
+                    element: Some(tree[i].clone()),
+                };
+                array.push(item);
             }
         }
 
-        // Then add children (in DOM order, after parent)
-        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
+        // Always recurse into children (they may be visible even if parent box isn't)
+        if element.children.len() > 0
+            && element.tag_name != "SCRIPT"
+            && element.tag_name != "STYLE"
         {
-            let children_render_items = get_render_array(&mut element.children, viewport);
+            let children_render_items = get_render_array_inner(&mut element.children, viewport, stats);
             array.extend(children_render_items);
         }
     }
