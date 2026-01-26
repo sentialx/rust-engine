@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="500x400">
+  <style>
+    body { margin: 0; padding: 20px; }
+
+    /* Test 1: Simple border shorthand */
+    .border-all {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #e0e0e0;
+      border: 2px solid #333333;
+      margin-bottom: 20px;
+    }
+
+    /* Test 2: Individual border sides */
+    .border-sides {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #e0e0e0;
+      border-top: 3px solid #ff0000;
+      border-right: 3px solid #00ff00;
+      border-bottom: 3px solid #0000ff;
+      border-left: 3px solid #ffff00;
+      margin-bottom: 20px;
+    }
+
+    /* Test 3: Border with padding */
+    .border-padding {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #e0e0e0;
+      border: 4px solid #666666;
+      padding: 10px;
+      margin-bottom: 20px;
+    }
+
+    /* Test 4: Border-width with border-style */
+    .border-width {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #e0e0e0;
+      border-width: 5px;
+      border-style: solid;
+      border-color: #990099;
+      margin-bottom: 20px;
+    }
+
+    /* Test 5: Thick border */
+    .border-thick {
+      display: block;
+      width: 80px;
+      height: 40px;
+      background: #c0c0c0;
+      border: 10px solid #003366;
+      margin-bottom: 20px;
+    }
+
+    /* Test 6: Dashed border */
+    .border-dashed {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #f0f0f0;
+      border: 2px dashed #cc0000;
+      margin-bottom: 20px;
+    }
+
+    /* Test 7: Dotted border */
+    .border-dotted {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #f0f0f0;
+      border: 3px dotted #0066cc;
+    }
+  </style>
+</head>
+<body>
+  <div class="border-all"></div>
+  <div class="border-sides"></div>
+  <div class="border-padding"></div>
+  <div class="border-width"></div>
+  <div class="border-thick"></div>
+  <div class="border-dashed"></div>
+  <div class="border-dotted"></div>
+</body>
+</html>

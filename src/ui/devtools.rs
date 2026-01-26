@@ -80,7 +80,7 @@ impl DevtoolsOverlay {
                 let mut text_segments = Vec::new();
                 collect_text_segments(&element, &mut text_segments);
                 for seg in &text_segments {
-                    add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "rgba(0,204,0,1.0)");
+                    add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
                 }
 
                 // Add info popup (positioned above the element)
@@ -148,20 +148,22 @@ fn add_border_box(
     top: f32,
     width: f32,
     height: f32,
-    border: f32,
+    border_width: f32,
+    border_style: &str,
     color: &str,
 ) {
     if width <= 0.0 || height <= 0.0 {
         return;
     }
-    let bw = border.max(1.0);
-    let bw_x = bw.min(width);
-    let bw_y = bw.min(height);
-
-    add_overlay_box(parent, left, top, width, bw_y, color);
-    add_overlay_box(parent, left, top + height - bw_y, width, bw_y, color);
-    add_overlay_box(parent, left, top, bw_x, height, color);
-    add_overlay_box(parent, left + width - bw_x, top, bw_x, height, color);
+    let bw = border_width.max(1.0);
+    let div = DomElement::create("div");
+    let style = format!(
+        "display:block; position:absolute; left:{}px; top:{}px; width:{}px; height:{}px; \
+         border: {}px {} {};",
+        left, top, width - bw * 2.0, height - bw * 2.0, bw, border_style, color
+    );
+    div.borrow_mut().set_attribute("style", &style);
+    parent.borrow_mut().append_child(div);
 }
 
 fn add_inset_overlay(
@@ -249,7 +251,7 @@ fn add_info_popup(
     let popup_style = format!(
         "display:block; position:absolute; left:{}px; top:{}px; width:200px; \
          background:rgba(255,255,255,0.95); padding:8px; \
-         box-shadow: 0 2px 8px rgba(0,0,0,0.15);",
+         box-shadow: 0 2px 8px rgba(0,0,0,0.15); border: 1px solid rgba(0, 0, 0, 0.15);",
         left, top
     );
     popup.borrow_mut().set_attribute("style", &popup_style);
@@ -333,6 +335,26 @@ fn add_info_popup(
         add_property_row(&popup, "Padding", &padding_str, None);
     }
 
+    // Border row (if visible)
+    let border = &style.border;
+    if border.has_visible_border() {
+        let border_str = if border.top.width == border.right.width
+            && border.right.width == border.bottom.width
+            && border.bottom.width == border.left.width
+        {
+            format!("{}px {}", border.top.width as i32, border.top.style)
+        } else {
+            format!(
+                "{}px {}px {}px {}px",
+                border.top.width as i32,
+                border.right.width as i32,
+                border.bottom.width as i32,
+                border.left.width as i32
+            )
+        };
+        add_property_row(&popup, "Border", &border_str, Some(border.top.color));
+    }
+
     parent.borrow_mut().append_child(popup);
 }
 
@@ -351,7 +373,7 @@ fn add_property_row(
     let label_span = DomElement::create("span");
     label_span.borrow_mut().set_attribute(
         "style",
-        "color:#888; width:50px; display:inline-block;",
+        "color:#888; width:60px; display:inline-block;",
     );
     label_span.borrow_mut().set_text_content(label);
     row.borrow_mut().append_child(label_span);
@@ -362,7 +384,7 @@ fn add_property_row(
             "style",
             &format!(
                 "display:inline-block; width:12px; height:12px; \
-                 background:rgb({},{},{}); margin-right:4px;",
+                 background:rgb({},{},{}); margin-right:4px; border: 1px solid rgba(0, 0, 0, 0.15);",
                 r as u8, g as u8, b as u8
             ),
         );

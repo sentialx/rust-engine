@@ -18,6 +18,81 @@ fn css_color_to_skia(c: ColorTupleA) -> Color {
     .unwrap_or(Color::BLACK)
 }
 
+/// Draw a border line (solid or dashed)
+fn draw_border_line(
+    pixmap: &mut Pixmap,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    horizontal: bool,
+    style: &str,
+    color: ColorTupleA,
+) {
+    let mut paint = Paint::default();
+    paint.set_color(css_color_to_skia(color));
+    paint.anti_alias = false;
+
+    match style {
+        "dashed" => {
+            // Dash length is typically 3x the border width
+            let border_width = if horizontal { height } else { width };
+            let dash_len = (border_width * 3.0).max(3.0);
+            let gap_len = dash_len;
+
+            if horizontal {
+                let mut cx = x;
+                while cx < x + width {
+                    let segment_width = dash_len.min(x + width - cx);
+                    if let Some(rect) = SkiaRect::from_xywh(cx, y, segment_width, height) {
+                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                    }
+                    cx += dash_len + gap_len;
+                }
+            } else {
+                let mut cy = y;
+                while cy < y + height {
+                    let segment_height = dash_len.min(y + height - cy);
+                    if let Some(rect) = SkiaRect::from_xywh(x, cy, width, segment_height) {
+                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                    }
+                    cy += dash_len + gap_len;
+                }
+            }
+        }
+        "dotted" => {
+            // Dots are typically 1x the border width with 1x gap
+            let border_width = if horizontal { height } else { width };
+            let dot_size = border_width.max(1.0);
+            let gap_len = dot_size;
+
+            if horizontal {
+                let mut cx = x;
+                while cx < x + width {
+                    if let Some(rect) = SkiaRect::from_xywh(cx, y, dot_size, height) {
+                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                    }
+                    cx += dot_size + gap_len;
+                }
+            } else {
+                let mut cy = y;
+                while cy < y + height {
+                    if let Some(rect) = SkiaRect::from_xywh(x, cy, width, dot_size) {
+                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                    }
+                    cy += dot_size + gap_len;
+                }
+            }
+        }
+        _ => {
+            // solid (default)
+            if let Some(rect) = SkiaRect::from_xywh(x, y, width, height) {
+                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+        }
+    }
+}
+
 /// Glyph info stored in the atlas
 struct GlyphInfo {
     x: u32,
@@ -205,6 +280,65 @@ impl Renderer for SkiaRenderer {
                 ) {
                     page_pm.fill_rect(rect, &paint, Transform::identity(), None);
                 }
+            }
+
+            // Draw borders
+            let border = &item.border;
+
+            // Top border
+            if border.top.is_visible() {
+                draw_border_line(
+                    &mut page_pm,
+                    item.x * scale,
+                    item.y * scale,
+                    item.width * scale,
+                    border.top.width * scale,
+                    true, // horizontal
+                    &border.top.style,
+                    border.top.color,
+                );
+            }
+
+            // Bottom border
+            if border.bottom.is_visible() {
+                draw_border_line(
+                    &mut page_pm,
+                    item.x * scale,
+                    (item.y + item.height) * scale - border.bottom.width * scale,
+                    item.width * scale,
+                    border.bottom.width * scale,
+                    true, // horizontal
+                    &border.bottom.style,
+                    border.bottom.color,
+                );
+            }
+
+            // Left border
+            if border.left.is_visible() {
+                draw_border_line(
+                    &mut page_pm,
+                    item.x * scale,
+                    item.y * scale,
+                    border.left.width * scale,
+                    item.height * scale,
+                    false, // vertical
+                    &border.left.style,
+                    border.left.color,
+                );
+            }
+
+            // Right border
+            if border.right.is_visible() {
+                draw_border_line(
+                    &mut page_pm,
+                    (item.x + item.width) * scale - border.right.width * scale,
+                    item.y * scale,
+                    border.right.width * scale,
+                    item.height * scale,
+                    false, // vertical
+                    &border.right.style,
+                    border.right.color,
+                );
             }
         }
 
