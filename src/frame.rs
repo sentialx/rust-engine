@@ -227,21 +227,19 @@ impl Frame {
                 }
 
                 if let Some(ref flow) = element.computed_flow {
-                    let rect = Rect {
-                        x: flow.x,
-                        y: flow.y,
-                        width: flow.width,
-                        height: flow.height,
-                    };
-                    if rect_contains(&rect, x, y) {
-                        // This element contains the point, save it
+                    // Use hover_rect (margin box) for hit testing
+                    if rect_contains(&flow.hover_rect, x, y) {
                         result = Some(element_rc.clone());
-
-                        // Check children for a more specific (deeper) match
-                        if let Some(child_info) = hit_test_tree(&element.children, x, y) {
-                            result = Some(child_info);
-                        }
                     }
+                }
+
+                // Always check children - they might be:
+                // 1. Positioned outside parent bounds (overflow, absolute positioning)
+                // 2. Inside a parent with incorrect/stale computed_flow
+                // 3. Inside a parent with zero dimensions
+                // We keep the deepest match that contains the point.
+                if let Some(child_hit) = hit_test_tree(&element.children, x, y) {
+                    result = Some(child_hit);
                 }
             }
 
