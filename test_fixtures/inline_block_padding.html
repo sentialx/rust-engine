@@ -8,12 +8,14 @@
       display: block;
       width: 300px;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     .item {
       display: inline-block;
       width: 60px;
       height: 30px;
       background: #cccccc;
+      vertical-align: top;
     }
     .padded {
       padding: 10px;
@@ -24,11 +26,6 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="item"></span>
-    <span class="item padded"></span>
-    <span class="item padded-asymmetric"></span>
-    <span class="item"></span>
-  </div>
+  <div class="container"><span class="item"></span><span class="item padded"></span><span class="item padded-asymmetric"></span><span class="item"></span></div>
 </body>
 </html>

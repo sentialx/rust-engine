@@ -7,6 +7,7 @@
     .container {
       display: block;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     .card {
       display: inline-block;
@@ -14,6 +15,7 @@
       background: #cccccc;
       padding: 10px;
       margin: 5px;
+      vertical-align: top;
     }
     .header {
       display: block;
@@ -29,19 +31,6 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="card">
-      <div class="header"></div>
-      <div class="body"></div>
-    </div>
-    <div class="card">
-      <div class="header"></div>
-      <div class="body"></div>
-    </div>
-    <div class="card">
-      <div class="header"></div>
-      <div class="body"></div>
-    </div>
-  </div>
+  <div class="container"><div class="card"><div class="header"></div><div class="body"></div></div><div class="card"><div class="header"></div><div class="body"></div></div><div class="card"><div class="header"></div><div class="body"></div></div></div>
 </body>
 </html>

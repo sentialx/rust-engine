@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
   <rect x="0" y="0" width="400" height="200" fill="white"/>
-  <rect x="0" y="0" width="400" height="29" fill="rgba(0,0,0,0)"/>
-  <rect x="0" y="0" width="300" height="29" fill="rgba(238,238,238,1)" data-class="container"/>
-  <rect x="0" y="5" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
-  <rect x="54" y="0" width="40" height="25" fill="rgba(153,153,153,1)" data-class="inline-block"/>
-  <rect x="98" y="5" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
-  <rect x="152" y="0" width="40" height="25" fill="rgba(153,153,153,1)" data-class="inline-block"/>
-  <rect x="196" y="5" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
+  <rect x="0" y="0" width="400" height="25" fill="rgba(0,0,0,0)"/>
+  <rect x="0" y="0" width="300" height="25" fill="rgba(238,238,238,1)" data-class="container"/>
+  <rect x="0" y="0" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
+  <rect x="50" y="0" width="40" height="25" fill="rgba(153,153,153,1)" data-class="inline-block"/>
+  <rect x="90" y="0" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
+  <rect x="140" y="0" width="40" height="25" fill="rgba(153,153,153,1)" data-class="inline-block"/>
+  <rect x="180" y="0" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
 </svg>

@@ -99,6 +99,10 @@ fn render_to_svg(render_frame: &RenderFrame) -> String {
     svg.push_str("<rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" fill=\"white\" />");
 
     for item in &render_frame.render_array {
+        // Skip zero-dimension elements (Chromium doesn't render them)
+        if item.width == 0.0 || item.height == 0.0 {
+            continue;
+        }
         if item.background_color != (0.0, 0.0, 0.0, 0.0) {
             // Extract class name from element if available
             let class_attr = item

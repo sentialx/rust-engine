@@ -20,16 +20,20 @@ impl BlockLayoutStrategy {
         let y_base = context.y;
         
         if let Some(prev) = prev_box {
-            // Position after previous block
-            *reserved_block_y = (*reserved_block_y).max(prev.y + prev.margin_box_height());
-            
+            // Position after previous block's border box
+            let prev_border_box_end = prev.y + prev.border_box_height();
+
             // Collapse margins: use max of previous margin.bottom and current margin.top
             let margin_collapse = prev.margin.bottom.max(box_data.margin.top);
-            box_data.y = *reserved_block_y + margin_collapse;
+            box_data.y = prev_border_box_end + margin_collapse;
+
+            // Update reserved_block_y
+            *reserved_block_y = (*reserved_block_y).max(prev_border_box_end);
         } else {
-            // First element
-            let margin_top = box_data.margin.top.max(0.0) - previous_margin_bottom.max(0.0);
-            box_data.y = y_base + margin_top.max(0.0);
+            // First element - handle parent-child margin collapsing
+            // context.collapsible_margin_top contains parent's margin that should collapse with this child
+            let collapsed_margin = context.collapsible_margin_top.max(box_data.margin.top);
+            box_data.y = y_base + collapsed_margin;
         }
         
         box_data.x = x_base;

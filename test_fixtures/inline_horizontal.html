@@ -7,6 +7,7 @@
     .container {
       display: block;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     .item {
       display: inline-block;
@@ -14,14 +15,11 @@
       height: 30px;
       background: #cccccc;
       margin-right: 10px;
+      vertical-align: top;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="item"></span>
-    <span class="item"></span>
-    <span class="item"></span>
-  </div>
+  <div class="container"><span class="item"></span><span class="item"></span><span class="item"></span></div>
 </body>
 </html>

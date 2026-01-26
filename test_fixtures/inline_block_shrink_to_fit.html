@@ -7,12 +7,14 @@
     .container {
       display: block;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     /* Inline-block without explicit width should shrink to fit contents */
     .shrink {
       display: inline-block;
       background: #cccccc;
       padding: 5px;
+      vertical-align: top;
     }
     .child {
       display: block;
@@ -24,14 +26,6 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="shrink">
-      <div class="child"></div>
-      <div class="child"></div>
-    </span>
-    <span class="shrink">
-      <div class="child"></div>
-    </span>
-  </div>
+  <div class="container"><span class="shrink"><div class="child"></div><div class="child"></div></span><span class="shrink"><div class="child"></div></span></div>
 </body>
 </html>
