@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <rect x="0" y="0" width="400" height="300" fill="white"/>
+  <rect x="8" y="8" width="384" height="18" fill="rgba(0,0,0,0)"/>
+  <rect x="8" y="8" width="200" height="18" fill="rgba(238,238,238,1)" data-class="container"/>
+  <rect x="8" y="8" width="20" height="18" fill="rgba(204,204,204,1)" data-class="word"/>
+  <rect x="36" y="8" width="20" height="18" fill="rgba(204,204,204,1)" data-class="word"/>
+  <rect x="64" y="8" width="20" height="18" fill="rgba(204,204,204,1)" data-class="word"/>
+  <rect x="92" y="8" width="20" height="18" fill="rgba(204,204,204,1)" data-class="word"/>
+  <rect x="120" y="8" width="20" height="18" fill="rgba(204,204,204,1)" data-class="word"/>
+</svg>

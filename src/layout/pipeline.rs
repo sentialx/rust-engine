@@ -1,12 +1,51 @@
 // Layout pipeline - Build, Measure, Layout, Finalize passes
 
-use crate::html::{DomElement, NodeType, ComputedFlow};
+use crate::html::{DomElement, NodeType, ComputedFlow, TextSegment};
 use crate::render_frame::TextMeasurer;
 use crate::styles::ScalarEvaluationContext;
 use crate::layout::{Rect, boxes::{LayoutBox, LayoutNode}};
-use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext};
+use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, InlineContext};
 use std::rc::Rc;
 use std::cell::RefCell;
+
+/// Preprocess text node: split into words and measure each
+fn preprocess_text_node(
+    element: &mut DomElement,
+    text_measurer: &mut dyn TextMeasurer,
+    font_size: f32,
+    font_path: &str,
+) {
+    element.text_segments.clear();
+
+    // Handle HTML entities
+    let processed_value = element.node_value
+        .replace("&nbsp;", " ")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<");
+
+    // Measure space width
+    let (space_w, _) = text_measurer.measure(" ", font_size, font_path);
+    element.space_width = space_w;
+
+    // Get ascent for this font (distance from top to baseline)
+    let ascent = text_measurer.ascent(font_size, font_path);
+
+    // Split into words and measure each
+    for word in processed_value.split_whitespace() {
+        let (w, h) = text_measurer.measure(word, font_size, font_path);
+        element.text_segments.push(TextSegment {
+            text: word.to_string(),
+            width: w,
+            height: h,
+            ascent,
+            x: 0.0,  // Set during layout
+            y: 0.0,
+        });
+    }
+
+    // Store the processed value back
+    element.node_value = processed_value;
+}
 
 /// Build pass: Convert DOM tree to layout box tree
 /// This isolates style evaluation and computed style extraction
@@ -15,7 +54,7 @@ pub fn build_layout_tree(
     context: &ReflowContext,
 ) -> Vec<LayoutNode> {
     let mut layout_nodes = Vec::new();
-    
+
     for element_rc in tree {
         // First, evaluate styles and compute computed_style
         // We need to do this in steps to avoid borrow conflicts
@@ -23,23 +62,23 @@ pub fn build_layout_tree(
             // Step 1: Evaluate styles (mutable borrow)
             let (computed_style, width_has_value, height_has_value, width_val, height_val) = {
                 let mut element = element_rc.borrow_mut();
-                
+
                 // Skip script and style elements
                 if element.tag_name == "SCRIPT" || element.tag_name == "STYLE" {
                     continue;
                 }
-                
+
                 // Evaluate styles if needed
                 let inherited_style = match &mut element.inherited_style {
                     Some(style) => style,
                     None => continue,
                 };
-                
+
                 // Skip if display: none
                 if inherited_style.display.get() == "none" {
                     continue;
                 }
-                
+
                 // Evaluate scalar values
                 let font_scalar_ctx = ScalarEvaluationContext::from_parent(
                     context.font_size,
@@ -53,7 +92,7 @@ pub fn build_layout_tree(
                     context.font_size,
                     context.parent_height,
                 );
-                
+
                 // Evaluate style properties
                 inherited_style.margin.evaluate(&font_scalar_ctx);
                 inherited_style.padding.evaluate(&font_scalar_ctx);
@@ -61,20 +100,20 @@ pub fn build_layout_tree(
                 inherited_style.inset.evaluate(&font_scalar_ctx);
                 inherited_style.width.evaluate(&parent_width_scalar_ctx);
                 inherited_style.height.evaluate(&parent_height_scalar_ctx);
-                
+
                 // Get computed style and width/height info
                 let computed_style = inherited_style.to_computed_style();
                 let width_has_value = inherited_style.width.has_numeric_value();
                 let height_has_value = inherited_style.height.has_numeric_value();
                 let width_val = if width_has_value { inherited_style.width.get() } else { 0.0 };
                 let height_val = if height_has_value { inherited_style.height.get() } else { 0.0 };
-                
+
                 // Store computed style
                 element.computed_style = Some(computed_style.clone());
-                
+
                 (computed_style, width_has_value, height_has_value, width_val, height_val)
             };
-            
+
             // Step 2: Get formatting context and check children (immutable borrow)
             let (formatting_context, has_children) = {
                 let element = element_rc.borrow();
@@ -82,7 +121,7 @@ pub fn build_layout_tree(
                 let has_children = element.children.len() > 0;
                 (formatting_context, has_children)
             };
-            
+
             // Step 3: Prepare child context if needed
             let child_context_opt = if has_children {
                 let shrink_to_fit = context.shrink_to_fit
@@ -106,19 +145,19 @@ pub fn build_layout_tree(
             } else {
                 None
             };
-            
+
             (computed_style, formatting_context, has_children, child_context_opt)
         };
-        
+
         // Create layout box
         let box_data = LayoutBox::new(
             element_rc.clone(),
             computed_style,
             formatting_context,
         );
-        
+
         let mut layout_node = LayoutNode::new(box_data);
-        
+
         // Recursively build children
         if has_children {
             let child_context = child_context_opt.unwrap();
@@ -127,47 +166,58 @@ pub fn build_layout_tree(
             // Update the original children with any mutations
             element_rc.borrow_mut().children = children;
         }
-        
+
         layout_nodes.push(layout_node);
     }
-    
+
     layout_nodes
 }
 
-/// Measure pass: Compute intrinsic dimensions (before layout)
-/// For text, this just gets a rough size. Actual text wrapping happens after layout.
+/// Measure pass: Compute intrinsic dimensions and preprocess text
+/// Text nodes are split into measured segments here
 pub fn measure_layout_tree(
     layout_nodes: &mut Vec<LayoutNode>,
     text_measurer: &mut dyn TextMeasurer,
     _max_width: f32,
 ) {
     for node in layout_nodes.iter_mut() {
-        let element = node.box_data.element.borrow();
         let comp_style = &node.box_data.computed_style;
-        
-        // For text nodes, get basic measurement (wrapping happens later with actual positions)
-        if element.node_type == NodeType::Text && !element.node_value.is_empty() {
+
+        // For text nodes, preprocess into segments
+        let (node_type, node_value_empty) = {
+            let element = node.box_data.element.borrow();
+            (element.node_type.clone(), element.node_value.is_empty())
+        };
+
+        if node_type == NodeType::Text && !node_value_empty {
             let font_size = comp_style.font_size;
-            // Use the same font path format as the old code
-            let inherited_style = element.inherited_style.as_ref().unwrap();
-            let font_path = inherited_style.font.get_path();
-            
-            // Simple measurement - actual wrapping happens in layout pass
-            let (text_width, text_height) = text_measurer.measure(
-                &element.node_value,
-                font_size,
-                &font_path,
-            );
-            
-            node.box_data.intrinsic_width = Some(text_width);
-            node.box_data.intrinsic_height = Some(text_height);
-            let mut min_width: f32 = 0.0;
-            for word in element.node_value.split_whitespace() {
-                let word_width = text_measurer.measure(word, font_size, &font_path).0;
-                min_width = min_width.max(word_width);
+            let font_path = {
+                let element = node.box_data.element.borrow();
+                let inherited_style = element.inherited_style.as_ref().unwrap();
+                inherited_style.font.get_path()
+            };
+
+            // Preprocess text into segments
+            {
+                let mut element = node.box_data.element.borrow_mut();
+                preprocess_text_node(&mut element, text_measurer, font_size, &font_path);
             }
-            node.box_data.intrinsic_min_width = Some(min_width);
-            // Don't set content_width/height yet - that happens after text wrapping in layout
+
+            // Calculate intrinsic dimensions from segments
+            let element = node.box_data.element.borrow();
+            if !element.text_segments.is_empty() {
+                // Intrinsic width is the sum of all segments + spaces (single line)
+                let total_width: f32 = element.text_segments.iter().map(|s| s.width).sum::<f32>()
+                    + element.space_width * (element.text_segments.len().saturating_sub(1) as f32);
+                let max_height: f32 = element.text_segments.iter().map(|s| s.height).fold(0.0, f32::max);
+
+                // Min-content width is the widest single word
+                let min_width: f32 = element.text_segments.iter().map(|s| s.width).fold(0.0, f32::max);
+
+                node.box_data.intrinsic_width = Some(total_width);
+                node.box_data.intrinsic_height = Some(max_height);
+                node.box_data.intrinsic_min_width = Some(min_width);
+            }
         } else {
             // For non-text elements, use specified width/height if available
             if comp_style.width > 0.0 {
@@ -177,9 +227,7 @@ pub fn measure_layout_tree(
                 node.box_data.content_height = comp_style.height;
             }
         }
-        
-        drop(element);
-        
+
         // Measure children first (for width/height calculation)
         if !node.children.is_empty() {
             let child_max_width = if node.box_data.computed_style.width > 0.0 {
@@ -254,159 +302,6 @@ pub fn measure_layout_tree(
     }
 }
 
-/// Measure text and handle wrapping after layout positions are known
-/// This is called after layout_tree to handle text wrapping with actual positions
-pub fn measure_text_after_layout(
-    layout_nodes: &mut Vec<LayoutNode>,
-    text_measurer: &mut dyn TextMeasurer,
-    max_width: f32,
-    layout_x_start: f32,
-    force_nowrap: bool,
-) {
-    use crate::layout::wrap_text;
-    
-    for node in layout_nodes.iter_mut() {
-        let comp_style = node.box_data.computed_style.clone();
-        let (node_type, node_value, white_space, font_path) = {
-            let element = node.box_data.element.borrow();
-            let inherited_style = element.inherited_style.as_ref().unwrap();
-            (
-                element.node_type.clone(),
-                element.node_value.clone(),
-                inherited_style.white_space.get(),
-                inherited_style.font.get_path(),
-            )
-        };
-        
-        // Measure and wrap text content (now that positions are known)
-        if node_type == NodeType::Text && !node_value.is_empty() {
-            // Handle HTML entities
-            let mut processed_value = node_value
-                .replace("&nbsp;", " ")
-                .replace("&gt;", ">")
-                .replace("&lt;", "<");
-            
-            let font_size = comp_style.font_size;
-            
-            // Handle text wrapping with actual positions
-            let lines = if white_space != "nowrap" && !force_nowrap {
-                wrap_text(
-                    processed_value.clone(),
-                    max_width,
-                    text_measurer,
-                    font_size,
-                    font_path.clone(),
-                    node.box_data.x,
-                    node.box_data.y,
-                    layout_x_start,
-                )
-            } else {
-                let size = text_measurer.measure(
-                    &processed_value,
-                    font_size,
-                    &font_path,
-                );
-                vec![crate::html::TextLine {
-                    text: processed_value.clone(),
-                    x: node.box_data.x,
-                    y: node.box_data.y,
-                    width: size.0,
-                    height: size.1,
-                }]
-            };
-            
-            // Store lines and processed value in element
-            let mut element = node.box_data.element.borrow_mut();
-            element.node_value = processed_value;
-            element.lines = lines.clone();
-            drop(element);
-            
-            // Calculate dimensions from lines
-            if !lines.is_empty() {
-                let max_line_width = lines
-                    .iter()
-                    .map(|l| l.width)
-                    .fold(0.0_f32, |acc, w| acc.max(w));
-                node.box_data.content_width = max_line_width;
-                node.box_data.content_height = lines.iter().map(|l| l.height).sum::<f32>() + 8.0;
-            }
-        }
-        
-        // Measure children text after their layout
-        if !node.children.is_empty() {
-            // All elements establish their own layout context for text wrapping
-            let parent_display = node.box_data.computed_style.display.as_str();
-            let child_layout_x_start = if parent_display == "inline" {
-                layout_x_start
-            } else {
-                node.box_data.x + node.box_data.margin.left + node.box_data.padding.left
-            };
-            let available_line_width = if matches!(
-                parent_display,
-                "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-            ) && node.box_data.content_width > 0.0
-            {
-                node.box_data.content_width
-            } else {
-                max_width
-            };
-            let child_force_nowrap = if force_nowrap {
-                true
-            } else if matches!(
-                parent_display,
-                "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-            ) {
-                let has_block_child = node.children.iter().any(|child| {
-                    matches!(
-                        child.box_data.computed_style.display.as_str(),
-                        "block" | "list-item" | "table"
-                    )
-                });
-                let max_text_width = max_intrinsic_text_width(node);
-                let content_width = if node.box_data.content_width > 0.0 {
-                    node.box_data.content_width
-                } else {
-                    available_line_width
-                };
-                let fits_without_wrap =
-                    max_text_width > 0.0 && max_text_width <= content_width + 0.01;
-                !has_block_child && fits_without_wrap
-            } else {
-                false
-            };
-            
-            let child_max_width = if node.box_data.computed_style.width > 0.0 {
-                // Element has explicit width - use content width directly
-                node.box_data.content_width
-            } else if matches!(
-                node.box_data.computed_style.display.as_str(),
-                "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-            ) {
-                // Avoid shrink feedback loops for shrink-to-fit containers,
-                // but do not allow text to exceed a known content width.
-                if node.box_data.content_width > 0.0 {
-                    node.box_data.content_width.min(available_line_width)
-                } else {
-                    available_line_width
-                }
-            } else if node.box_data.content_width > 0.0 {
-                // Use computed content width if available (e.g. block auto width).
-                node.box_data.content_width.min(available_line_width)
-            } else {
-                // max_width is already in the parent's content coordinate space
-                available_line_width
-            };
-            measure_text_after_layout(
-                &mut node.children,
-                text_measurer,
-                child_max_width,
-                child_layout_x_start,
-                child_force_nowrap,
-            );
-        }
-    }
-}
-
 fn max_intrinsic_text_width(node: &LayoutNode) -> f32 {
     if node.box_data.formatting_context == FormattingContext::TextNode {
         return node.box_data.intrinsic_width.unwrap_or(0.0);
@@ -431,7 +326,7 @@ fn min_intrinsic_text_width(node: &LayoutNode) -> f32 {
 
 fn has_breakable_text(element: &DomElement) -> bool {
     if element.node_type == NodeType::Text {
-        return element.node_value.chars().any(|c| c.is_whitespace());
+        return element.text_segments.len() > 1;
     }
 
     for child in &element.children {
@@ -444,50 +339,54 @@ fn has_breakable_text(element: &DomElement) -> bool {
 }
 
 /// Layout pass: Assign positions and sizes using formatting context strategies
-/// Note: Text measurement/wrapping happens after this pass (in measure_text_after_layout)
+/// Text segments and inline elements are positioned by the unified inline layout algorithm
 pub fn layout_tree(
     layout_nodes: &mut Vec<LayoutNode>,
     context: &ReflowContext,
 ) -> (f32, f32) { // Returns (reserved_block_y, adjacent_margin_bottom)
     use crate::layout::block::BlockLayoutStrategy;
-    use crate::layout::inline::InlineLayoutStrategy;
+    use crate::layout::inline::{layout_inline_content, advance_past_atomic_inline};
     use crate::layout::abspos::AbsoluteLayoutStrategy;
     use crate::layout::flow::uses_absolute_positioning;
-    
+
     let block_strategy = BlockLayoutStrategy;
-    let inline_strategy = InlineLayoutStrategy;
     let abspos_strategy = AbsoluteLayoutStrategy;
-    
+
     let mut reserved_block_y = context.y;
-    let mut inline_ctx = crate::layout::InlineContext::new(context.x, context.y);
+    let line_start_x = context.layout_x_start.unwrap_or(context.x);
+    let mut inline_ctx = InlineContext::new(line_start_x, context.y, context.parent_max_width);
+    inline_ctx.active = true;
     let mut adjacent_margin_bottom = 0.0;
     let mut prev_node_opt: Option<&LayoutNode> = None;
-    
+
     for node in layout_nodes.iter_mut() {
         let formatting_context = node.box_data.formatting_context;
-        
-        // Skip if display: none (shouldn't be in tree, but check anyway)
-        // display is already a String in ComputedStyle, so this is fine
+        let mut is_atomic_inline = false; // Track if this is an inline-block that needs ctx update after children
+
+        // Skip if display: none
         if node.box_data.computed_style.display == "none" {
             continue;
         }
-        
+
         // Layout based on formatting context
         if uses_absolute_positioning(&node.box_data.computed_style) {
-            // Absolute positioning
             abspos_strategy.layout(&mut node.box_data, context);
         } else {
             match formatting_context {
                 FormattingContext::BlockContainer => {
+                    // Flush any pending inline content
+                    if inline_ctx.x > inline_ctx.line_start_x {
+                        reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
+                    }
+
                     let prev_box = prev_node_opt.map(|n| &n.box_data);
-                    let (x, y) = block_strategy.layout(
+                    let (_x, _y) = block_strategy.layout(
                         &mut node.box_data,
                         prev_box,
                         &mut reserved_block_y,
                         context,
                         adjacent_margin_bottom,
                     );
-                    // Update state - create a mutable context for this
                     let mut update_context = ReflowContext {
                         x: context.x,
                         y: context.y,
@@ -507,24 +406,33 @@ pub fn layout_tree(
                         &mut update_context,
                         node.box_data.margin.bottom,
                     );
-                    adjacent_margin_bottom = update_context.adjacent_margin_bottom;
                     adjacent_margin_bottom = node.box_data.margin.bottom;
+
+                    // Reset inline context after block
+                    inline_ctx = InlineContext::new(line_start_x, reserved_block_y, context.parent_max_width);
+                    inline_ctx.active = true;
                 }
                 FormattingContext::InlineContainer | FormattingContext::TextNode => {
-                    let prev_box = prev_node_opt.map(|n| &n.box_data);
-                    let (_x, _y) = inline_strategy.layout(
-                        &mut node.box_data,
-                        prev_box,
-                        &mut inline_ctx,
-                        context,
-                    );
-                    // Defer inline state update until after children/size adjustments
+                    // Check if this is an atomic inline (inline-block) that needs ctx update after children
+                    is_atomic_inline = formatting_context == FormattingContext::InlineContainer
+                        && matches!(
+                            node.box_data.computed_style.display.as_str(),
+                            "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                        );
+
+                    // Use unified inline layout - handles text segments and inline elements
+                    let mut single_node = std::slice::from_mut(node);
+                    layout_inline_content(single_node, &mut inline_ctx);
+
+                    // Update reserved_block_y to account for inline content
+                    // Note: For atomic inlines, this will be updated again after children layout
+                    reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
+                    adjacent_margin_bottom = 0.0;
                 }
                 FormattingContext::FlexContainer | FormattingContext::GridContainer => {
-                    // TODO: Implement flex/grid
-                    // For now, treat as block
+                    // TODO: Implement flex/grid - treat as block for now
                     let prev_box = prev_node_opt.map(|n| &n.box_data);
-                    let (x, y) = block_strategy.layout(
+                    let (_x, _y) = block_strategy.layout(
                         &mut node.box_data,
                         prev_box,
                         &mut reserved_block_y,
@@ -535,7 +443,7 @@ pub fn layout_tree(
                 }
             }
         }
-        
+
         // Layout children recursively
         // Calculate available width for children - account for element's position offset
         let content_x =
@@ -588,16 +496,19 @@ pub fn layout_tree(
                 available_content_width
             };
 
+            // Calculate content y (matching how content_x includes margin)
+            let content_y = node.box_data.y + node.box_data.margin.top + node.box_data.padding.top;
+
             let child_context = ReflowContext {
                 x: content_x,
-                y: node.box_data.y + node.box_data.padding.top,
+                y: content_y,
                 rel_x: if node.box_data.computed_style.position == "relative" || uses_absolute_positioning(&node.box_data.computed_style) {
                     content_x
                 } else {
                     context.rel_x
                 },
                 rel_y: if node.box_data.computed_style.position == "relative" || uses_absolute_positioning(&node.box_data.computed_style) {
-                    node.box_data.y + node.box_data.padding.top
+                    content_y
                 } else {
                     context.rel_y
                 },
@@ -613,13 +524,13 @@ pub fn layout_tree(
                 adjacent_margin_bottom: 0.0,
                 shrink_to_fit: parent_is_shrink_to_fit || child_shrink_to_fit,
             };
-            
+
             layout_tree(&mut node.children, &child_context);
-            
+
             // Update parent width/height from children if not explicitly set
             let element = node.box_data.element.borrow();
             let inherited_style = element.inherited_style.as_ref().unwrap();
-            
+
             if !inherited_style.width.has_numeric_value() {
                 let display = node.box_data.computed_style.display.as_str();
                 let is_shrink_to_fit = matches!(
@@ -711,9 +622,9 @@ pub fn layout_tree(
                     let child_y = child.box_data.y + child.box_data.margin.top;
                     let child_bottom = child_y + child.box_data.margin_box_height();
                     // content_height excludes padding; measure from content box top
-                    let content_top = node.box_data.y + node.box_data.padding.top;
+                    // Must match content_y calculation (includes margin for inline elements)
                     node.box_data.content_height = node.box_data.content_height.max(
-                        child_bottom - content_top
+                        child_bottom - content_y
                     );
                 }
             }
@@ -728,7 +639,7 @@ pub fn layout_tree(
             {
                 let relayout_context = ReflowContext {
                     x: content_x,
-                    y: node.box_data.y + node.box_data.padding.top,
+                    y: content_y,
                     rel_x: if node.box_data.computed_style.position == "relative"
                         || uses_absolute_positioning(&node.box_data.computed_style)
                     {
@@ -739,7 +650,7 @@ pub fn layout_tree(
                     rel_y: if node.box_data.computed_style.position == "relative"
                         || uses_absolute_positioning(&node.box_data.computed_style)
                     {
-                        node.box_data.y + node.box_data.padding.top
+                        content_y
                     } else {
                         context.rel_y
                     },
@@ -760,44 +671,25 @@ pub fn layout_tree(
                     for child in &node.children {
                         let child_y = child.box_data.y + child.box_data.margin.top;
                         let child_bottom = child_y + child.box_data.margin_box_height();
-                        let content_top = node.box_data.y + node.box_data.padding.top;
+                        // Must match content_y calculation
                         node.box_data.content_height = node.box_data.content_height.max(
-                            child_bottom - content_top
+                            child_bottom - content_y
                         );
                     }
                 }
             }
         }
 
-        // Update inline layout state after children sizing is known
-        if matches!(
-            node.box_data.formatting_context,
-            FormattingContext::InlineContainer | FormattingContext::TextNode
-        ) {
-            let mut update_context = ReflowContext {
-                x: context.x,
-                y: context.y,
-                rel_x: context.rel_x,
-                rel_y: context.rel_y,
-                font_size: context.font_size,
-                parent_width: context.parent_width,
-                parent_height: context.parent_height,
-                parent_max_width: context.parent_max_width,
-                layout_x_start: context.layout_x_start,
-                adjacent_margin_bottom: 0.0,
-                shrink_to_fit: context.shrink_to_fit,
-            };
-            inline_strategy.update_state(
-                &node.box_data,
-                &mut inline_ctx,
-                &mut reserved_block_y,
-                &mut update_context,
-            );
+        // After children are laid out, update inline context with actual dimensions
+        // for atomic inline boxes (inline-block, etc.)
+        if is_atomic_inline {
+            advance_past_atomic_inline(node, &mut inline_ctx);
+            reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
         }
-        
+
         prev_node_opt = Some(node);
     }
-    
+
     (reserved_block_y, adjacent_margin_bottom)
 }
 
@@ -807,9 +699,9 @@ pub fn finalize_layout_tree(
 ) {
     for node in layout_nodes {
         let mut element = node.box_data.element.borrow_mut();
-        
+
         // Create ComputedFlow from layout box
-        
+
         let flow_y = if node.box_data.formatting_context == FormattingContext::BlockContainer {
             node.box_data.y
         } else {
@@ -830,7 +722,9 @@ pub fn finalize_layout_tree(
                 height: node.box_data.margin_box_height(),
             },
         });
-        
+
+        drop(element);
+
         // Finalize children
         if !node.children.is_empty() {
             finalize_layout_tree(&node.children);

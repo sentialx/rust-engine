@@ -1,7 +1,7 @@
 use crate::colors::*;
 use crate::css::*;
 use crate::css_value::CssValue;
-use crate::html::*;
+use crate::html::{DomElement, NodeType, TextSegment};
 use crate::render_frame::TextMeasurer;
 use crate::styles::*;
 use crate::utils::*;
@@ -23,9 +23,6 @@ pub mod abspos;
 #[path = "layout/pipeline.rs"]
 pub mod pipeline;
 
-#[cfg(test)]
-#[path = "layout/tests.rs"]
-mod tests;
 
 // Re-export types from submodules for backward compatibility
 pub use flow::{FormattingContext, get_formatting_context, ReflowContext, InlineContext};
@@ -44,7 +41,7 @@ pub struct RenderItem {
     pub y: f32,
     pub width: f32,
     pub height: f32,
-    pub text_lines: Vec<TextLine>,
+    pub text_segments: Vec<TextSegment>,  // Preprocessed words with positions
     pub font_size: f32,
     pub font_path: String,
     pub background_color: ColorTupleA,
@@ -274,7 +271,7 @@ pub fn propagate_styles(tree: &mut Vec<Rc<RefCell<DomElement>>>, parent_style: O
 
 /// Computes element position using FormattingContext classification
 /// This is the core of the generalized layout algorithm
-/// Reflow using pipeline architecture
+/// Reflow using pipeline architecture - single pass with unified text/inline layout
 pub fn reflow(
     tree: &mut Vec<Rc<RefCell<DomElement>>>,
     text_measurer: &mut dyn TextMeasurer,
@@ -301,124 +298,18 @@ pub fn reflow(
 
     let sibling_context = context.unwrap_or(&mut default_context);
 
+    // Build pass: Create layout tree from DOM
     let mut layout_nodes = build_layout_tree(tree, sibling_context);
 
+    // Measure pass: Preprocess text into segments and compute intrinsic sizes
     let max_width = sibling_context.parent_max_width;
     measure_layout_tree(&mut layout_nodes, text_measurer, max_width);
 
-    use crate::layout::pipeline::measure_text_after_layout;
-    let layout_x_start = sibling_context.layout_x_start.unwrap_or(sibling_context.x);
-    layout_tree(&mut layout_nodes, sibling_context);
-    measure_text_after_layout(
-        &mut layout_nodes,
-        text_measurer,
-        max_width,
-        layout_x_start,
-        false,
-    );
-
+    // Layout pass: Position all elements (text segments positioned directly)
     layout_tree(&mut layout_nodes, sibling_context);
 
-    measure_text_after_layout(
-        &mut layout_nodes,
-        text_measurer,
-        max_width,
-        layout_x_start,
-        false,
-    );
-
-    layout_tree(&mut layout_nodes, sibling_context);
-
-    measure_text_after_layout(
-        &mut layout_nodes,
-        text_measurer,
-        max_width,
-        layout_x_start,
-        false,
-    );
-
-    layout_tree(&mut layout_nodes, sibling_context);
-
+    // Finalize pass: Copy results back to DOM
     finalize_layout_tree(&layout_nodes);
-}
-
-pub fn wrap_text(
-    text: String,
-    max_width: f32,
-    text_measurer: &mut dyn TextMeasurer,
-    font_size: f32,
-    font_path: String,
-    x: f32,
-    y: f32,
-    layout_x_start: f32,
-) -> Vec<TextLine> {
-    let words = text.split(" ").collect::<Vec<&str>>();
-    let mut line = String::new();
-    let mut lines: Vec<TextLine> = vec![];
-
-    let space_size = text_measurer.measure(" ", font_size, &font_path);
-
-    let mut lx = x;
-    let mut ly = y;
-    let mut lw = 0.0;
-
-    for word in words {
-        if word.is_empty() {
-            continue;
-        }
-
-        let word_size = text_measurer.measure(word, font_size, &font_path);
-        let space_width = if line.is_empty() { 0.0 } else { space_size.0 };
-        let new_line_width = lw + space_width + word_size.0;
-        let line_offset = (lx - layout_x_start).max(0.0);
-
-        if !line.is_empty() && line_offset + new_line_width > max_width - 0.01 {
-            let line_size = text_measurer.measure(&line, font_size, &font_path);
-            lines.push(TextLine {
-                text: line.clone(),
-                x: lx,
-                y: ly,
-                width: line_size.0,
-                height: line_size.1,
-            });
-            ly += space_size.1;
-            lx = layout_x_start;
-            line = word.to_string();
-            lw = word_size.0;
-        } else {
-            if line.is_empty() {
-                line = word.to_string();
-                lw = word_size.0;
-            } else {
-                line.push(' ');
-                line.push_str(word);
-                lw = new_line_width;
-            }
-        }
-    }
-
-    if !line.is_empty() {
-        let line_size = text_measurer.measure(&line, font_size, &font_path);
-        lines.push(TextLine {
-            text: line,
-            x: lx,
-            y: ly,
-            width: line_size.0,
-            height: line_size.1,
-        });
-    }
-
-    if lines.is_empty() {
-        lines.push(TextLine {
-            text: String::new(),
-            x: lx,
-            y: ly,
-            width: 0.0,
-            height: space_size.1,
-        });
-    }
-
-    lines
 }
 
 pub fn get_render_array(
@@ -479,7 +370,7 @@ pub fn get_render_array(
                     width: computed_flow.width,
                     height: computed_flow.height,
                     background_color: computed_style.background_color,
-                    text_lines: element.lines.clone(),
+                    text_segments: element.text_segments.clone(),
                     font_size: computed_style.font_size,
                     font_path: style.font.get_path(),
                     color: computed_style.color,

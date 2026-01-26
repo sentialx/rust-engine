@@ -1,132 +1,194 @@
-// Inline formatting context layout strategy
+// Unified inline formatting context layout
+//
+// All inline content (text segments, inline elements, inline-block) flows through
+// the same algorithm. Text nodes are treated as sequences of inline items (words).
 
-use crate::layout::flow::{FormattingContext, ReflowContext, InlineContext};
-use crate::layout::boxes::LayoutBox;
-use crate::html::NodeType;
+use crate::layout::flow::{FormattingContext, InlineContext};
+use crate::layout::boxes::LayoutNode;
 
-/// Inline layout strategy - handles horizontal flow of inline elements
-pub struct InlineLayoutStrategy;
+/// Unified inline formatting context layout
+///
+/// This is the single entry point for laying out inline content.
+/// All inline items (text words, inline elements, inline-blocks) use the same
+/// positioning and wrapping logic.
+pub fn layout_inline_content(
+    children: &mut [LayoutNode],
+    ctx: &mut InlineContext,
+) {
+    for child in children.iter_mut() {
+        match child.box_data.formatting_context {
+            FormattingContext::TextNode => {
+                // Text node: each word is an inline item
+                layout_text_node(child, ctx);
+            }
+            FormattingContext::InlineContainer => {
+                let display = child.box_data.computed_style.display.as_str();
+                let is_atomic = matches!(
+                    display,
+                    "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                );
 
-impl InlineLayoutStrategy {
-    /// Layout an inline element
-    pub fn layout(
-        &self,
-        box_data: &mut LayoutBox,
-        prev_box: Option<&LayoutBox>,
-        inline_ctx: &mut InlineContext,
-        context: &ReflowContext,
-    ) -> (f32, f32) {
-        let x_base = context.x;
-        let y_base = context.y;
-        
-        if let Some(prev) = prev_box {
-            let prev_is_inline = matches!(
-                prev.formatting_context,
-                FormattingContext::InlineContainer | FormattingContext::TextNode
-            );
-            
-            if prev_is_inline {
-                // Continue inline flow
-                if inline_ctx.active {
-                    box_data.x = inline_ctx.x;
-                    box_data.y = inline_ctx.y;
+                if is_atomic {
+                    // Atomic inline box (inline-block etc) - wraps as a unit
+                    layout_atomic_inline(child, ctx);
                 } else {
-                    // Start new inline line
-                    let next_x = prev.x + prev.margin_box_width();
-                    inline_ctx.start_new_line(next_x, prev.y);
-                    box_data.x = inline_ctx.x;
-                    box_data.y = inline_ctx.y;
-                }
-            } else {
-                // Block before inline - start new line
-                inline_ctx.start_new_line(x_base, prev.y + prev.margin_box_height());
-                box_data.x = inline_ctx.x;
-                box_data.y = inline_ctx.y;
-            }
-        } else {
-            // First inline element
-            inline_ctx.start_new_line(x_base, y_base);
-            box_data.x = inline_ctx.x;
-            box_data.y = inline_ctx.y;
-        }
-
-        // Wrap to next line if this inline box would overflow the available width.
-        let max_right = context.x + context.parent_max_width;
-        let mut should_wrap = false;
-        if inline_ctx.active {
-            let is_inline_block = matches!(
-                box_data.computed_style.display.as_str(),
-                "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-            );
-            let mut wrap_width = box_data.margin_box_width();
-
-            // For inline-blocks, use intrinsic_width (preferred/max-content) for wrapping decisions.
-            // An inline-block should wrap when its preferred width doesn't fit, not just min-content.
-            if is_inline_block {
-                let preferred_width = box_data
-                    .intrinsic_width
-                    .or(box_data.intrinsic_min_width)
-                    .unwrap_or(0.0);
-                if preferred_width > 0.0 {
-                    let non_content = box_data.padding.left
-                        + box_data.padding.right
-                        + box_data.margin.left
-                        + box_data.margin.right;
-                    let preferred_wrap_width = preferred_width + non_content;
-                    wrap_width = wrap_width.max(preferred_wrap_width);
+                    // display: inline - transparent wrapper, children flow directly
+                    layout_transparent_inline(child, ctx);
                 }
             }
-
-            if wrap_width > 0.0
-                && box_data.x + wrap_width
-                    > max_right
-                        + if is_inline_block { 8.0 } else { 0.01 }
-            {
-                should_wrap = true;
+            FormattingContext::BlockContainer => {
+                // Block in inline context breaks the line
+                if ctx.x > ctx.line_start_x {
+                    ctx.wrap_to_next_line();
+                }
+                // Block positioning is handled by the caller
             }
+            _ => {}
         }
-
-        if should_wrap {
-            let next_y = inline_ctx.y + inline_ctx.line_height;
-            inline_ctx.start_new_line(x_base, next_y);
-            box_data.x = inline_ctx.x;
-            box_data.y = inline_ctx.y;
-        }
-        
-        (box_data.x, box_data.y)
-    }
-    
-    /// Update layout state after laying out an inline element
-    pub fn update_state(
-        &self,
-        box_data: &LayoutBox,
-        inline_ctx: &mut InlineContext,
-        reserved_block_y: &mut f32,
-        context: &mut ReflowContext,
-    ) {
-        // If this is a text node with wrapped lines, continue from the last line.
-        let element = box_data.element.borrow();
-        if element.node_type == NodeType::Text && !element.lines.is_empty() {
-            let mut max_line_height: f32 = 0.0;
-            for line in &element.lines {
-                max_line_height = max_line_height.max(line.height);
-            }
-
-            let last_line = element.lines.last().unwrap();
-            inline_ctx.x = last_line.x + last_line.width;
-            inline_ctx.y = last_line.y;
-            inline_ctx.line_height = inline_ctx.line_height.max(max_line_height);
-            inline_ctx.active = true;
-            *reserved_block_y = (*reserved_block_y).max(last_line.y + max_line_height);
-            context.adjacent_margin_bottom = 0.0;
-            return;
-        }
-
-        // Default inline continuation for non-text or unwrapped content
-        inline_ctx.x = box_data.x + box_data.margin_box_width();
-        inline_ctx.line_height = inline_ctx.line_height.max(box_data.margin_box_height());
-        inline_ctx.active = true;
-        *reserved_block_y = (*reserved_block_y).max(box_data.y + box_data.margin_box_height());
-        context.adjacent_margin_bottom = 0.0;
     }
 }
+
+/// Layout a text node by positioning each word segment
+fn layout_text_node(node: &mut LayoutNode, ctx: &mut InlineContext) {
+    let mut element = node.box_data.element.borrow_mut();
+    if element.text_segments.is_empty() {
+        return;
+    }
+
+    let space_w = element.space_width;
+
+    for (i, seg) in element.text_segments.iter_mut().enumerate() {
+        // Determine if we need a space before this word
+        let needs_space = i > 0 || ctx.x > ctx.line_start_x;
+        let space_before = if needs_space { space_w } else { 0.0 };
+
+        // Check if this word fits on current line
+        let item_width = seg.width + space_before;
+        if should_wrap(ctx, item_width) {
+            ctx.wrap_to_next_line();
+        }
+
+        // Position this word
+        let space_to_add = if ctx.x > ctx.line_start_x { space_w } else { 0.0 };
+        seg.x = ctx.x + space_to_add;
+        seg.y = ctx.y;
+
+        // Advance inline position
+        ctx.x = seg.x + seg.width;
+        ctx.line_height = ctx.line_height.max(seg.height);
+    }
+
+    // Update box dimensions based on segments
+    if !element.text_segments.is_empty() {
+        let min_x = element.text_segments.iter().map(|s| s.x).fold(f32::MAX, f32::min);
+        let max_x = element.text_segments.iter().map(|s| s.x + s.width).fold(0.0_f32, f32::max);
+        let min_y = element.text_segments.iter().map(|s| s.y).fold(f32::MAX, f32::min);
+        let max_y = element.text_segments.iter().map(|s| s.y + s.height).fold(0.0_f32, f32::max);
+
+        drop(element);
+
+        node.box_data.x = min_x;
+        node.box_data.y = min_y;
+        node.box_data.content_width = max_x - min_x;
+        node.box_data.content_height = max_y - min_y;
+    }
+}
+
+/// Layout an atomic inline box (inline-block, etc) - cannot break internally
+///
+/// For inline-blocks, we need to:
+/// 1. Estimate width for wrap decision (using intrinsic width if available)
+/// 2. Position the box
+/// 3. Layout children to determine actual size
+/// 4. Advance context by actual size
+fn layout_atomic_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
+    // Use the best available width estimate for wrap decision
+    // Priority: explicit content_width > intrinsic_width > intrinsic_min_width > 0
+    let base_width = if node.box_data.content_width > 0.0 {
+        node.box_data.content_width
+    } else if let Some(w) = node.box_data.intrinsic_width {
+        w
+    } else if let Some(w) = node.box_data.intrinsic_min_width {
+        w
+    } else {
+        0.0
+    };
+
+    let estimated_width = base_width
+        + node.box_data.padding.left + node.box_data.padding.right
+        + node.box_data.margin.left + node.box_data.margin.right;
+
+    // Check if this box fits (with small tolerance for inline-blocks)
+    if should_wrap_with_tolerance(ctx, estimated_width, 8.0) {
+        ctx.wrap_to_next_line();
+    }
+
+    // Position the box at current inline position
+    node.box_data.x = ctx.x;
+    node.box_data.y = ctx.y;
+
+    // Note: Children will be laid out by the caller (layout_tree in pipeline.rs)
+    // The caller must call `advance_past_atomic_inline` after laying out children
+    // to properly advance the inline context.
+    //
+    // For now, we advance by estimated width. This will be corrected by the caller
+    // if the actual width differs.
+    ctx.x += estimated_width;
+
+    let height = node.box_data.margin_box_height();
+    if height > 0.0 {
+        ctx.line_height = ctx.line_height.max(height);
+    }
+}
+
+/// Advance inline context past an atomic inline box after its children have been laid out
+/// This should be called after laying out children of an inline-block
+pub fn advance_past_atomic_inline(node: &LayoutNode, ctx: &mut InlineContext) {
+    let actual_width = node.box_data.margin_box_width();
+    let height = node.box_data.margin_box_height();
+
+    // Update x to be after this element (node.box_data.x + actual_width)
+    ctx.x = node.box_data.x + actual_width;
+    ctx.line_height = ctx.line_height.max(height);
+}
+
+/// Layout a transparent inline wrapper (display: inline)
+/// Children participate directly in the inline flow
+fn layout_transparent_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
+    let start_x = ctx.x;
+    let start_y = ctx.y;
+
+    // Recurse into children - they flow as part of this inline context
+    layout_inline_content(&mut node.children, ctx);
+
+    // Position this wrapper at where it started
+    node.box_data.x = start_x;
+    node.box_data.y = start_y;
+
+    // Calculate dimensions from children
+    if !node.children.is_empty() {
+        let mut max_x: f32 = start_x;
+        let mut max_y: f32 = start_y;
+        for child in &node.children {
+            max_x = max_x.max(child.box_data.x + child.box_data.margin_box_width());
+            max_y = max_y.max(child.box_data.y + child.box_data.margin_box_height());
+        }
+        node.box_data.content_width = max_x - start_x;
+        node.box_data.content_height = max_y - start_y;
+    }
+}
+
+/// Check if an item should wrap to the next line
+#[inline]
+fn should_wrap(ctx: &InlineContext, item_width: f32) -> bool {
+    should_wrap_with_tolerance(ctx, item_width, 0.01)
+}
+
+/// Check if an item should wrap, with configurable tolerance
+#[inline]
+fn should_wrap_with_tolerance(ctx: &InlineContext, item_width: f32, tolerance: f32) -> bool {
+    let max_right = ctx.line_start_x + ctx.max_width;
+    // Only wrap if we're not at the start of a line and item doesn't fit
+    ctx.x > ctx.line_start_x && ctx.x + item_width > max_right + tolerance
+}
+

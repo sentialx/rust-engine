@@ -205,20 +205,22 @@ pub fn create_browser_window(url: String) {
                         );
                     }
 
-                    if item.text_lines.len() > 0 {
+                    if item.text_segments.len() > 0 {
                         font_path = item.font_path.clone();
 
                         let color = css_color_to_piston(item.color);
 
-                        for line in &item.text_lines {
-                            let ly = line.y as f64 - render_frame.scroll_y as f64;
+                        for seg in &item.text_segments {
+                            let ly = seg.y as f64 - render_frame.scroll_y as f64;
+                            // Text y-coordinate is the baseline (top + ascent)
+                            let baseline_y = ly + seg.ascent as f64;
                             Text::new_color(color, 2 * (item.font_size) as u32)
                                 .draw(
-                                    &line.text,
+                                    &seg.text,
                                     glyphs,
                                     &c.draw_state,
                                     c.transform
-                                        .trans(line.x as f64 * zoom, (ly + (line.height as f64)) * zoom)
+                                        .trans(seg.x as f64 * zoom, baseline_y * zoom)
                                         .zoom(0.5)
                                         .zoom(zoom),
                                     g,
@@ -228,9 +230,9 @@ pub fn create_browser_window(url: String) {
                             if item.underline {
                                 rectangle(
                                     color,
-                                    [0.0, 0.0, item.width as f64, 1.0],
+                                    [0.0, 0.0, seg.width as f64, 1.0],
                                     c.transform
-                                        .trans(line.x as f64 * zoom, (ly + line.height as f64 + 1.0) * zoom)
+                                        .trans(seg.x as f64 * zoom, (baseline_y + 2.0) * zoom)
                                         .zoom(zoom),
                                     g,
                                 );
@@ -272,6 +274,27 @@ pub fn create_browser_window(url: String) {
                         c.transform.trans(computed_flow.x as f64 * zoom, el_y * zoom).zoom(zoom),
                         g,
                     );
+
+                    // Draw text segment bounds (red boxes) for this element and all children
+                    fn collect_text_segments(el: &DomElement, segments: &mut Vec<(f64, f64, f64, f64)>) {
+                        for seg in &el.text_segments {
+                            segments.push((seg.x as f64, seg.y as f64, seg.width as f64, seg.height as f64));
+                        }
+                        for child in &el.children {
+                            collect_text_segments(&child.borrow(), segments);
+                        }
+                    }
+                    let mut text_segs = Vec::new();
+                    collect_text_segments(&el, &mut text_segs);
+                    for (sx, sy, sw, sh) in text_segs {
+                        let seg_y = sy - render_frame.scroll_y as f64;
+                        rectangle(
+                            [1.0, 0.0, 0.0, 0.5], // red with 50% opacity
+                            [0.0, 0.0, sw, sh],
+                            c.transform.trans(sx * zoom, seg_y * zoom).zoom(zoom),
+                            g,
+                        );
+                    }
 
                     rectangle(
                         [1.0, 0.0, 0.5, 1.0],

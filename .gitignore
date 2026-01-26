@@ -1,5 +1,7 @@
 /target
 **/*.rs.bk
+test_fixtures/graviton_output/
+scripts/node_modules/
 index.html
 out.txt
 test.html

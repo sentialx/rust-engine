@@ -38,13 +38,17 @@ pub struct ComputedFlow {
   // pub text_lines: Vec<TextLine>,
 }
 
+/// A preprocessed text segment (word) with measured dimensions and position
 #[derive(Clone, Debug)]
-pub struct TextLine {
+pub struct TextSegment {
   pub text: String,
-  pub x: f32,
-  pub y: f32,
   pub width: f32,
   pub height: f32,
+  /// Distance from top of text box to baseline
+  pub ascent: f32,
+  // Position set during layout:
+  pub x: f32,
+  pub y: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +66,8 @@ pub struct DomElement {
   pub is_hovered: bool,
   pub computed_flow: Option<ComputedFlow>,
   pub computed_style: Option<ComputedStyle>,
-  pub lines: Vec<TextLine>,
+  pub text_segments: Vec<TextSegment>,  // Preprocessed words with positions
+  pub space_width: f32,                  // Width of space character
   pub class_list: Vec<String>,
   pub matched_styles: Vec<StyleRule>,
   pub var_contexts: Vec<CssVariablesContext>,
@@ -84,7 +89,8 @@ impl DomElement {
       computed_flow: None,
       computed_style: None,
       is_hovered: false,
-      lines: vec![],
+      text_segments: vec![],
+      space_width: 0.0,
       class_list: vec![],
       matched_styles: vec![],
       var_contexts: vec![],

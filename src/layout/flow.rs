@@ -59,18 +59,22 @@ fn get_formatting_context_impl(element: &DomElement) -> FormattingContext {
 /// Tracks inline layout state during layout
 #[derive(Clone, Debug)]
 pub struct InlineContext {
-    pub x: f32,
-    pub y: f32,
-    pub line_height: f32,
+    pub x: f32,              // Current x position
+    pub y: f32,              // Current line y
+    pub line_height: f32,    // Max height on current line
+    pub line_start_x: f32,   // Left edge for wrapping
+    pub max_width: f32,      // Available width
     pub active: bool,
 }
 
 impl InlineContext {
-    pub fn new(x_base: f32, y_base: f32) -> Self {
+    pub fn new(x_base: f32, y_base: f32, max_width: f32) -> Self {
         InlineContext {
             x: x_base,
             y: y_base,
             line_height: 0.0,
+            line_start_x: x_base,
+            max_width,
             active: false,
         }
     }
@@ -79,7 +83,14 @@ impl InlineContext {
         self.x = x_base;
         self.y = y;
         self.line_height = 0.0;
+        self.line_start_x = x_base;
         self.active = true;
+    }
+
+    pub fn wrap_to_next_line(&mut self) {
+        self.y += self.line_height;
+        self.x = self.line_start_x;
+        self.line_height = 0.0;
     }
 
     pub fn continue_line(&mut self, prev_y: f32, prev_height: f32) {
