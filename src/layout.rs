@@ -306,19 +306,38 @@ pub fn reflow(
     let max_width = sibling_context.parent_max_width;
     measure_layout_tree(&mut layout_nodes, text_measurer, max_width);
 
-    layout_tree(&mut layout_nodes, sibling_context);
-
     use crate::layout::pipeline::measure_text_after_layout;
     let layout_x_start = sibling_context.layout_x_start.unwrap_or(sibling_context.x);
-    measure_text_after_layout(&mut layout_nodes, text_measurer, max_width, layout_x_start);
+    layout_tree(&mut layout_nodes, sibling_context);
+    measure_text_after_layout(
+        &mut layout_nodes,
+        text_measurer,
+        max_width,
+        layout_x_start,
+        false,
+    );
 
     layout_tree(&mut layout_nodes, sibling_context);
 
-    measure_text_after_layout(&mut layout_nodes, text_measurer, max_width, layout_x_start);
+    measure_text_after_layout(
+        &mut layout_nodes,
+        text_measurer,
+        max_width,
+        layout_x_start,
+        false,
+    );
 
     layout_tree(&mut layout_nodes, sibling_context);
 
-    measure_text_after_layout(&mut layout_nodes, text_measurer, max_width, layout_x_start);
+    measure_text_after_layout(
+        &mut layout_nodes,
+        text_measurer,
+        max_width,
+        layout_x_start,
+        false,
+    );
+
+    layout_tree(&mut layout_nodes, sibling_context);
 
     finalize_layout_tree(&layout_nodes);
 }
@@ -353,7 +372,7 @@ pub fn wrap_text(
         let new_line_width = lw + space_width + word_size.0;
         let line_offset = (lx - layout_x_start).max(0.0);
 
-        if !line.is_empty() && line_offset + new_line_width > max_width {
+        if !line.is_empty() && line_offset + new_line_width > max_width - 0.01 {
             let line_size = text_measurer.measure(&line, font_size, &font_path);
             lines.push(TextLine {
                 text: line.clone(),
