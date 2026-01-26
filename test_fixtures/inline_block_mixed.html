@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x200">
+  <style>
+    body { margin: 0; }
+    .container {
+      display: block;
+      width: 300px;
+      background: #eeeeee;
+    }
+    .inline {
+      display: inline;
+      background: #cccccc;
+    }
+    .inline-block {
+      display: inline-block;
+      width: 40px;
+      height: 25px;
+      background: #999999;
+    }
+    /* Give inline elements visible size */
+    .word {
+      display: inline-block;
+      width: 50px;
+      height: 20px;
+      background: #bbbbbb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="word"></span>
+    <span class="inline-block"></span>
+    <span class="word"></span>
+    <span class="inline-block"></span>
+    <span class="word"></span>
+  </div>
+</body>
+</html>

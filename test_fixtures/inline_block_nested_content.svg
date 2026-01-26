@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250">
+  <rect x="0" y="0" width="400" height="250" fill="white"/>
+  <rect x="0" y="0" width="400" height="198" fill="rgba(0,0,0,0)"/>
+  <rect x="0" y="0" width="400" height="198" fill="rgba(238,238,238,1)" data-class="container"/>
+  <rect x="5" y="5" width="140" height="85" fill="rgba(204,204,204,1)" data-class="card"/>
+  <rect x="15" y="15" width="120" height="20" fill="rgba(153,153,153,1)" data-class="header"/>
+  <rect x="15" y="40" width="120" height="40" fill="rgba(187,187,187,1)" data-class="body"/>
+  <rect x="159" y="5" width="140" height="85" fill="rgba(204,204,204,1)" data-class="card"/>
+  <rect x="169" y="15" width="120" height="20" fill="rgba(153,153,153,1)" data-class="header"/>
+  <rect x="169" y="40" width="120" height="40" fill="rgba(187,187,187,1)" data-class="body"/>
+  <rect x="5" y="104" width="140" height="85" fill="rgba(204,204,204,1)" data-class="card"/>
+  <rect x="15" y="114" width="120" height="20" fill="rgba(153,153,153,1)" data-class="header"/>
+  <rect x="15" y="139" width="120" height="40" fill="rgba(187,187,187,1)" data-class="body"/>
+</svg>

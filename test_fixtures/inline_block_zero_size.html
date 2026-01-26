@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="300x150">
+  <style>
+    body { margin: 0; }
+    .container {
+      display: block;
+      background: #eeeeee;
+    }
+    .normal {
+      display: inline-block;
+      width: 50px;
+      height: 30px;
+      background: #cccccc;
+    }
+    .zero-width {
+      display: inline-block;
+      width: 0;
+      height: 30px;
+      background: #999999;
+    }
+    .zero-height {
+      display: inline-block;
+      width: 50px;
+      height: 0;
+      background: #999999;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="normal"></span>
+    <span class="zero-width"></span>
+    <span class="normal"></span>
+    <span class="zero-height"></span>
+    <span class="normal"></span>
+  </div>
+</body>
+</html>

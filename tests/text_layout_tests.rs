@@ -1,9 +1,14 @@
-/// Tests for text preprocessing and layout
+/// Tests for text preprocessing
 ///
-/// These tests verify the unified inline layout system:
-/// - Text preprocessing into segments (words)
-/// - Text segment positioning during layout
-/// - Text wrapping behavior
+/// These tests verify text preprocessing functionality:
+/// - Text splitting into word segments
+/// - Word measurement (width, height, ascent)
+/// - Space width calculation
+/// - HTML entity handling
+///
+/// NOTE: Layout positioning tests (wrapping, inline-block positioning, etc.)
+/// are done via Chromium baseline comparison in layout_comparison_tests.rs.
+/// See AGENTS.md for guidelines on layout testing.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -174,145 +179,6 @@ fn test_text_preprocessing_handles_html_entities() {
     assert!(all_text.contains("<"), "Should convert &lt; to <");
 }
 
-// =============================================================================
-// Text Positioning Tests
-// =============================================================================
-
-#[test]
-fn test_text_segments_positioned_horizontally() {
-    let html = r#"<body><div>AA BB CC</div></body>"#;
-    let (mut tree, _) = setup_dom(html, "");
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let text_node = find_text_node(&tree).expect("Should find text node");
-    let el = text_node.borrow();
-
-    assert_eq!(el.text_segments.len(), 3);
-
-    // First word at x=0
-    assert_eq!(el.text_segments[0].x, 0.0, "First word should start at x=0");
-
-    // Second word after first word + space
-    // "AA" = 20px, space = 10px, so "BB" starts at 30px
-    let expected_x1 = 20.0 + 10.0;
-    assert_eq!(el.text_segments[1].x, expected_x1, "Second word should be after first + space");
-
-    // Third word after second word + space
-    // 30 + 20 (BB) + 10 (space) = 60
-    let expected_x2 = expected_x1 + 20.0 + 10.0;
-    assert_eq!(el.text_segments[2].x, expected_x2, "Third word should be after second + space");
-}
-
-#[test]
-fn test_text_segments_same_y_position() {
-    let html = r#"<body><div>One Two Three</div></body>"#;
-    let (mut tree, _) = setup_dom(html, "");
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let text_node = find_text_node(&tree).expect("Should find text node");
-    let el = text_node.borrow();
-
-    // All words on same line should have same y
-    let y0 = el.text_segments[0].y;
-    assert_eq!(el.text_segments[1].y, y0, "All words should be on same line");
-    assert_eq!(el.text_segments[2].y, y0, "All words should be on same line");
-}
-
-// =============================================================================
-// Text Wrapping Tests
-// =============================================================================
-
-#[test]
-fn test_text_wraps_when_exceeds_width() {
-    let html = r#"<body><div class="narrow">AAAA BBBB CCCC</div></body>"#;
-    let css = r#".narrow { width: 60px; }"#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let text_node = find_text_node(&tree).expect("Should find text node");
-    let el = text_node.borrow();
-
-    // Each word is 40px (4 chars * 10px)
-    // Container is 60px wide
-    // "AAAA" (40px) fits on line 1
-    // "BBBB" (40px) doesn't fit (40+10+40=90 > 60), wraps to line 2
-    // "CCCC" (40px) doesn't fit on line 2 (40+10+40=90 > 60), wraps to line 3
-
-    assert_eq!(el.text_segments.len(), 3);
-
-    // Each word should be on a different line (different y values)
-    let y0 = el.text_segments[0].y;
-    let y1 = el.text_segments[1].y;
-    let y2 = el.text_segments[2].y;
-
-    assert!(y1 > y0, "Second word should wrap to next line (y1={} > y0={})", y1, y0);
-    assert!(y2 > y1, "Third word should wrap to next line (y2={} > y1={})", y2, y1);
-}
-
-#[test]
-fn test_wrapped_lines_start_at_container_edge() {
-    let html = r#"<body><div class="narrow">AAAA BBBB</div></body>"#;
-    let css = r#".narrow { width: 60px; }"#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let text_node = find_text_node(&tree).expect("Should find text node");
-    let el = text_node.borrow();
-
-    // Second word wraps and should start at x=0 (container left edge)
-    let x0 = el.text_segments[0].x;
-    let x1 = el.text_segments[1].x;
-
-    assert_eq!(x1, x0, "Wrapped line should start at same x as first line (x0={}, x1={})", x0, x1);
-}
-
-#[test]
-fn test_multiple_words_fit_on_same_line() {
-    let html = r#"<body><div class="wide">AA BB CC DD</div></body>"#;
-    let css = r#".wide { width: 200px; }"#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let text_node = find_text_node(&tree).expect("Should find text node");
-    let el = text_node.borrow();
-
-    // Each word is 20px, space is 10px
-    // Total: 20 + 10 + 20 + 10 + 20 + 10 + 20 = 110px < 200px
-    // All words should fit on one line
-
-    assert_eq!(el.text_segments.len(), 4);
-
-    let y0 = el.text_segments[0].y;
-    for (i, seg) in el.text_segments.iter().enumerate() {
-        assert_eq!(seg.y, y0, "Word {} should be on same line", i);
-    }
-}
-
-#[test]
-fn test_text_wrapping_respects_padding() {
-    let html = r#"<body><div class="padded">AAAA BBBB</div></body>"#;
-    let css = r#".padded { width: 100px; padding: 10px; }"#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let text_node = find_text_node(&tree).expect("Should find text node");
-    let el = text_node.borrow();
-
-    // Container starts at x=0, padding is 10px
-    // Text content area starts at x=10
-    let first_word_x = el.text_segments[0].x;
-
-    // First word should start exactly at left padding edge
-    assert_eq!(first_word_x, 10.0, "First word should start at padding edge (x={})", first_word_x);
-
-    // Content width is 100px, so available text width is 100px
-    // Each word is 40px (4 chars * 10px), space is 10px
-    // 40 + 10 + 40 = 90px fits in 100px, so both words on same line
-    assert_eq!(el.text_segments.len(), 2);
-    let y0 = el.text_segments[0].y;
-    let y1 = el.text_segments[1].y;
-    assert_eq!(y0, y1, "Both words should fit on same line within padding");
-}
 
 // =============================================================================
 // Edge Cases
@@ -355,175 +221,64 @@ fn test_single_word() {
 
     assert_eq!(el.text_segments.len(), 1);
     assert_eq!(el.text_segments[0].text, "Hello");
-    assert_eq!(el.text_segments[0].x, 0.0, "Single word should start at x=0");
+    assert_eq!(el.text_segments[0].width, 50.0, "Hello should be 50px wide (5 chars)");
 }
 
 #[test]
-fn test_long_word_exceeds_container() {
-    let html = r#"<body><div class="tiny">ABCDEFGHIJ</div></body>"#;
-    let css = r#".tiny { width: 50px; }"#;
-    let (mut tree, _) = setup_dom(html, css);
+fn test_long_word_measurement() {
+    let html = r#"<body><div>ABCDEFGHIJ</div></body>"#;
+    let (mut tree, _) = setup_dom(html, "");
     run_reflow(&mut tree, 800.0, 600.0);
 
     let text_node = find_text_node(&tree).expect("Should find text node");
     let el = text_node.borrow();
 
-    // Word is 100px (10 chars * 10px), container is 50px
-    // Word cannot be broken, should overflow
+    // Word is 100px (10 chars * 10px)
     assert_eq!(el.text_segments.len(), 1);
-    assert_eq!(el.text_segments[0].width, 100.0, "Long word should keep its width");
-    // Word should start at container edge, even if it overflows
-    assert_eq!(el.text_segments[0].x, 0.0);
+    assert_eq!(el.text_segments[0].width, 100.0, "Long word should be measured correctly");
+    assert_eq!(el.text_segments[0].height, 20.0);
 }
+
+
 
 // =============================================================================
-// Inline-Block Positioning Tests
-// =============================================================================
-
-#[test]
-fn test_inline_blocks_dont_overlap() {
-    let html = r#"<body><div class="container"><span class="item"></span><span class="item"></span><span class="item"></span></div></body>"#;
-    let css = r#"
-        .container { display: block; }
-        .item { display: inline-block; width: 50px; height: 30px; }
-    "#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    // Find the container
-    let container = find_by_class(&tree, "container").expect("Should find container");
-    let container_el = container.borrow();
-
-    // Get all items (should be 3)
-    let items: Vec<_> = container_el.children.iter()
-        .filter(|c| c.borrow().class_list.contains(&"item".to_string()))
-        .collect();
-
-    assert_eq!(items.len(), 3, "Should have 3 inline-block items");
-
-    // Check that items don't overlap
-    let item1_flow = items[0].borrow().computed_flow.clone().expect("Item should have computed flow");
-    let item2_flow = items[1].borrow().computed_flow.clone().expect("Item should have computed flow");
-    let item3_flow = items[2].borrow().computed_flow.clone().expect("Item should have computed flow");
-
-    // Each item is 50px wide
-    // Item 2 should start after item 1 ends
-    assert!(
-        item2_flow.x >= item1_flow.x + item1_flow.width,
-        "Item 2 (x={}) should not overlap with item 1 (x={}, width={})",
-        item2_flow.x, item1_flow.x, item1_flow.width
-    );
-
-    // Item 3 should start after item 2 ends
-    assert!(
-        item3_flow.x >= item2_flow.x + item2_flow.width,
-        "Item 3 (x={}) should not overlap with item 2 (x={}, width={})",
-        item3_flow.x, item2_flow.x, item2_flow.width
-    );
-}
-
-#[test]
-fn test_inline_blocks_horizontal_spacing() {
-    let html = r#"<body><div class="container"><span class="item"></span><span class="item"></span></div></body>"#;
-    let css = r#"
-        .container { display: block; }
-        .item { display: inline-block; width: 100px; height: 50px; }
-    "#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let container = find_by_class(&tree, "container").expect("Should find container");
-    let container_el = container.borrow();
-
-    let items: Vec<_> = container_el.children.iter()
-        .filter(|c| c.borrow().class_list.contains(&"item".to_string()))
-        .collect();
-
-    let item1_flow = items[0].borrow().computed_flow.clone().expect("Item should have computed flow");
-    let item2_flow = items[1].borrow().computed_flow.clone().expect("Item should have computed flow");
-
-    // Items should be positioned correctly
-    assert_eq!(item1_flow.x, 0.0, "First item should start at x=0");
-    assert!(item2_flow.x >= 100.0, "Second item should start at x>=100 (after first item), got {}", item2_flow.x);
-}
-
-#[test]
-fn test_inline_block_wrap_to_next_line() {
-    let html = r#"<body><div class="container"><span class="item"></span><span class="item"></span><span class="item"></span></div></body>"#;
-    let css = r#"
-        .container { display: block; width: 150px; }
-        .item { display: inline-block; width: 100px; height: 30px; }
-    "#;
-    let (mut tree, _) = setup_dom(html, css);
-    run_reflow(&mut tree, 800.0, 600.0);
-
-    let container = find_by_class(&tree, "container").expect("Should find container");
-    let container_el = container.borrow();
-
-    let items: Vec<_> = container_el.children.iter()
-        .filter(|c| c.borrow().class_list.contains(&"item".to_string()))
-        .collect();
-
-    assert_eq!(items.len(), 3);
-
-    let item1_flow = items[0].borrow().computed_flow.clone().expect("Item 1 should have computed flow");
-    let item2_flow = items[1].borrow().computed_flow.clone().expect("Item 2 should have computed flow");
-    let item3_flow = items[2].borrow().computed_flow.clone().expect("Item 3 should have computed flow");
-
-    // Container is 150px, items are 100px each
-    // Item 1 fits on line 1
-    // Item 2 doesn't fit (100 + 100 > 150), wraps to line 2
-    // Item 3 doesn't fit (100 + 100 > 150), wraps to line 3
-
-    // All items should start at x=0 (each on its own line)
-    assert_eq!(item1_flow.x, 0.0, "Item 1 should be at x=0");
-    assert_eq!(item2_flow.x, 0.0, "Item 2 should wrap to x=0");
-    assert_eq!(item3_flow.x, 0.0, "Item 3 should wrap to x=0");
-
-    // Items should be on different y positions (different lines)
-    assert!(item2_flow.y > item1_flow.y, "Item 2 should be on next line");
-    assert!(item3_flow.y > item2_flow.y, "Item 3 should be on next line");
-}
-
-// =============================================================================
-// Container Sizing Tests
+// Text Ascent Tests
 // =============================================================================
 
 #[test]
-fn test_container_height_matches_text_lines() {
-    let html = r#"<body><div class="narrow">AAA BBB CCC</div></body>"#;
-    let css = r#".narrow { width: 50px; }"#;
-    let (mut tree, _) = setup_dom(html, css);
+fn test_text_segments_have_ascent() {
+    let html = r#"<body><div>Hello World</div></body>"#;
+    let (mut tree, _) = setup_dom(html, "");
     run_reflow(&mut tree, 800.0, 600.0);
 
     let text_node = find_text_node(&tree).expect("Should find text node");
     let el = text_node.borrow();
 
-    // Each word is 30px (3 chars * 10px), container is 50px
-    // "AAA" (30px) fits on line 1
-    // "BBB" (30px) doesn't fit (30 + 10 + 30 = 70 > 50), wraps to line 2
-    // "CCC" (30px) doesn't fit (30 + 10 + 30 = 70 > 50), wraps to line 3
-    // Total: 3 lines, each 20px high = 60px total height
-
-    assert_eq!(el.text_segments.len(), 3, "Should have 3 words");
-
-    // Verify each word is on a different line
-    let y0 = el.text_segments[0].y;
-    let y1 = el.text_segments[1].y;
-    let y2 = el.text_segments[2].y;
-
-    assert!(y1 > y0, "Word 2 should be on line 2");
-    assert!(y2 > y1, "Word 3 should be on line 3");
-
-    // Calculate total height from segments
-    let max_bottom = el.text_segments.iter()
-        .map(|s| s.y + s.height)
-        .fold(0.0_f32, f32::max);
-    let min_top = el.text_segments.iter()
-        .map(|s| s.y)
-        .fold(f32::MAX, f32::min);
-    let text_height = max_bottom - min_top;
-
-    // 3 lines * 20px = 60px
-    assert_eq!(text_height, 60.0, "Text should span exactly 3 lines (height={})", text_height);
+    // MockTextMeasurer returns ascent of 16.0 (80% of 20px height)
+    for seg in &el.text_segments {
+        assert_eq!(seg.ascent, 16.0, "Segment '{}' should have ascent of 16.0", seg.text);
+    }
 }
+
+#[test]
+fn test_ascent_used_for_baseline() {
+    // Ascent determines where the baseline is within the text box
+    // baseline_y = seg.y + seg.ascent
+    let html = r#"<body><div>Test</div></body>"#;
+    let (mut tree, _) = setup_dom(html, "");
+    run_reflow(&mut tree, 800.0, 600.0);
+
+    let text_node = find_text_node(&tree).expect("Should find text node");
+    let el = text_node.borrow();
+
+    let seg = &el.text_segments[0];
+    let baseline_y = seg.y + seg.ascent;
+
+    // Baseline should be within the text box
+    assert!(baseline_y > seg.y, "Baseline should be below top of text box");
+    assert!(baseline_y < seg.y + seg.height, "Baseline should be above bottom of text box");
+
+    // With height=20 and ascent=16, baseline is at y+16, which leaves 4px for descenders
+    assert_eq!(seg.height - seg.ascent, 4.0, "Should have 4px below baseline for descenders");
+}
+
