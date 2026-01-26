@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, fs, rc::Rc, time::Instant};
 
 use piston_window::graphics::character::CharacterCache;
+use rusttype::Scale;
 
 use crate::{
     css::parse_css,
@@ -43,7 +44,12 @@ pub struct RenderFrame<'a> {
 }
 
 pub trait TextMeasurer {
+    /// Measure text, returning (width, height)
     fn measure(&mut self, text: &str, font_size: f32, font_family: &str) -> (f32, f32);
+
+    /// Get the ascent (distance from baseline to top) for a font at given size
+    /// Returns the ascent value that should be added to the top y to get baseline y
+    fn ascent(&mut self, font_size: f32, font_family: &str) -> f32;
 }
 
 pub struct GlyphsTextMeasurer<'a> {
@@ -54,10 +60,34 @@ impl TextMeasurer for GlyphsTextMeasurer<'_> {
     fn measure(&mut self, text: &str, font_size: f32, font_family: &str) -> (f32, f32) {
         let mut glyphs_map = self.glyphs_map.borrow_mut();
         let glyphs = glyphs_map.get_mut(font_family).unwrap();
-        return (
-            0.5 * glyphs.width(2 * (font_size) as u32, text).unwrap() as f32,
-            font_size + 8.0,
-        );
+
+        // Get width from glyph cache
+        let width = 0.5 * glyphs.width(2 * (font_size) as u32, text).unwrap() as f32;
+
+        // Get height from actual font metrics
+        // We use 2x font size in rendering, then scale down by 0.5
+        let scale = Scale::uniform(2.0 * font_size);
+        let v_metrics = glyphs.font.v_metrics(scale);
+        // height = ascent - descent (descent is negative, so this adds them)
+        let height = (v_metrics.ascent - v_metrics.descent) * 0.5;
+
+        (width, height)
+    }
+
+    fn ascent(&mut self, font_size: f32, font_family: &str) -> f32 {
+        let mut glyphs_map = self.glyphs_map.borrow_mut();
+        if let Some(glyphs) = glyphs_map.get_mut(font_family) {
+            // Get actual font metrics from rusttype
+            // We use 2x font size in rendering, then scale down by 0.5
+            let scale = Scale::uniform(2.0 * font_size);
+            let v_metrics = glyphs.font.v_metrics(scale);
+            // Small adjustment: font ascent includes space for tall glyphs (Á),
+            // but typical text sits slightly lower. Add 2px to baseline.
+            v_metrics.ascent * 0.5 + 2.0
+        } else {
+            // Fallback
+            font_size * 0.8
+        }
     }
 }
 

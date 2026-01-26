@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x300">
+  <style>
+    body { margin: 8px; }
+    .container {
+      display: block;
+      width: 200px;
+      background: #eeeeee;
+    }
+    .word {
+      display: inline;
+      background: #cccccc;
+      margin-right: 4px;
+    }
+    /* Use pseudo-elements to give inline elements visible size */
+    .word::before {
+      content: "\00a0\00a0\00a0\00a0\00a0";
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="word"></span>
+    <span class="word"></span>
+    <span class="word"></span>
+    <span class="word"></span>
+    <span class="word"></span>
+  </div>
+</body>
+</html>

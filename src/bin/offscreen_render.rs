@@ -100,37 +100,51 @@ fn render_to_svg(render_frame: &RenderFrame) -> String {
 
     for item in &render_frame.render_array {
         if item.background_color != (0.0, 0.0, 0.0, 0.0) {
+            // Extract class name from element if available
+            let class_attr = item
+                .element
+                .as_ref()
+                .map(|el| {
+                    let el = el.borrow();
+                    el.class_list.join(" ")
+                })
+                .filter(|s| !s.is_empty())
+                .map(|c| format!(" data-class=\"{}\"", c))
+                .unwrap_or_default();
+
             svg.push_str(&format!(
-                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" />",
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"{}/>",
                 item.x,
                 item.y,
                 item.width,
                 item.height,
-                color_to_rgba(item.background_color)
+                color_to_rgba(item.background_color),
+                class_attr
             ));
         }
 
-        if !item.text_lines.is_empty() {
+        if !item.text_segments.is_empty() {
             let font_family = font_family_from_path(&item.font_path);
             let font_weight = font_weight_from_path(&item.font_path);
             let text_color = color_to_rgba(item.color);
             let decoration = if item.underline { "underline" } else { "none" };
 
-            for line in &item.text_lines {
-                if line.text.is_empty() {
+            for seg in &item.text_segments {
+                if seg.text.is_empty() {
                     continue;
                 }
-                let y = line.y + line.height;
+                // SVG text y-coordinate is the baseline (top + ascent)
+                let y = seg.y + seg.ascent;
                 svg.push_str(&format!(
                     "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\" text-decoration=\"{}\">{}</text>",
-                    line.x,
+                    seg.x,
                     y,
                     font_family,
                     item.font_size,
                     font_weight,
                     text_color,
                     decoration,
-                    escape_xml(&line.text)
+                    escape_xml(&seg.text)
                 ));
             }
         }
@@ -178,24 +192,24 @@ fn dump_layout(tree: &Vec<Rc<RefCell<graviton::html::DomElement>>>, depth: usize
             if let Some(flow) = &el.computed_flow {
                 let text_preview = el.node_value.replace('\n', "\\n");
                 println!(
-                    "{}#text \"{}\" x={} y={} w={} h={} lines={}",
+                    "{}#text \"{}\" x={} y={} w={} h={} segments={}",
                     "  ".repeat(depth),
                     text_preview,
                     flow.x,
                     flow.y,
                     flow.width,
                     flow.height,
-                    el.lines.len()
+                    el.text_segments.len()
                 );
-                for line in &el.lines {
+                for seg in &el.text_segments {
                     println!(
-                        "{}  line \"{}\" x={} y={} w={} h={}",
+                        "{}  seg \"{}\" x={} y={} w={} h={}",
                         "  ".repeat(depth),
-                        line.text.replace('\n', "\\n"),
-                        line.x,
-                        line.y,
-                        line.width,
-                        line.height
+                        seg.text.replace('\n', "\\n"),
+                        seg.x,
+                        seg.y,
+                        seg.width,
+                        seg.height
                     );
                 }
             }
