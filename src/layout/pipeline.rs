@@ -1,10 +1,23 @@
 // Layout pipeline - Build, Measure, Layout, Finalize passes
+//
+// This module orchestrates the layout process through four passes:
+// 1. Build: Convert DOM tree to layout box tree
+// 2. Measure: Preprocess text and compute intrinsic sizes
+// 3. Layout: Position elements using formatting context strategies
+// 4. Finalize: Copy results back to DOM
+//
+// Display-specific logic is delegated to:
+// - block.rs: Block formatting context
+// - inline.rs: Inline formatting context
 
 use crate::html::{DomElement, NodeType, ComputedFlow, TextSegment};
 use crate::render_frame::TextMeasurer;
 use crate::styles::ScalarEvaluationContext;
 use crate::layout::{Rect, boxes::{LayoutBox, LayoutNode}};
-use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, InlineContext};
+use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, InlineContext, uses_absolute_positioning};
+use crate::layout::block::{BlockLayoutStrategy, compute_block_auto_width, compute_block_content_y, compute_block_height_from_children};
+use crate::layout::inline::{layout_inline_content, advance_past_atomic_inline, is_shrink_to_fit_display, is_atomic_inline_display, compute_shrink_to_fit_width, compute_inline_content_y, min_intrinsic_text_width};
+use crate::layout::abspos::AbsoluteLayoutStrategy;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -322,41 +335,6 @@ pub fn measure_layout_tree(
     }
 }
 
-fn max_intrinsic_text_width(node: &LayoutNode) -> f32 {
-    if node.box_data.formatting_context == FormattingContext::TextNode {
-        return node.box_data.intrinsic_width.unwrap_or(0.0);
-    }
-
-    node.children
-        .iter()
-        .map(max_intrinsic_text_width)
-        .fold(0.0_f32, |acc, w| acc.max(w))
-}
-
-fn min_intrinsic_text_width(node: &LayoutNode) -> f32 {
-    if node.box_data.formatting_context == FormattingContext::TextNode {
-        return node.box_data.intrinsic_min_width.unwrap_or(0.0);
-    }
-
-    node.children
-        .iter()
-        .map(min_intrinsic_text_width)
-        .fold(0.0_f32, |acc, w| acc.max(w))
-}
-
-fn has_breakable_text(element: &DomElement) -> bool {
-    if element.node_type == NodeType::Text {
-        return element.text_segments.len() > 1;
-    }
-
-    for child in &element.children {
-        if has_breakable_text(&child.borrow()) {
-            return true;
-        }
-    }
-
-    false
-}
 
 /// Layout pass: Assign positions and sizes using formatting context strategies
 /// Text segments and inline elements are positioned by the unified inline layout algorithm
@@ -364,11 +342,6 @@ pub fn layout_tree(
     layout_nodes: &mut Vec<LayoutNode>,
     context: &ReflowContext,
 ) -> (f32, f32) { // Returns (reserved_block_y, adjacent_margin_bottom)
-    use crate::layout::block::BlockLayoutStrategy;
-    use crate::layout::inline::{layout_inline_content, advance_past_atomic_inline};
-    use crate::layout::abspos::AbsoluteLayoutStrategy;
-    use crate::layout::flow::uses_absolute_positioning;
-
     let block_strategy = BlockLayoutStrategy;
     let abspos_strategy = AbsoluteLayoutStrategy;
 
@@ -436,10 +409,7 @@ pub fn layout_tree(
                 FormattingContext::InlineContainer | FormattingContext::TextNode => {
                     // Check if this is an atomic inline (inline-block) that needs ctx update after children
                     is_atomic_inline = formatting_context == FormattingContext::InlineContainer
-                        && matches!(
-                            node.box_data.computed_style.display.as_str(),
-                            "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                        );
+                        && is_atomic_inline_display(&node.box_data.computed_style.display);
 
                     // Use unified inline layout - handles text segments and inline elements
                     let mut single_node = std::slice::from_mut(node);
@@ -477,25 +447,7 @@ pub fn layout_tree(
             .max(0.0);
 
         // For block elements with auto width, fill the available content width
-        let width_is_auto = {
-            let element = node.box_data.element.borrow();
-            let inherited_style = element.inherited_style.as_ref().unwrap();
-            !inherited_style.width.has_numeric_value()
-        };
-
-        if width_is_auto
-            && matches!(
-                node.box_data.computed_style.display.as_str(),
-                "block" | "list-item" | "table"
-            )
-            && !context.shrink_to_fit
-        {
-            let auto_width = (context.parent_max_width
-                - node.box_data.margin.left
-                - node.box_data.margin.right
-                - node.box_data.padding.left
-                - node.box_data.padding.right)
-                .max(0.0);
+        if let Some(auto_width) = compute_block_auto_width(&node.box_data, context) {
             node.box_data.content_width = auto_width;
         }
 
@@ -507,27 +459,13 @@ pub fn layout_tree(
                 inherited_style.width.has_numeric_value()
             };
 
-            let child_shrink_to_fit = matches!(
-                node.box_data.computed_style.display.as_str(),
-                "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-            );
-            let node_is_shrink_to_fit = matches!(
-                node.box_data.computed_style.display.as_str(),
-                "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-            );
+            let display = node.box_data.computed_style.display.clone();
+            let node_is_shrink_to_fit = is_shrink_to_fit_display(&display);
+
             // If this node has explicit width, don't propagate shrink_to_fit to children
-            // because children should fill the explicit width, not shrink to content
-            let effective_shrink_to_fit = if node_has_explicit_width {
-                false
-            } else {
-                child_shrink_to_fit
-            };
-            // If this node has explicit width, it's not shrink-to-fit for child layout purposes
-            let effective_node_is_shrink_to_fit = if node_has_explicit_width {
-                false
-            } else {
-                node_is_shrink_to_fit
-            };
+            let effective_shrink_to_fit = if node_has_explicit_width { false } else { node_is_shrink_to_fit };
+            let effective_node_is_shrink_to_fit = if node_has_explicit_width { false } else { node_is_shrink_to_fit };
+
             let parent_is_shrink_to_fit = context.shrink_to_fit || effective_node_is_shrink_to_fit;
             let parent_content_width = if parent_is_shrink_to_fit {
                 available_content_width
@@ -537,36 +475,13 @@ pub fn layout_tree(
                 available_content_width
             };
 
-            // Calculate content y
-            // For block containers, box_data.y already includes margin (it's the border-box position)
-            // For inline elements, box_data.y is the content position, so we need to add margin
-            let is_block = matches!(
-                node.box_data.formatting_context,
-                FormattingContext::BlockContainer
-            );
-
-            // Margin collapsing: when a block has no padding.top, its margin collapses
-            // with the first child's margin. We pass the parent's margin to children
-            // so they can compute the collapsed margin.
-            let can_collapse_margin = is_block && node.box_data.padding.top == 0.0;
-            let collapsible_margin = if can_collapse_margin {
-                node.box_data.margin.top
+            // Calculate content_y based on formatting context
+            let is_block = matches!(node.box_data.formatting_context, FormattingContext::BlockContainer);
+            let (content_y, collapsible_margin) = if is_block {
+                let (y, margin, _) = compute_block_content_y(&node.box_data);
+                (y, margin)
             } else {
-                0.0
-            };
-
-            let content_y = if is_block {
-                // Block: y is border-box position, content starts after padding
-                // If margin can collapse, subtract the parent's margin from y
-                // so the child's margin starts from the correct position
-                if can_collapse_margin {
-                    node.box_data.y + node.box_data.padding.top - node.box_data.margin.top
-                } else {
-                    node.box_data.y + node.box_data.padding.top
-                }
-            } else {
-                // Inline: y is content position, add margin and padding
-                node.box_data.y + node.box_data.margin.top + node.box_data.padding.top
+                (compute_inline_content_y(&node.box_data), 0.0)
             };
 
             let child_context = ReflowContext {
@@ -599,127 +514,47 @@ pub fn layout_tree(
             layout_tree(&mut node.children, &child_context);
 
             // Update parent width/height from children if not explicitly set
-            let element = node.box_data.element.borrow();
-            let inherited_style = element.inherited_style.as_ref().unwrap();
+            let width_has_value = {
+                let element = node.box_data.element.borrow();
+                let inherited_style = element.inherited_style.as_ref().unwrap();
+                inherited_style.width.has_numeric_value()
+            };
+            let height_has_value = {
+                let element = node.box_data.element.borrow();
+                let inherited_style = element.inherited_style.as_ref().unwrap();
+                inherited_style.height.has_numeric_value()
+            };
 
-            if !inherited_style.width.has_numeric_value() {
-                let display = node.box_data.computed_style.display.as_str();
-                let is_shrink_to_fit = matches!(
-                    display,
-                    "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                );
-
-                if is_shrink_to_fit || context.shrink_to_fit {
-                    // Reset content_width and recompute from children
-                    // This is needed because text wrapping may have reduced child widths
-                    node.box_data.content_width = 0.0;
-                    for child in &node.children {
-                        // For all children, box_data.x is the margin box left position
-                        // margin_box_width() gives the full margin box width
-                        let child_x = child.box_data.x;
-                        let mut child_right = child_x + child.box_data.margin_box_width();
-                        if matches!(
-                            display,
-                            "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                        ) && child.box_data.formatting_context == FormattingContext::TextNode
-                        {
-                            if let Some(intrinsic_width) = child.box_data.intrinsic_width {
-                                let non_content = child.box_data.padding.left
-                                    + child.box_data.padding.right
-                                    + child.box_data.margin.left
-                                    + child.box_data.margin.right;
-                                child_right = child_x + intrinsic_width + non_content;
-                            }
-                        }
-                        if matches!(
-                            child.box_data.computed_style.display.as_str(),
-                            "block" | "list-item" | "table"
-                        ) && child.box_data.computed_style.width <= 0.0
-                        {
-                            let max_text_width = max_intrinsic_text_width(child);
-                            if max_text_width > 0.0 {
-                                let non_content = child.box_data.padding.left
-                                    + child.box_data.padding.right
-                                    + child.box_data.margin.left
-                                    + child.box_data.margin.right;
-                                child_right =
-                                    child_right.max(child_x + max_text_width + non_content);
-                            }
-                        }
-                        // content_width excludes padding; measure from content box left
-                        let content_left = node.box_data.x
-                            + node.box_data.margin.left
-                            + node.box_data.padding.left;
-                        node.box_data.content_width = node.box_data.content_width.max(
-                            child_right - content_left
-                        );
-                    }
+            if !width_has_value {
+                if is_shrink_to_fit_display(&display) || context.shrink_to_fit {
+                    // Compute shrink-to-fit width from children
+                    node.box_data.content_width = compute_shrink_to_fit_width(
+                        node,
+                        &node.children,
+                        max_content_width_for_line,
+                        context.shrink_to_fit,
+                    );
                     let min_content_width = min_intrinsic_text_width(node);
                     if min_content_width > 0.0 {
                         node.box_data.intrinsic_min_width = Some(min_content_width);
                     }
-                    if context.shrink_to_fit
-                        && !matches!(
-                            display,
-                            "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                        )
-                    {
-                        node.box_data.content_width =
-                            node.box_data.content_width.min(max_content_width_for_line);
-                    } else if matches!(
-                        display,
-                        "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                    ) {
-                        let has_breaks = {
-                            let element = node.box_data.element.borrow();
-                            has_breakable_text(&element)
-                        };
-                        if has_breaks {
-                            node.box_data.content_width = node
-                                .box_data
-                                .content_width
-                                .min(max_content_width_for_line);
-                        }
-                    }
                 } else {
-                    // Keep block auto width (already set earlier), but clamp defensively.
+                    // Keep block auto width (already set earlier), but clamp defensively
                     node.box_data.content_width =
                         node.box_data.content_width.min(available_content_width);
                 }
             }
 
-            if !inherited_style.height.has_numeric_value() {
-                // Reset content_height and recompute from children
-                node.box_data.content_height = 0.0;
-                for child in &node.children {
-                    // For inline elements, box_data.y is the margin box position
-                    // For block elements, box_data.y is the border box position
-                    let child_is_block = matches!(
-                        child.box_data.formatting_context,
-                        FormattingContext::BlockContainer
-                    );
-                    let child_bottom = if child_is_block {
-                        // Block: y is border box, add border_box_height + margin.bottom
-                        child.box_data.y + child.box_data.border_box_height() + child.box_data.margin.bottom
-                    } else {
-                        // Inline: y is margin box top, margin_box_height gives full height
-                        child.box_data.y + child.box_data.margin_box_height()
-                    };
-                    // content_height excludes padding; measure from content box top
-                    node.box_data.content_height = node.box_data.content_height.max(
-                        child_bottom - content_y
-                    );
-                }
+            if !height_has_value {
+                // Compute height from children
+                node.box_data.content_height = compute_block_height_from_children(
+                    &node.children,
+                    content_y,
+                );
             }
 
             // Second pass: after shrink-to-fit width is known, let block children fill it.
-            if !inherited_style.width.has_numeric_value()
-                && matches!(
-                    node.box_data.computed_style.display.as_str(),
-                    "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                )
-                && node_is_shrink_to_fit
-            {
+            if !width_has_value && is_atomic_inline_display(&display) && node_is_shrink_to_fit {
                 let relayout_context = ReflowContext {
                     x: content_x,
                     y: content_y,
@@ -749,23 +584,12 @@ pub fn layout_tree(
 
                 layout_tree(&mut node.children, &relayout_context);
 
-                if !inherited_style.height.has_numeric_value() {
-                    // Recompute height after relayout.
-                    node.box_data.content_height = 0.0;
-                    for child in &node.children {
-                        let child_is_block = matches!(
-                            child.box_data.formatting_context,
-                            FormattingContext::BlockContainer
-                        );
-                        let child_bottom = if child_is_block {
-                            child.box_data.y + child.box_data.border_box_height() + child.box_data.margin.bottom
-                        } else {
-                            child.box_data.y + child.box_data.margin_box_height()
-                        };
-                        node.box_data.content_height = node.box_data.content_height.max(
-                            child_bottom - content_y
-                        );
-                    }
+                if !height_has_value {
+                    // Recompute height after relayout
+                    node.box_data.content_height = compute_block_height_from_children(
+                        &node.children,
+                        content_y,
+                    );
                 }
             }
         }
@@ -777,7 +601,10 @@ pub fn layout_tree(
             reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
         }
 
-        prev_node_opt = Some(node);
+        // Only track block elements as prev_node for block stacking
+        if formatting_context == FormattingContext::BlockContainer {
+            prev_node_opt = Some(node);
+        }
     }
 
     (reserved_block_y, adjacent_margin_bottom)

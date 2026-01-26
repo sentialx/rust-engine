@@ -1,10 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
   <rect x="0" y="0" width="400" height="200" fill="white"/>
-  <rect x="0" y="0" width="400" height="25" fill="rgba(0,0,0,0)"/>
+  <rect x="0" y="0" width="400" height="125" fill="rgba(0,0,0,0)"/>
   <rect x="0" y="0" width="300" height="25" fill="rgba(238,238,238,1)" data-class="container"/>
   <rect x="0" y="0" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
   <rect x="50" y="0" width="40" height="25" fill="rgba(153,153,153,1)" data-class="inline-block"/>
   <rect x="90" y="0" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
   <rect x="140" y="0" width="40" height="25" fill="rgba(153,153,153,1)" data-class="inline-block"/>
   <rect x="180" y="0" width="50" height="20" fill="rgba(187,187,187,1)" data-class="word"/>
+  <rect x="0" y="25" width="220" height="100" fill="rgba(221,221,221,1)" data-class="inline-then-block"/>
+  <rect x="10" y="35" width="60" height="20" fill="rgba(187,187,187,1)" data-class="inline-placeholder"/>
+  <rect x="10" y="60" width="200" height="25" fill="rgba(153,153,153,1)" data-class="block-after-inline"/>
+  <rect x="10" y="90" width="200" height="25" fill="rgba(153,153,153,1)" data-class="block-after-inline"/>
 </svg>

@@ -117,7 +117,7 @@ pub fn create_browser_window(url: String) {
             }
         };
 
-        // scroll event
+        // scroll event - rebuild render array with new viewport
         if let Some(args) = event.mouse_scroll_args() {
             render_frame.scroll_y -= args[1] as f32 * 1.0;
             render_frame.fast_render();
@@ -135,7 +135,6 @@ pub fn create_browser_window(url: String) {
 
         if pressed_down || pressed_up {
             render_frame.fast_render();
-            // println!("items: {:?}", render_array);
         }
 
         // on resize
@@ -202,10 +201,13 @@ pub fn create_browser_window(url: String) {
                 let mut font_path = "".to_string();
                 let mut glyphs_map = glyphs_map.borrow_mut();
 
+                // Render loop is now "dumb" - just draws what's in the array
+                // All culling is done in get_render_array
                 for item in &render_frame.render_array {
                     let item_y = item.y as f64 - render_frame.scroll_y as f64;
                     let glyphs = glyphs_map.get_mut(&item.font_path).unwrap();
 
+                    // Draw background if present
                     if item.background_color != (0.0, 0.0, 0.0, 0.0) {
                         rectangle(
                             css_color_to_piston(item.background_color),
@@ -215,14 +217,13 @@ pub fn create_browser_window(url: String) {
                         );
                     }
 
-                    if item.text_segments.len() > 0 {
+                    // Draw text segments
+                    if !item.text_segments.is_empty() {
                         font_path = item.font_path.clone();
-
                         let color = css_color_to_piston(item.color);
 
                         for seg in &item.text_segments {
                             let ly = seg.y as f64 - render_frame.scroll_y as f64;
-                            // Text y-coordinate is the baseline (top + ascent)
                             let baseline_y = ly + seg.ascent as f64;
                             Text::new_color(color, 2 * (item.font_size) as u32)
                                 .draw(

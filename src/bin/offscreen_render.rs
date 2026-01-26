@@ -88,17 +88,13 @@ fn render_to_svg(render_frame: &RenderFrame) -> String {
             ));
         }
 
-        if !item.text_segments.is_empty() {
+        // Note: Text segments are not rendered by default since text is not visible
+        // in Chromium baselines. Enable with OFFSCREEN_DEBUG_TEXT=1 for debugging.
+        if env::var("OFFSCREEN_DEBUG_TEXT").is_ok() && !item.text_segments.is_empty() {
             for seg in &item.text_segments {
-                if seg.width == 0.0 || seg.height == 0.0 {
-                    continue;
-                }
                 svg.push_str(&format!(
                     "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"rgba(255,0,0,0.5)\"/>",
-                    seg.x,
-                    seg.y,
-                    seg.width,
-                    seg.height
+                    seg.x, seg.y, seg.width, seg.height
                 ));
             }
         }

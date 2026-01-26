@@ -29,9 +29,34 @@
       background: #bbbbbb;
       vertical-align: top;
     }
+
+    /* Test 2: Inline elements followed by block elements */
+    .inline-then-block {
+      display: block;
+      width: 200px;
+      padding: 10px;
+      background: #dddddd;
+      font-size: 0; /* Eliminate strut */
+    }
+    .inline-placeholder {
+      display: inline-block;
+      width: 60px;
+      height: 20px;
+      background: #bbbbbb;
+      vertical-align: top;
+    }
+    .block-after-inline {
+      display: block;
+      height: 25px;
+      background: #999999;
+      margin-top: 5px;
+    }
   </style>
 </head>
 <body>
+  <!-- Test 1: Mixed inline and inline-block elements -->
   <div class="container"><span class="word"></span><span class="inline-block"></span><span class="word"></span><span class="inline-block"></span><span class="word"></span></div>
+  <!-- Test 2: Inline elements followed by block elements -->
+  <div class="inline-then-block"><span class="inline-placeholder"></span><div class="block-after-inline"></div><div class="block-after-inline"></div></div>
 </body>
 </html>
