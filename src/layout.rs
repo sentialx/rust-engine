@@ -2,7 +2,7 @@ use crate::colors::*;
 use crate::css::*;
 use crate::css_value::CssValue;
 use crate::html::{DomElement, NodeType, TextSegment};
-use crate::render_frame::TextMeasurer;
+use crate::text::TextMeasurer;
 use crate::styles::*;
 use crate::utils::*;
 use std::cell::RefCell;
@@ -27,7 +27,7 @@ pub mod pipeline;
 // Re-export types from submodules for backward compatibility
 pub use flow::{FormattingContext, get_formatting_context, ReflowContext, InlineContext};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,

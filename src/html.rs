@@ -103,7 +103,20 @@ impl DomElement {
     }
   }
 
-  pub fn set_attribute(&mut self, key: String, value: String) {
+  pub fn create(tag_name: &str) -> Rc<RefCell<DomElement>> {
+    let mut el = DomElement::new(NodeType::Element);
+    el.tag_name = tag_name.to_uppercase();
+    Rc::new(RefCell::new(el))
+  }
+
+  pub fn set_text_content(&mut self, text: &str) {
+    self.children.clear();
+    let mut text_node = DomElement::new(NodeType::Text);
+    text_node.node_value = text.to_string();
+    self.children.push(Rc::new(RefCell::new(text_node)));
+  }
+
+  pub fn set_attribute(&mut self, key: &str, value: &str) {
     let empty_ctx = CssVariablesContext::new();
     if key == "style" {
       let val = format!("{{{}}}", value);
@@ -121,7 +134,15 @@ impl DomElement {
       self.class_list = classes.iter().map(|x| x.to_string()).collect();
     }
 
-    self.attributes.insert(key, value);
+    self.attributes.insert(key.to_string(), value.to_string());
+  }
+
+  pub fn append_child(&mut self, child: Rc<RefCell<DomElement>>) {
+    self.children.push(child);
+  }
+
+  pub fn remove_child(&mut self, child: &Rc<RefCell<DomElement>>) {
+    self.children.retain(|existing| !Rc::ptr_eq(existing, child));
   }
 }
 
@@ -313,7 +334,7 @@ fn set_attributes(el: &mut DomElement, source: String, tag_name: String) {
           attr.1 = attr.1.trim().to_string();
         }
 
-        el.set_attribute(attr.0.clone(), attr.1.clone());
+        el.set_attribute(&attr.0, &attr.1);
       }
 
       attr = KeyValue::new();
@@ -432,7 +453,9 @@ fn build_dom_from_handle(
       let mut el = DomElement::new(NodeType::Element);
       el.tag_name = name.local.to_string().to_uppercase();
       for attr in attrs.borrow().iter() {
-        el.set_attribute(attr.name.local.to_string(), attr.value.to_string());
+        let name = attr.name.local.to_string();
+        let value = attr.value.to_string();
+        el.set_attribute(&name, &value);
       }
       Rc::new(RefCell::new(el))
     }

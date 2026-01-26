@@ -1,366 +1,578 @@
-use crate::colors::*;
-use crate::html::*;
-use crate::layout::*;
-use crate::render_frame::GlyphsTextMeasurer;
-use crate::render_frame::RenderFrame;
+// Browser window - ties together Frame, Renderer, and window management
+
+use crate::frame::{Frame, HoverInfo};
+use crate::html::{parse_html, DomElement};
+use crate::layout::Rect;
+use crate::renderer::{CompositeRegion, RenderedBuffer, Renderer, SkiaRenderer};
 use crate::utils::Debouncer;
-use std::collections::HashMap;
-use std::rc::Rc;
 
-extern crate find_folder;
-extern crate piston_window;
-
-use piston_window::*;
-use piston_window::graphics::{clear, rectangle, Transformed};
-use piston_window::graphics::text::Text;
 use std::cell::RefCell;
+use std::num::NonZeroU32;
+use std::rc::Rc;
 use std::time::Duration;
 
-fn css_color_to_piston(c: ColorTupleA) -> [f32; 4] {
-    [
-        c.0 as f32 / 255.0,
-        c.1 as f32 / 255.0,
-        c.2 as f32 / 255.0,
-        c.3 as f32,
-    ]
+use winit::application::ApplicationHandler;
+use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, NamedKey};
+use winit::window::{Window, WindowId};
+
+use softbuffer::Surface;
+
+struct RenderFrameState {
+    frame: Frame,
+    buffer: Option<RenderedBuffer>,
+    dirty: bool,
 }
 
-pub fn create_browser_window(url: String) {
-    let mut window: PistonWindow = WindowSettings::new("Graviton", [1366, 768])
-        .exit_on_esc(true)
-        .build()
-        .unwrap();
+impl RenderFrameState {
+    fn new(viewport: Rect) -> Self {
+        Self {
+            frame: Frame::new(viewport),
+            buffer: None,
+            dirty: true,
+        }
+    }
 
-    let assets = find_folder::Search::ParentsThenKids(3, 3)
-        .for_folder("assets")
-        .unwrap();
+    fn frame(&self) -> &Frame {
+        &self.frame
+    }
 
-    let glyphs_map: Rc<RefCell<HashMap<String, piston_window::Glyphs<'static>>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    fn frame_mut(&mut self) -> &mut Frame {
+        &mut self.frame
+    }
 
-    let add_font = |name: &str| {
-        let glyphs = window
-            .load_font(
-                assets.join(name),
-                piston_window::wgpu_graphics::TextureSettings::new(),
-            )
-            .unwrap();
-        glyphs_map.borrow_mut().insert(name.to_string(), glyphs)
-    };
+    fn invalidate(&mut self) {
+        self.buffer = None;
+        self.dirty = true;
+    }
 
-    add_font("Times New Roman 400.ttf");
-    add_font("Times New Roman 700.ttf");
-    add_font("Times New Roman Italique 400.ttf");
-    add_font("Times New Roman Italique 700.ttf");
+    fn set_viewport(&mut self, width: f32, height: f32) {
+        self.frame.set_viewport(width, height);
+        self.invalidate();
+    }
 
-    let mut pressed_up = false;
-    let mut pressed_down = false;
+    fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
+        if self.dirty || self.buffer.is_none() {
+            self.buffer = Some(renderer.render(&self.frame));
+            self.dirty = false;
+        }
+    }
 
-    let mut mouse_x = 0.0;
-    let mut mouse_y = 0.0;
+    fn buffer(&self) -> Option<&RenderedBuffer> {
+        self.buffer.as_ref()
+    }
+}
 
-    let mut el_txt = "".to_string();
-    let mut element: Option<&DomElement> = None;
+struct BrowserApp {
+    url: String,
+    window: Option<Rc<Window>>,
+    surface: Option<Surface<Rc<Window>, Rc<Window>>>,
 
-    let mut devtools_visible = true;
-    let devtools_panel_width = 300.0;
-    let devtools_width = |visible: bool| if visible { devtools_panel_width } else { 0.0 };
+    // Document layout (owns text measurer and font loading)
+    main: RenderFrameState,
+    devtools: RenderFrameState,
+    overlay: RenderFrameState,
 
-    let window_size = window.size();
-    let viewport = Rect {
-        x: 0.0,
-        y: 0.0,
-        width: window_size.width as f32 - devtools_width(devtools_visible),
-        height: window_size.height as f32,
-    };
+    // Rendering
+    renderer: SkiaRenderer,
 
-    let mut text_measurer = GlyphsTextMeasurer {
-        glyphs_map: glyphs_map.clone(),
-    };
-    let mut render_frame = RenderFrame::new(viewport, &mut text_measurer);
+    // Scroll state
+    scroll_y: f32,
 
-    render_frame.load_url(&url);
+    // Input state
+    pressed_up: bool,
+    pressed_down: bool,
+    mouse_x: f32,
+    mouse_y: f32,
 
-    let zoom = 1.0;
-    let devtools_zoom = 0.65;
-    let mut resize_debouncer = Debouncer::new(Duration::from_millis(2));
+    // UI state
+    devtools_visible: bool,
+    devtools_panel_width: f32,
+    scale_factor: f32,
+    resize_debouncer: Debouncer<(f32, f32)>,
+    initialized: bool,
 
-    while let Some(event) = window.next() {
-        let mouse = event.mouse_cursor_args();
+    // Hover state
+    hover_info: Option<HoverInfo>,
+}
 
-        // key down
-
-        if let Some(Button::Keyboard(key)) = event.press_args() {
-            if key == Key::F5 {
-                render_frame.refresh();
+fn find_first_tag(
+    tree: &Vec<Rc<RefCell<DomElement>>>,
+    tag_name: &str,
+) -> Option<Rc<RefCell<DomElement>>> {
+    for node in tree {
+        let node_ref = node.borrow();
+        if node_ref.tag_name == tag_name {
+            return Some(node.clone());
+        }
+        if !node_ref.children.is_empty() {
+            if let Some(found) = find_first_tag(&node_ref.children, tag_name) {
+                return Some(found);
             }
-
-            if key == Key::Up {
-                pressed_up = true;
-            } else if key == Key::Down {
-                pressed_down = true;
-            } else if key == Key::I {
-                devtools_visible = !devtools_visible;
-                let window_size = window.size();
-                render_frame.viewport.width = window_size.width as f32 - devtools_width(devtools_visible);
-                render_frame.viewport.height = window_size.height as f32;
-                render_frame.reflow();
-                render_frame.fast_render();
-            }
-        };
-
-        if let Some(Button::Keyboard(key)) = event.release_args() {
-            if key == Key::Up {
-                pressed_up = false;
-            } else if key == Key::Down {
-                pressed_down = false;
-            }
-        };
-
-        // scroll event - rebuild render array with new viewport
-        if let Some(args) = event.mouse_scroll_args() {
-            render_frame.scroll_y -= args[1] as f32 * 1.0;
-            render_frame.fast_render();
         }
+    }
+    None
+}
 
-        if pressed_up {
-            render_frame.scroll_y -= 4.0;
+fn add_overlay_box(
+    parent: &Rc<RefCell<DomElement>>,
+    left: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+    color: &str,
+) {
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let div = DomElement::create("div");
+    let style = format!(
+        "position:absolute; left:{}px; top:{}px; width:{}px; height:{}px; background:{};",
+        left, top, width, height, color
+    );
+    div.borrow_mut().set_attribute("style", &style);
+    parent.borrow_mut().append_child(div);
+}
+
+fn add_border_box(
+    parent: &Rc<RefCell<DomElement>>,
+    left: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+    border: f32,
+    color: &str,
+) {
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let bw = border.max(1.0);
+    let bw_x = bw.min(width);
+    let bw_y = bw.min(height);
+
+    add_overlay_box(parent, left, top, width, bw_y, color);
+    add_overlay_box(parent, left, top + height - bw_y, width, bw_y, color);
+    add_overlay_box(parent, left, top, bw_x, height, color);
+    add_overlay_box(parent, left + width - bw_x, top, bw_x, height, color);
+}
+
+impl BrowserApp {
+    fn new(url: String) -> Self {
+        Self {
+            url,
+            window: None,
+            surface: None,
+            main: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
+            devtools: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
+            overlay: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
+            renderer: SkiaRenderer::new(),
+            scroll_y: 0.0,
+            pressed_up: false,
+            pressed_down: false,
+            mouse_x: 0.0,
+            mouse_y: 0.0,
+            devtools_visible: true,
+            devtools_panel_width: 300.0,
+            scale_factor: 1.0,
+            resize_debouncer: Debouncer::new(Duration::from_millis(1)),
+            initialized: false,
+            hover_info: None,
         }
+    }
 
-        if pressed_down {
-            render_frame.scroll_y += 4.0;
+    fn devtools_width(&self) -> f32 {
+        if self.devtools_visible {
+            self.devtools_panel_width
+        } else {
+            0.0
         }
+    }
 
-        render_frame.scroll_y = f32::max(0.0, render_frame.scroll_y);
+    fn load_url(&mut self) {
+        self.main.frame_mut().load_url(&self.url);
+        self.main.invalidate();
+    }
 
-        if pressed_down || pressed_up {
-            render_frame.fast_render();
-        }
+    fn do_reflow(&mut self) {
+        self.main.frame_mut().full_layout();
+        self.main.invalidate();
+    }
 
-        // on resize
-        if event.resize_args().is_some() {
-            let window_size = window.size();
-            resize_debouncer.push((
-                window_size.width as f32 - devtools_width(devtools_visible),
-                window_size.height as f32,
-            ));
-        }
+    fn load_devtools(&mut self) {
+        self.devtools.frame_mut().load_url("devtools.html");
+        self.devtools.invalidate();
+    }
 
-        if let Some((width, height)) = resize_debouncer.poll() {
-            render_frame.viewport.width = width;
-            render_frame.viewport.height = height;
-            render_frame.reflow();
-            render_frame.fast_render();
-        }
+    fn rebuild_overlay(&mut self) {
+        let viewport = self.main.frame().viewport.clone();
+        let page_height = self.main.frame().page_height.max(viewport.height);
+        let overlay_frame = self.overlay.frame_mut();
+        overlay_frame.set_viewport(viewport.width, viewport.height);
+        overlay_frame.dom_tree = parse_html("<html><body></body></html>");
+        overlay_frame.parsed_css = vec![];
+        overlay_frame.styles = overlay_frame.default_styles.clone();
 
-        if mouse.is_some() {
-            mouse_x = mouse.unwrap()[0] as f32;
-            mouse_y = mouse.unwrap()[1] as f32;
-
-            // get dom element at mouse position
-
-            // if should_rerender(
-            //     mouse_x,
-            //     mouse_y,
-            //     &mut dom_tree.borrow_mut(),
-            //     &*parsed_css.borrow_mut(),
-            // ) {
-
-            //     recompute_styles(&window, &styles);
-            //     reflow();
-            //     render_array = rerender(&window, scroll_y);
-            // }
-        }
-
-        let element = get_element_at(&render_frame.render_array, mouse_x / zoom as f32, (mouse_y + render_frame.scroll_y) / (zoom as f32));
-        if element.is_some() {
-            let el = element.unwrap().borrow();
-            let mut rules = "".to_string();
-            for rule in &el.matched_styles {
-                rules += &(format!("{}", rule.to_string()) + "\n");
-            }
-            el_txt = rules;
-            el_txt += &format!(
-                "{:?}\n{:#?}\n{:#?}",
-                el.tag_name, el.attributes, el.computed_style
+        if let Some(body) = find_first_tag(&overlay_frame.dom_tree, "BODY") {
+            let body_style = format!(
+                "margin:0px; position:relative; width:{}px; height:{}px; background: rgba(0,0,0,0);",
+                viewport.width, page_height
             );
+            body.borrow_mut().set_attribute("style", &body_style);
+
+            if let Some(info) = &self.hover_info {
+                add_overlay_box(&body, info.rect.x, info.rect.y, info.rect.width, info.rect.height, "rgba(0,128,255,0.3)");
+                add_border_box(&body, info.rect.x, info.rect.y, info.rect.width, info.rect.height, 2.0, "rgba(0,128,255,1.0)");
+
+                for seg in &info.text_segments {
+                    add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "rgba(0,204,0,1.0)");
+                }
+            }
         }
 
-        let window_size = &window.size();
-        let devtools_width = devtools_width(devtools_visible);
+        overlay_frame.full_layout();
+        self.overlay.invalidate();
+    }
 
-        if resize_debouncer.is_pending() {
-            continue;
+    fn update_devtools_content(&mut self) {
+        let (tag_text, dimension_text) = if let Some(info) = &self.hover_info {
+            (
+                format!("<{}>", info.tag_name.to_lowercase()),
+                format!("{:.0}x{:.0}", info.rect.width, info.rect.height),
+            )
+        } else {
+            ("--".to_string(), "--".to_string())
+        };
+
+        if let Some(el) = self.devtools.frame_mut().get_element_by_id("tag-name") {
+            el.borrow_mut().set_text_content(&tag_text);
         }
-        window.draw_2d(&event, |c, g, _device| {
-            clear([1.0, 1.0, 1.0, 1.0], g);
-                // let device = &mut c.de
+        if let Some(el) = self.devtools.frame_mut().get_element_by_id("dimensions") {
+            el.borrow_mut().set_text_content(&dimension_text);
+        }
 
-                // window.draw_2d(&event, |context, graphics, device| {
+        self.devtools.frame_mut().full_layout();
+        self.devtools.invalidate();
+    }
 
-                let mut font_path = "".to_string();
-                let mut glyphs_map = glyphs_map.borrow_mut();
+    fn render_frame(&mut self) {
+        self.main.render_if_needed(&mut self.renderer);
+        if self.devtools_visible {
+            self.devtools.render_if_needed(&mut self.renderer);
+            self.overlay.render_if_needed(&mut self.renderer);
+        }
 
-                // Render loop is now "dumb" - just draws what's in the array
-                // All culling is done in get_render_array
-                for item in &render_frame.render_array {
-                    let item_y = item.y as f64 - render_frame.scroll_y as f64;
-                    let glyphs = glyphs_map.get_mut(&item.font_path).unwrap();
+        let mut regions = Vec::new();
+        if let Some(main_buffer) = self.main.buffer() {
+            regions.push(CompositeRegion {
+                buffer: main_buffer,
+                dest_x: 0.0,
+                scroll_y: self.scroll_y,
+            });
+        }
+        if self.devtools_visible {
+            if let Some(devtools_buffer) = self.devtools.buffer() {
+                regions.push(CompositeRegion {
+                    buffer: devtools_buffer,
+                    dest_x: self.main.frame().viewport.width,
+                    scroll_y: 0.0,
+                });
+            }
+            if let Some(overlay_buffer) = self.overlay.buffer() {
+                regions.push(CompositeRegion {
+                    buffer: overlay_buffer,
+                    dest_x: 0.0,
+                    scroll_y: self.scroll_y,
+                });
+            }
+        }
 
-                    // Draw background if present
-                    if item.background_color != (0.0, 0.0, 0.0, 0.0) {
-                        rectangle(
-                            css_color_to_piston(item.background_color),
-                            [0.0, 0.0, item.width as f64, item.height as f64],
-                            c.transform.trans(item.x as f64 * zoom, item_y * zoom).zoom(zoom),
-                            g,
-                        );
+        self.renderer.composite(&regions);
+    }
+
+    fn present(&mut self) {
+        let Some(surface) = &mut self.surface else { return };
+        let Some(window) = &self.window else { return };
+
+        let size = window.inner_size();
+        let width = size.width;
+        let height = size.height;
+
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        surface
+            .resize(
+                NonZeroU32::new(width).unwrap(),
+                NonZeroU32::new(height).unwrap(),
+            )
+            .expect("Failed to resize surface");
+
+        let mut buffer = surface.buffer_mut().expect("Failed to get buffer");
+        let display_buffer = self.renderer.get_display_buffer();
+
+        buffer.copy_from_slice(display_buffer);
+        buffer.present().expect("Failed to present buffer");
+    }
+
+    fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
+
+        self.renderer.resize(new_size.width, new_size.height, self.scale_factor);
+
+        let logical_width = new_size.width as f32 / self.scale_factor;
+        let logical_height = new_size.height as f32 / self.scale_factor;
+        let devtools_width = self.devtools_width();
+        self.main.set_viewport(logical_width - devtools_width, logical_height);
+        self.devtools.set_viewport(devtools_width, logical_height);
+        self.overlay.set_viewport(logical_width - devtools_width, logical_height);
+    }
+
+    fn handle_scale_factor_changed(&mut self, new_scale_factor: f64) {
+        let new_scale = new_scale_factor as f32;
+        if (new_scale - self.scale_factor).abs() > 0.001 {
+            self.scale_factor = new_scale;
+            self.renderer.clear_caches();
+            self.main.invalidate();
+            self.devtools.invalidate();
+            self.overlay.invalidate();
+        }
+    }
+}
+
+impl ApplicationHandler for BrowserApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let window_attrs = Window::default_attributes()
+            .with_title("Graviton")
+            .with_inner_size(LogicalSize::new(1366, 768));
+
+        let window = Rc::new(event_loop.create_window(window_attrs).unwrap());
+        let physical_size = window.inner_size();
+        let scale_factor = window.scale_factor() as f32;
+
+        self.scale_factor = scale_factor;
+
+        let logical_width = physical_size.width as f32 / scale_factor;
+        let logical_height = physical_size.height as f32 / scale_factor;
+
+        // Create surface
+        let context = softbuffer::Context::new(window.clone()).unwrap();
+        let surface = Surface::new(&context, window.clone()).unwrap();
+
+        // Initialize renderer
+        self.renderer.resize(physical_size.width, physical_size.height, scale_factor);
+
+        // Set up viewport
+        let devtools_width = self.devtools_width();
+        self.main.set_viewport(logical_width - devtools_width, logical_height);
+        self.devtools.set_viewport(devtools_width, logical_height);
+        self.overlay.set_viewport(logical_width - devtools_width, logical_height);
+
+        self.window = Some(window);
+        self.surface = Some(surface);
+
+        // Load URL only once
+        if !self.initialized {
+            self.initialized = true;
+            self.load_url();
+            if self.devtools_visible {
+                self.load_devtools();
+                self.update_devtools_content();
+                self.rebuild_overlay();
+            }
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+
+            WindowEvent::Resized(new_size) => {
+                let logical_width = new_size.width as f32 / self.scale_factor;
+                let logical_height = new_size.height as f32 / self.scale_factor;
+                let devtools_width = self.devtools_width();
+                self.resize_debouncer.push((logical_width - devtools_width, logical_height));
+                self.handle_resize(new_size);
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.handle_scale_factor_changed(scale_factor);
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+
+            WindowEvent::KeyboardInput {
+                event: KeyEvent {
+                    logical_key,
+                    state,
+                    ..
+                },
+                ..
+            } => {
+                let pressed = state == ElementState::Pressed;
+
+                match logical_key {
+                    Key::Named(NamedKey::Escape) => {
+                        event_loop.exit();
                     }
-
-                    // Draw text segments
-                    if !item.text_segments.is_empty() {
-                        font_path = item.font_path.clone();
-                        let color = css_color_to_piston(item.color);
-
-                        for seg in &item.text_segments {
-                            let ly = seg.y as f64 - render_frame.scroll_y as f64;
-                            let baseline_y = ly + seg.ascent as f64;
-                            Text::new_color(color, 2 * (item.font_size) as u32)
-                                .draw(
-                                    &seg.text,
-                                    glyphs,
-                                    &c.draw_state,
-                                    c.transform
-                                        .trans(seg.x as f64 * zoom, baseline_y * zoom)
-                                        .zoom(0.5)
-                                        .zoom(zoom),
-                                    g,
-                                )
-                                .unwrap();
-
-                            if item.underline {
-                                rectangle(
-                                    color,
-                                    [0.0, 0.0, seg.width as f64, 1.0],
-                                    c.transform
-                                        .trans(seg.x as f64 * zoom, (baseline_y + 2.0) * zoom)
-                                        .zoom(zoom),
-                                    g,
-                                );
+                    Key::Named(NamedKey::F5) if pressed => {
+                        self.load_url();
+                        self.hover_info = None;
+                        if self.devtools_visible {
+                            self.update_devtools_content();
+                            self.rebuild_overlay();
+                        }
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        self.pressed_up = pressed;
+                        if pressed {
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
                             }
                         }
                     }
-                }
-
-                let dev_tools_x = window_size.width as f32 - devtools_width;
-
-                if devtools_visible {
-                    // separator
-                    rectangle(
-                        [0.0, 0.0, 0.0, 0.12],
-                        [0.0, 0.0, 1 as f64, window_size.height as f64],
-                        c.transform.trans(dev_tools_x as f64, 0.0),
-                        g,
-                    );
-
-                    rectangle(
-                        [1.0, 1.0, 1.0, 1.0],
-                        [0.0, 0.0, devtools_width as f64, window_size.height as f64],
-                        c.transform.trans(dev_tools_x as f64, 0.0),
-                        g,
-                    );
-                }
-
-                if devtools_visible && element.is_some() {
-                    let el = element.unwrap().borrow();
-                    let computed_flow = el.computed_flow.as_ref().unwrap();
-                    let el_y = computed_flow.y as f64 - render_frame.scroll_y as f64;
-
-                    rectangle(
-                        [1.0, 0.0, 0.5, 0.1],
-                        [
-                            0.0,
-                            0.0,
-                            computed_flow.width as f64,
-                            computed_flow.height as f64,
-                        ],
-                        c.transform.trans(computed_flow.x as f64 * zoom, el_y * zoom).zoom(zoom),
-                        g,
-                    );
-
-                    // Draw text segment bounds (red boxes) for this element and all children
-                    fn collect_text_segments(el: &DomElement, segments: &mut Vec<(f64, f64, f64, f64)>) {
-                        for seg in &el.text_segments {
-                            segments.push((seg.x as f64, seg.y as f64, seg.width as f64, seg.height as f64));
-                        }
-                        for child in &el.children {
-                            collect_text_segments(&child.borrow(), segments);
+                    Key::Named(NamedKey::ArrowDown) => {
+                        self.pressed_down = pressed;
+                        if pressed {
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
                         }
                     }
-                    let mut text_segs = Vec::new();
-                    collect_text_segments(&el, &mut text_segs);
-                    for (sx, sy, sw, sh) in text_segs {
-                        let seg_y = sy - render_frame.scroll_y as f64;
-                        rectangle(
-                            [1.0, 0.0, 0.0, 0.5], // red with 50% opacity
-                            [0.0, 0.0, sw, sh],
-                            c.transform.trans(sx * zoom, seg_y * zoom).zoom(zoom),
-                            g,
-                        );
+                    Key::Character(ref c) if c == "i" && pressed => {
+                        self.devtools_visible = !self.devtools_visible;
+                        let devtools_width = self.devtools_width();
+                        let size_opt = self.window.as_ref().map(|w| w.inner_size());
+                        if let Some(size) = size_opt {
+                            let logical_width = size.width as f32 / self.scale_factor;
+                            let logical_height = size.height as f32 / self.scale_factor;
+                            self.main.set_viewport(logical_width - devtools_width, logical_height);
+                            self.devtools.set_viewport(devtools_width, logical_height);
+                            self.overlay.set_viewport(logical_width - devtools_width, logical_height);
+                            self.do_reflow();
+                            if self.devtools_visible {
+                                self.load_devtools();
+                            }
+                            self.rebuild_overlay();
+                        }
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
                     }
+                    _ => {}
+                }
+            }
 
-                    rectangle(
-                        [1.0, 0.0, 0.5, 1.0],
-                        [0.0, 0.0, 128.0, 18.0],
-                        c.transform.trans(computed_flow.x as f64 * zoom, (el_y - 18.0) * zoom).zoom(zoom),
-                        g,
-                    );
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll_amount = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y * 1.0,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                };
 
-                    // // split newlines
-                    if devtools_visible && glyphs_map.get_mut(&font_path).is_some() {
-                        let glyphs = glyphs_map.get_mut(&font_path).unwrap();
+                self.scroll_y -= scroll_amount;
+                self.scroll_y = self.scroll_y.max(0.0);
+                let max_scroll = (self.main.frame().page_height - self.main.frame().viewport.height).max(0.0);
+                self.scroll_y = self.scroll_y.min(max_scroll);
 
-                        Text::new_color([1.0, 1.0, 1.0, 1.0], 2 * 12)
-                        .draw(
-                            format!(
-                                "{:?} {:?}x{:?}",
-                                el.tag_name,
-                                f64::trunc(computed_flow.width as f64 * 10.0) / 10.0,
-                                f64::trunc(computed_flow.height as f64 * 10.0) / 10.0
-                            )
-                            .as_str(),
-                            glyphs,
-                            &c.draw_state,
-                            c.transform
-                                .trans(computed_flow.x as f64 * zoom, (el_y - 2.0) as f64 * zoom)
-                                .zoom(0.5)
-                                .zoom(zoom),
-                            g,
-                        )
-                        .unwrap();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
 
-                        let mut lines = el_txt.split("\n");
-                        for (i, line) in lines.enumerate() {
-                            let font_size = 16.0;
-                            Text::new_color([0.0, 0.0, 0.0, 1.0], 2 * font_size as u32)
-                                .draw(
-                                    &line,
-                                    glyphs,
-                                    &c.draw_state,
-                                    c.transform
-                                        .trans(dev_tools_x as f64 + 8.0, (font_size + 5.0) * i as f64 * devtools_zoom + 16.0)
-                                        .zoom(0.5)
-                                        .zoom(devtools_zoom),
-                                    g,
-                                )
-                                .unwrap();
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_x = position.x as f32;
+                self.mouse_y = position.y as f32;
+
+                // Hit test to find hovered element (only when devtools visible)
+                if self.devtools_visible {
+                    // Convert screen coordinates to page coordinates
+                    let page_x = self.mouse_x / self.scale_factor;
+                    let page_y = self.mouse_y / self.scale_factor + self.scroll_y;
+
+                    let new_hover = self.main.frame().hit_test(page_x, page_y);
+
+                    // Only redraw if hover changed
+                    if new_hover != self.hover_info {
+                        self.hover_info = new_hover;
+                        self.update_devtools_content();
+                        self.rebuild_overlay();
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
                         }
                     }
                 }
+            }
 
-                // glyphs_map.iter_mut().for_each(|(k, mut v)| {
-                //     v.factory.encoder.flush(device);
-                // });
-        });
+            WindowEvent::RedrawRequested => {
+                // Handle continuous scroll
+                if self.pressed_up || self.pressed_down {
+                    if self.pressed_up {
+                        self.scroll_y -= 4.0;
+                    }
+                    if self.pressed_down {
+                        self.scroll_y += 4.0;
+                    }
+                    self.scroll_y = self.scroll_y.max(0.0);
+                    let max_scroll = (self.main.frame().page_height - self.main.frame().viewport.height).max(0.0);
+                    self.scroll_y = self.scroll_y.min(max_scroll);
+                }
+
+                // Handle debounced resize
+                if let Some((width, height)) = self.resize_debouncer.poll() {
+                    self.main.set_viewport(width, height);
+                    self.devtools.set_viewport(self.devtools_width(), height);
+                    self.overlay.set_viewport(width, height);
+                    self.do_reflow();
+                    if self.devtools_visible {
+                        self.load_devtools();
+                    }
+                    self.rebuild_overlay();
+                }
+
+                // Render and present
+                self.render_frame();
+                self.present();
+            }
+
+            _ => {}
+        }
+
+        // Request redraw for continuous scroll
+        if self.pressed_up || self.pressed_down {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
     }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Event-driven - don't continuously redraw
+    }
+}
+
+pub fn create_browser_window(url: String) {
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Wait);
+
+    let mut app = BrowserApp::new(url);
+
+    event_loop.run_app(&mut app).unwrap();
 }

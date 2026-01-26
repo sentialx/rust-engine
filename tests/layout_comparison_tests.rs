@@ -144,7 +144,6 @@ fn test_block_layout() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_margins() {
     // Tests: sibling margin collapsing (equal, asymmetric, chain)
     // Tests: parent-child margin collapsing (NOT YET IMPLEMENTED)
@@ -156,7 +155,6 @@ fn test_margins() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_inline() {
     // Tests: horizontal inline, wrapping, mixed sizes, nested inline
     if let Err(e) = compare_layout("inline") {
@@ -165,7 +163,6 @@ fn test_inline() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_inline_block() {
     // Tests: exact fit, one-pixel-over wrap, overflow, margins, padding,
     //        shrink-to-fit, nested content, inline-blocks in inline-blocks
@@ -179,7 +176,6 @@ fn test_inline_block() {
 // =============================================================================
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_block_margins() {
     if let Err(e) = compare_layout("block_margins") {
         panic!("{}", e);
@@ -187,7 +183,6 @@ fn test_block_margins() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_padding_nested() {
     if let Err(e) = compare_layout("padding_nested") {
         panic!("{}", e);
@@ -195,7 +190,6 @@ fn test_padding_nested() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_sidebar_content() {
     if let Err(e) = compare_layout("sidebar_content") {
         panic!("{}", e);
@@ -203,7 +197,6 @@ fn test_sidebar_content() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_inline_block_wrap() {
     if let Err(e) = compare_layout("inline_block_wrap") {
         panic!("{}", e);
@@ -219,7 +212,6 @@ fn test_inline_block_mixed() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_inline_block_wrap_mixed_sizes() {
     if let Err(e) = compare_layout("inline_block_wrap_mixed_sizes") {
         panic!("{}", e);
@@ -227,9 +219,15 @@ fn test_inline_block_wrap_mixed_sizes() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_inline_block_zero_size() {
     if let Err(e) = compare_layout("inline_block_zero_size") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_devtools_panel_layout() {
+    if let Err(e) = compare_layout("devtools_panel_layout") {
         panic!("{}", e);
     }
 }
