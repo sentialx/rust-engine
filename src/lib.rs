@@ -9,4 +9,7 @@ pub mod utils;
 pub mod lisia_colors;
 pub mod css_value;
 pub mod properties;
-pub mod render_frame;
+pub mod render_frame; // Legacy - kept for compatibility
+pub mod frame;
+pub mod text;
+pub mod renderer;

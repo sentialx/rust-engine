@@ -1,14 +1,17 @@
-use std::{cell::RefCell, collections::HashMap, fs, rc::Rc, time::Instant};
+// Legacy render_frame module - re-exports from new modules for compatibility
+// New code should use `frame` and `text` modules directly
 
-use piston_window::graphics::character::CharacterCache;
-use rusttype::Scale;
+use std::{cell::RefCell, fs, rc::Rc, time::Instant};
 
 use crate::{
     css::parse_css,
     html::{parse_html, DomElement, NodeType},
-    layout::{compute_styles, get_render_array, propagate_styles, reflow, reflow_and_cache, reflow_with_cache, Rect, RenderItem, boxes::LayoutNode},
+    layout::{compute_styles, get_render_array, propagate_styles, reflow_and_cache, reflow_with_cache, Rect, RenderItem, boxes::LayoutNode},
     styles::StyleRule,
 };
+
+// Re-export text types for backwards compatibility
+pub use crate::text::{TextMeasurer, BoxTextMeasurer, FontManager};
 
 /// Recursively extract CSS content from <style> tags in the DOM tree
 fn extract_style_tags(tree: &Vec<Rc<RefCell<DomElement>>>, css: &mut String) {
@@ -42,80 +45,6 @@ pub struct RenderFrame<'a> {
     pub text_measurer: &'a mut dyn TextMeasurer,
     pub default_styles: Vec<StyleRule>,
     pub cached_layout_tree: Option<Vec<LayoutNode>>,
-}
-
-pub trait TextMeasurer {
-    /// Measure text, returning (width, height)
-    fn measure(&mut self, text: &str, font_size: f32, font_family: &str) -> (f32, f32);
-
-    /// Get the ascent (distance from baseline to top) for a font at given size
-    /// Returns the ascent value that should be added to the top y to get baseline y
-    fn ascent(&mut self, font_size: f32, font_family: &str) -> f32;
-}
-
-pub struct BoxTextMeasurer {
-    pub char_width_ratio: f32,
-    pub ascent_ratio: f32,
-}
-
-impl Default for BoxTextMeasurer {
-    fn default() -> Self {
-        Self {
-            char_width_ratio: 0.6,
-            ascent_ratio: 0.8,
-        }
-    }
-}
-
-impl TextMeasurer for BoxTextMeasurer {
-    fn measure(&mut self, text: &str, font_size: f32, _font_family: &str) -> (f32, f32) {
-        let width = text.chars().count() as f32 * font_size * self.char_width_ratio;
-        let height = font_size;
-        (width, height)
-    }
-
-    fn ascent(&mut self, font_size: f32, _font_family: &str) -> f32 {
-        font_size * self.ascent_ratio
-    }
-}
-
-pub struct GlyphsTextMeasurer<'a> {
-    pub glyphs_map: Rc<RefCell<HashMap<String, piston_window::Glyphs<'a>>>>,
-}
-
-impl TextMeasurer for GlyphsTextMeasurer<'_> {
-    fn measure(&mut self, text: &str, font_size: f32, font_family: &str) -> (f32, f32) {
-        let mut glyphs_map = self.glyphs_map.borrow_mut();
-        let glyphs = glyphs_map.get_mut(font_family).unwrap();
-
-        // Get width from glyph cache
-        let width = 0.5 * glyphs.width(2 * (font_size) as u32, text).unwrap() as f32;
-
-        // Get height from actual font metrics
-        // We use 2x font size in rendering, then scale down by 0.5
-        let scale = Scale::uniform(2.0 * font_size);
-        let v_metrics = glyphs.font.v_metrics(scale);
-        // height = ascent - descent (descent is negative, so this adds them)
-        let height = (v_metrics.ascent - v_metrics.descent) * 0.5;
-
-        (width, height)
-    }
-
-    fn ascent(&mut self, font_size: f32, font_family: &str) -> f32 {
-        let mut glyphs_map = self.glyphs_map.borrow_mut();
-        if let Some(glyphs) = glyphs_map.get_mut(font_family) {
-            // Get actual font metrics from rusttype
-            // We use 2x font size in rendering, then scale down by 0.5
-            let scale = Scale::uniform(2.0 * font_size);
-            let v_metrics = glyphs.font.v_metrics(scale);
-            // Small adjustment: font ascent includes space for tall glyphs (Á),
-            // but typical text sits slightly lower. Add 2px to baseline.
-            v_metrics.ascent * 0.5 + 2.0
-        } else {
-            // Fallback
-            font_size * 0.8
-        }
-    }
 }
 
 impl<'a> RenderFrame<'a> {

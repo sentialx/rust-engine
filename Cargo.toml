@@ -7,14 +7,23 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-piston_window = "0.146.0"
-find_folder = "0.3.0"
-closure = "0.3.0"
-piston2d-opengl_graphics = "0.89.0"
-regex = "1.12.2"
-rusttype = "0.9"
+# Windowing
+winit = "0.30"
+softbuffer = "0.4"
+
+# 2D rendering
+tiny-skia = "0.11"
+
+# Font rendering
+fontdue = "0.9"
+
+# HTML/CSS parsing
 html5ever = "0.36.1"
 markup5ever_rcdom = "0.36.0"
+regex = "1.12.2"
+
+# Utilities
+find_folder = "0.3.0"
 
 [dev-dependencies]
 roxmltree = "0.21"

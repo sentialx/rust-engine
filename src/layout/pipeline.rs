@@ -11,7 +11,7 @@
 // - inline.rs: Inline formatting context
 
 use crate::html::{DomElement, NodeType, ComputedFlow};
-use crate::render_frame::TextMeasurer;
+use crate::text::TextMeasurer;
 use crate::styles::ScalarEvaluationContext;
 use crate::layout::{Rect, boxes::{LayoutBox, LayoutNode}};
 use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, SiblingLayoutState, uses_absolute_positioning};

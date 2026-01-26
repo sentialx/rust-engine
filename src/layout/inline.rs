@@ -7,7 +7,7 @@ use crate::html::{DomElement, NodeType, TextSegment};
 use crate::layout::flow::{FormattingContext, InlineContext, ReflowContext, uses_absolute_positioning};
 use crate::layout::boxes::LayoutNode;
 use crate::layout::block::compute_block_height_from_children;
-use crate::render_frame::TextMeasurer;
+use crate::text::TextMeasurer;
 
 /// Preprocess text node: split into words and measure each
 /// Caches measurements - only re-measures if font_size changed or segments are empty
