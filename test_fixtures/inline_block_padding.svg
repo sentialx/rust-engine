@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
-  <rect x="0" y="0" width="400" height="200" fill="white"/>
-  <rect x="0" y="0" width="400" height="50" fill="rgba(0,0,0,0)"/>
-  <rect x="0" y="0" width="300" height="50" fill="rgba(238,238,238,1)" data-class="container"/>
-  <rect x="0" y="0" width="60" height="30" fill="rgba(204,204,204,1)" data-class="item"/>
-  <rect x="60" y="0" width="80" height="50" fill="rgba(204,204,204,1)" data-class="item padded"/>
-  <rect x="140" y="0" width="95" height="45" fill="rgba(204,204,204,1)" data-class="item padded-asymmetric"/>
-  <rect x="235" y="0" width="60" height="30" fill="rgba(204,204,204,1)" data-class="item"/>
-</svg>

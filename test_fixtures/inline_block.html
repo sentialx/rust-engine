@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="500x600">
+  <style>
+    body { margin: 0; }
+
+    /* Test 1: Exact fit - items exactly fill container */
+    .exact-container {
+      display: block;
+      width: 200px;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .exact-item {
+      display: inline-block;
+      width: 100px;
+      height: 30px;
+      background: #cccccc;
+      vertical-align: top;
+    }
+
+    /* Test 2: One pixel over - forces wrap */
+    .over-container {
+      display: block;
+      width: 199px;
+      background: #dddddd;
+      font-size: 0;
+    }
+    .over-item {
+      display: inline-block;
+      width: 100px;
+      height: 30px;
+      background: #bbbbbb;
+      vertical-align: top;
+    }
+
+    /* Test 3: Overflow - item wider than container */
+    .overflow-container {
+      display: block;
+      width: 80px;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .overflow-wide {
+      display: inline-block;
+      width: 120px;
+      height: 30px;
+      background: #cccccc;
+      vertical-align: top;
+    }
+    .overflow-normal {
+      display: inline-block;
+      width: 40px;
+      height: 25px;
+      background: #aaaaaa;
+      vertical-align: top;
+    }
+
+    /* Test 4: Margins between inline-blocks */
+    .margin-container {
+      display: block;
+      background: #eeeeee;
+      padding: 10px;
+      font-size: 0;
+    }
+    .margin-item {
+      display: inline-block;
+      width: 50px;
+      height: 30px;
+      background: #cccccc;
+      vertical-align: top;
+    }
+    .margin-right { margin-right: 15px; }
+    .margin-both { margin-left: 10px; margin-right: 10px; }
+    .margin-left { margin-left: 15px; }
+
+    /* Test 5: Padding on inline-blocks */
+    .padding-container {
+      display: block;
+      width: 280px;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .padding-item {
+      display: inline-block;
+      width: 50px;
+      height: 25px;
+      background: #cccccc;
+      vertical-align: top;
+    }
+    .padding-sym { padding: 8px; }
+    .padding-asym { padding: 5px 15px 10px 5px; }
+
+    /* Test 6: Shrink-to-fit - inline-block without explicit width */
+    .shrink-container {
+      display: block;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .shrink-box {
+      display: inline-block;
+      background: #cccccc;
+      padding: 5px;
+      vertical-align: top;
+    }
+    .shrink-child {
+      display: block;
+      width: 60px;
+      height: 20px;
+      background: #999999;
+      margin: 2px;
+    }
+
+    /* Test 7: Nested content in inline-block */
+    .nested-container {
+      display: block;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .nested-card {
+      display: inline-block;
+      width: 100px;
+      background: #cccccc;
+      padding: 8px;
+      margin: 5px;
+      vertical-align: top;
+    }
+    .nested-header {
+      display: block;
+      height: 15px;
+      background: #999999;
+      margin-bottom: 5px;
+    }
+    .nested-body {
+      display: block;
+      height: 30px;
+      background: #bbbbbb;
+    }
+
+    /* Test 8: Inline-blocks inside inline-block */
+    .ib-outer-container {
+      display: block;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .ib-outer {
+      display: inline-block;
+      width: 140px;
+      background: #cccccc;
+      padding: 5px;
+      vertical-align: top;
+      font-size: 0;
+    }
+    .ib-inner {
+      display: inline-block;
+      width: 35px;
+      height: 18px;
+      background: #888888;
+      margin: 2px;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <div class="exact-container"><span class="exact-item"></span><span class="exact-item"></span></div><div class="over-container"><span class="over-item"></span><span class="over-item"></span></div><div class="overflow-container"><span class="overflow-wide"></span><span class="overflow-normal"></span></div><div class="margin-container"><span class="margin-item margin-right"></span><span class="margin-item margin-both"></span><span class="margin-item margin-left"></span></div><div class="padding-container"><span class="padding-item"></span><span class="padding-item padding-sym"></span><span class="padding-item padding-asym"></span><span class="padding-item"></span></div><div class="shrink-container"><span class="shrink-box"><div class="shrink-child"></div><div class="shrink-child"></div></span><span class="shrink-box"><div class="shrink-child"></div></span></div><div class="nested-container"><div class="nested-card"><div class="nested-header"></div><div class="nested-body"></div></div><div class="nested-card"><div class="nested-header"></div><div class="nested-body"></div></div></div><div class="ib-outer-container"><div class="ib-outer"><span class="ib-inner"></span><span class="ib-inner"></span><span class="ib-inner"></span><span class="ib-inner"></span></div><div class="ib-outer"><span class="ib-inner"></span><span class="ib-inner"></span></div></div>
+</body>
+</html>

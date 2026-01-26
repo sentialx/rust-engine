@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <rect x="0" y="0" width="400" height="300" fill="white"/>
+  <rect x="0" y="0" width="400" height="160" fill="rgba(0,0,0,0)"/>
+  <rect x="0" y="0" width="400" height="30" fill="rgba(238,238,238,1)" data-class="horiz-container"/>
+  <rect x="0" y="0" width="50" height="30" fill="rgba(204,204,204,1)" data-class="horiz-item"/>
+  <rect x="60" y="0" width="50" height="30" fill="rgba(204,204,204,1)" data-class="horiz-item"/>
+  <rect x="120" y="0" width="50" height="30" fill="rgba(204,204,204,1)" data-class="horiz-item"/>
+  <rect x="0" y="30" width="180" height="60" fill="rgba(221,221,221,1)" data-class="wrap-container"/>
+  <rect x="5" y="35" width="50" height="20" fill="rgba(170,170,170,1)" data-class="wrap-item"/>
+  <rect x="65" y="35" width="50" height="20" fill="rgba(170,170,170,1)" data-class="wrap-item"/>
+  <rect x="125" y="35" width="50" height="20" fill="rgba(170,170,170,1)" data-class="wrap-item"/>
+  <rect x="5" y="65" width="50" height="20" fill="rgba(170,170,170,1)" data-class="wrap-item"/>
+  <rect x="65" y="65" width="50" height="20" fill="rgba(170,170,170,1)" data-class="wrap-item"/>
+  <rect x="0" y="90" width="300" height="50" fill="rgba(238,238,238,1)" data-class="mixed-container"/>
+  <rect x="0" y="90" width="40" height="20" fill="rgba(204,204,204,1)" data-class="mixed-small"/>
+  <rect x="40" y="90" width="60" height="35" fill="rgba(170,170,170,1)" data-class="mixed-medium"/>
+  <rect x="100" y="90" width="80" height="50" fill="rgba(136,136,136,1)" data-class="mixed-large"/>
+  <rect x="180" y="90" width="40" height="20" fill="rgba(204,204,204,1)" data-class="mixed-small"/>
+  <rect x="0" y="140" width="400" height="20" fill="rgba(238,238,238,1)" data-class="nested-container"/>
+  <rect x="0" y="140" width="30" height="20" fill="rgba(102,102,102,1)" data-class="nested-item"/>
+  <rect x="30" y="140" width="30" height="20" fill="rgba(102,102,102,1)" data-class="nested-item"/>
+  <rect x="60" y="140" width="30" height="20" fill="rgba(102,102,102,1)" data-class="nested-item"/>
+  <rect x="90" y="140" width="30" height="20" fill="rgba(102,102,102,1)" data-class="nested-item"/>
+</svg>
