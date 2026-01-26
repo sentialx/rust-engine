@@ -136,9 +136,8 @@ fn compare_layout(fixture_name: &str) -> Result<(), String> {
 // =============================================================================
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_block_layout() {
-    // Tests: basic block, block stacking, auto width, nested blocks
+    // Tests: basic block, block stacking, auto width, nested blocks, whitespace between blocks
     if let Err(e) = compare_layout("block_layout") {
         panic!("{}", e);
     }
@@ -212,8 +211,8 @@ fn test_inline_block_wrap() {
 }
 
 #[test]
-#[ignore = "Requires baseline SVGs to be generated first"]
 fn test_inline_block_mixed() {
+    // Tests: mixed inline and inline-block elements, inline elements followed by block elements
     if let Err(e) = compare_layout("inline_block_mixed") {
         panic!("{}", e);
     }

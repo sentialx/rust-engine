@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use graviton::html::{parse_html, DomElement};
+use graviton::html::{parse_html, DomElement, NodeType};
 use graviton::layout::{compute_styles, propagate_styles, reflow, Rect};
 use graviton::render_frame::{BoxTextMeasurer, TextMeasurer};
 use graviton::css::parse_css;
@@ -91,6 +91,36 @@ fn find_by_class(tree: &Vec<Rc<RefCell<DomElement>>>, class: &str) -> Option<Rc<
         }
         if !borrowed.children.is_empty() {
             if let Some(found) = find_by_class(&borrowed.children, class) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_by_tag_name(tree: &Vec<Rc<RefCell<DomElement>>>, tag_name: &str) -> Option<Rc<RefCell<DomElement>>> {
+    for el in tree {
+        let borrowed = el.borrow();
+        if borrowed.tag_name == tag_name {
+            return Some(el.clone());
+        }
+        if !borrowed.children.is_empty() {
+            if let Some(found) = find_by_tag_name(&borrowed.children, tag_name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_by_node_type(tree: &Vec<Rc<RefCell<DomElement>>>, node_type: NodeType) -> Option<Rc<RefCell<DomElement>>> {
+    for el in tree {
+        let borrowed = el.borrow();
+        if borrowed.node_type == node_type {
+            return Some(el.clone());
+        }
+        if !borrowed.children.is_empty() {
+            if let Some(found) = find_by_node_type(&borrowed.children, node_type.clone()) {
                 return Some(found);
             }
         }
@@ -292,4 +322,26 @@ fn test_box_text_measurer_dimensions() {
     assert_eq!(width, 24.0, "Box measurer uses 0.6x font size per character");
     assert_eq!(ascent, 8.0, "Box measurer uses 0.8x font size for ascent");
 }
+
+#[test]
+fn test_html5ever_parse_builds_dom_nodes() {
+    let html = "<!doctype html><!-- comment --><div class=\"a b\" style=\"margin: 5px;\">Hi</div>";
+    let tree = parse_html(html);
+
+    let doctype = find_by_node_type(&tree, NodeType::DocumentType).expect("Should find doctype node");
+    assert_eq!(doctype.borrow().node_value.to_lowercase(), "html");
+
+    let comment = find_by_node_type(&tree, NodeType::Comment).expect("Should find comment node");
+    assert_eq!(comment.borrow().node_value.trim(), "comment");
+
+    let div = find_by_tag_name(&tree, "DIV").expect("Should find DIV element");
+    let div_borrowed = div.borrow();
+    assert!(div_borrowed.class_list.contains(&"a".to_string()));
+    assert!(div_borrowed.class_list.contains(&"b".to_string()));
+    assert_eq!(
+        div_borrowed.attributes.get("style").map(|v| v.as_str()),
+        Some("margin: 5px;")
+    );
+}
+
 
