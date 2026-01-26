@@ -53,20 +53,37 @@ impl InlineLayoutStrategy {
         // Wrap to next line if this inline box would overflow the available width.
         let max_right = context.x + context.parent_max_width;
         let mut should_wrap = false;
-        if inline_ctx.active
-            && box_data.margin_box_width() > 0.0
-            && box_data.x + box_data.margin_box_width()
-                > max_right
-                    + if matches!(
-                        box_data.computed_style.display.as_str(),
-                        "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
-                    ) {
-                        8.0
-                    } else {
-                        0.01
-                    }
-        {
-            should_wrap = true;
+        if inline_ctx.active {
+            let is_inline_block = matches!(
+                box_data.computed_style.display.as_str(),
+                "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+            );
+            let mut wrap_width = box_data.margin_box_width();
+
+            // For inline-blocks, use intrinsic_width (preferred/max-content) for wrapping decisions.
+            // An inline-block should wrap when its preferred width doesn't fit, not just min-content.
+            if is_inline_block {
+                let preferred_width = box_data
+                    .intrinsic_width
+                    .or(box_data.intrinsic_min_width)
+                    .unwrap_or(0.0);
+                if preferred_width > 0.0 {
+                    let non_content = box_data.padding.left
+                        + box_data.padding.right
+                        + box_data.margin.left
+                        + box_data.margin.right;
+                    let preferred_wrap_width = preferred_width + non_content;
+                    wrap_width = wrap_width.max(preferred_wrap_width);
+                }
+            }
+
+            if wrap_width > 0.0
+                && box_data.x + wrap_width
+                    > max_right
+                        + if is_inline_block { 8.0 } else { 0.01 }
+            {
+                should_wrap = true;
+            }
         }
 
         if should_wrap {

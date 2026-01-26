@@ -22,6 +22,7 @@ pub struct LayoutBox {
     /// Intrinsic dimensions (before layout)
     pub intrinsic_width: Option<f32>,
     pub intrinsic_height: Option<f32>,
+    pub intrinsic_min_width: Option<f32>,
     
     /// Layout dimensions (after layout)
     pub content_width: f32,
@@ -46,6 +47,7 @@ impl LayoutBox {
             formatting_context,
             intrinsic_width: None,
             intrinsic_height: None,
+            intrinsic_min_width: None,
             content_width: 0.0,
             content_height: 0.0,
             x: 0.0,
