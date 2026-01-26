@@ -111,20 +111,23 @@ pub fn build_block_child_context(
         available_content_width
     };
 
+    let rel_x_base = node.box_data.x + node.box_data.margin.left;
+    let rel_y_base = node.box_data.y;
+
     ReflowContext {
         x: content_x,
         y: content_y,
         rel_x: if node.box_data.computed_style.position == "relative"
             || uses_absolute_positioning(&node.box_data.computed_style)
         {
-            content_x
+            rel_x_base
         } else {
             context.rel_x
         },
         rel_y: if node.box_data.computed_style.position == "relative"
             || uses_absolute_positioning(&node.box_data.computed_style)
         {
-            content_y
+            rel_y_base
         } else {
             context.rel_y
         },

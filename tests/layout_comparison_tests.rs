@@ -232,6 +232,20 @@ fn test_devtools_panel_layout() {
     }
 }
 
+#[test]
+fn test_abspos_relative_layout() {
+    if let Err(e) = compare_layout("abspos_relative_layout") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+fn test_overlay_layout_old() {
+    if let Err(e) = compare_layout("overlay_layout_old") {
+        panic!("{}", e);
+    }
+}
+
 // =============================================================================
 // Unit tests for comparison logic
 // =============================================================================

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="160" viewBox="0 0 200 160">
+  <rect x="0" y="0" width="200" height="160" fill="white"/>
+  <rect x="8" y="8" width="30" height="20" fill="rgba(255,0,0,1)" data-class="overlay-box"/>
+  <rect x="48" y="18" width="20" height="14" fill="rgba(0,0,255,1)" data-class="overlay-box-secondary"/>
+</svg>
