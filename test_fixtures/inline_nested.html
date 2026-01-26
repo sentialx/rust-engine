@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x200">
+  <style>
+    body { margin: 0; }
+    .container {
+      display: block;
+      background: #eeeeee;
+    }
+    .outer {
+      display: inline;
+      background: #cccccc;
+    }
+    .inner {
+      display: inline;
+      background: #999999;
+    }
+    .item {
+      display: inline-block;
+      width: 30px;
+      height: 20px;
+      background: #666666;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="outer">
+      <span class="item"></span>
+      <span class="inner">
+        <span class="item"></span>
+        <span class="item"></span>
+      </span>
+      <span class="item"></span>
+    </span>
+  </div>
+</body>
+</html>

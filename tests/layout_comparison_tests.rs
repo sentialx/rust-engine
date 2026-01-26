@@ -223,6 +223,110 @@ fn test_padding_nested() {
 }
 
 // =============================================================================
+// Inline Layout Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_nested() {
+    if let Err(e) = compare_layout("inline_nested") {
+        panic!("{}", e);
+    }
+}
+
+// =============================================================================
+// Inline-Block Layout Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_mixed() {
+    if let Err(e) = compare_layout("inline_block_mixed") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_shrink_to_fit() {
+    if let Err(e) = compare_layout("inline_block_shrink_to_fit") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_nested_content() {
+    if let Err(e) = compare_layout("inline_block_nested_content") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_margin() {
+    if let Err(e) = compare_layout("inline_block_margin") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_wrap_mixed_sizes() {
+    if let Err(e) = compare_layout("inline_block_wrap_mixed_sizes") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_exact_fit() {
+    if let Err(e) = compare_layout("inline_block_exact_fit") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_one_pixel_over() {
+    if let Err(e) = compare_layout("inline_block_one_pixel_over") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_overflow() {
+    if let Err(e) = compare_layout("inline_block_overflow") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_in_inline_block() {
+    if let Err(e) = compare_layout("inline_in_inline_block") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_padding() {
+    if let Err(e) = compare_layout("inline_block_padding") {
+        panic!("{}", e);
+    }
+}
+
+#[test]
+#[ignore = "Requires baseline SVGs to be generated first"]
+fn test_inline_block_zero_size() {
+    if let Err(e) = compare_layout("inline_block_zero_size") {
+        panic!("{}", e);
+    }
+}
+
+// =============================================================================
 // Unit tests for comparison logic
 // =============================================================================
 

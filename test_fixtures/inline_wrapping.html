@@ -9,14 +9,13 @@
       width: 200px;
       background: #eeeeee;
     }
+    /* Use inline-block with explicit dimensions instead of pseudo-elements */
     .word {
-      display: inline;
+      display: inline-block;
+      width: 30px;
+      height: 20px;
       background: #cccccc;
       margin-right: 4px;
-    }
-    /* Use pseudo-elements to give inline elements visible size */
-    .word::before {
-      content: "\00a0\00a0\00a0\00a0\00a0";
     }
   </style>
 </head>

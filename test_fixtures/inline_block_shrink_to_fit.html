@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x200">
+  <style>
+    body { margin: 0; }
+    .container {
+      display: block;
+      background: #eeeeee;
+    }
+    /* Inline-block without explicit width should shrink to fit contents */
+    .shrink {
+      display: inline-block;
+      background: #cccccc;
+      padding: 5px;
+    }
+    .child {
+      display: block;
+      width: 60px;
+      height: 20px;
+      background: #999999;
+      margin: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="shrink">
+      <div class="child"></div>
+      <div class="child"></div>
+    </span>
+    <span class="shrink">
+      <div class="child"></div>
+    </span>
+  </div>
+</body>
+</html>
