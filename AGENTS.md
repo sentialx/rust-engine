@@ -1,3 +1,5 @@
+The goal is to be CSS-spec compliant.
+
 After doing changes, always run tests.
 
 When writing code, please first write a test (test driven development), and then

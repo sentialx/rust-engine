@@ -4,7 +4,7 @@ use std::fs;
 use std::rc::Rc;
 
 use find_folder::Search;
-use piston_window::{OpenGL, PistonWindow, WindowSettings};
+use piston_window::{PistonWindow, WindowSettings};
 
 use graviton::colors::ColorTupleA;
 use graviton::layout::Rect;
@@ -37,29 +37,32 @@ fn main() {
         height,
     };
 
-    // Initialize a minimal OpenGL context so glyph cache can load
-    let opengl = OpenGL::V3_2;
+    // Initialize a minimal window so glyph cache can load
     let mut _window: PistonWindow = WindowSettings::new("Graviton Offscreen", [1, 1])
         .exit_on_esc(false)
         .build()
         .expect("failed to create offscreen window");
-    let _gl = opengl_graphics::GlGraphics::new(opengl);
 
     let assets = Search::ParentsThenKids(3, 3)
         .for_folder("assets")
         .expect("assets folder not found");
 
-    let glyphs_map: Rc<RefCell<std::collections::HashMap<String, opengl_graphics::GlyphCache>>> =
-        Rc::new(RefCell::new(std::collections::HashMap::new()));
+    let glyphs_map: Rc<
+        RefCell<std::collections::HashMap<String, piston_window::Glyphs<'static>>>,
+    > = Rc::new(RefCell::new(
+        std::collections::HashMap::<String, piston_window::Glyphs<'static>>::new(),
+    ));
 
     let add_font = |name: &str,
-                    map: &Rc<RefCell<std::collections::HashMap<String, opengl_graphics::GlyphCache>>>| {
-        let glyphs = opengl_graphics::GlyphCache::new(
-            assets.join(name),
-            (),
-            opengl_graphics::TextureSettings::new(),
-        )
-        .unwrap();
+                    map: &Rc<
+        RefCell<std::collections::HashMap<String, piston_window::Glyphs<'static>>>,
+    >| {
+        let glyphs = _window
+            .load_font(
+                assets.join(name),
+                piston_window::wgpu_graphics::TextureSettings::new(),
+            )
+            .unwrap();
         map.borrow_mut().insert(name.to_string(), glyphs);
     };
 

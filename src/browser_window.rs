@@ -3,15 +3,18 @@ use crate::html::*;
 use crate::layout::*;
 use crate::render_frame::GlyphsTextMeasurer;
 use crate::render_frame::RenderFrame;
+use crate::utils::Debouncer;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 extern crate find_folder;
 extern crate piston_window;
 
-use opengl_graphics::GlGraphics;
 use piston_window::*;
+use piston_window::graphics::{clear, rectangle, Transformed};
+use piston_window::graphics::text::Text;
 use std::cell::RefCell;
+use std::time::Duration;
 
 fn css_color_to_piston(c: ColorTupleA) -> [f32; 4] {
     [
@@ -32,16 +35,16 @@ pub fn create_browser_window(url: String) {
         .for_folder("assets")
         .unwrap();
 
-    let glyphs_map: Rc<RefCell<HashMap<String, opengl_graphics::GlyphCache>>> =
+    let glyphs_map: Rc<RefCell<HashMap<String, piston_window::Glyphs<'static>>>> =
         Rc::new(RefCell::new(HashMap::new()));
 
     let add_font = |name: &str| {
-        let glyphs = opengl_graphics::GlyphCache::new(
-            assets.join(name),
-            (),
-            opengl_graphics::TextureSettings::new(),
-        )
-        .unwrap();
+        let glyphs = window
+            .load_font(
+                assets.join(name),
+                piston_window::wgpu_graphics::TextureSettings::new(),
+            )
+            .unwrap();
         glyphs_map.borrow_mut().insert(name.to_string(), glyphs)
     };
 
@@ -58,9 +61,6 @@ pub fn create_browser_window(url: String) {
 
     let mut el_txt = "".to_string();
     let mut element: Option<&DomElement> = None;
-
-    let opengl = OpenGL::V3_2;
-    let mut gl = GlGraphics::new(opengl);
 
     let devtools_width = 300.0;
 
@@ -81,6 +81,7 @@ pub fn create_browser_window(url: String) {
 
     let zoom = 1.0;
     let devtools_zoom = 0.65;
+    let mut resize_debouncer = Debouncer::new(Duration::from_millis(75));
 
     while let Some(event) = window.next() {
         let mouse = event.mouse_cursor_args();
@@ -129,10 +130,17 @@ pub fn create_browser_window(url: String) {
         }
 
         // on resize
-        if let Some(size) = event.resize_args() {
+        if event.resize_args().is_some() {
             let window_size = window.size();
-            render_frame.viewport.width = window_size.width as f32 - devtools_width;
-            render_frame.viewport.height = window_size.height as f32;
+            resize_debouncer.push((
+                window_size.width as f32 - devtools_width,
+                window_size.height as f32,
+            ));
+        }
+
+        if let Some((width, height)) = resize_debouncer.poll() {
+            render_frame.viewport.width = width;
+            render_frame.viewport.height = height;
             render_frame.reflow();
             render_frame.fast_render();
         }
@@ -172,9 +180,11 @@ pub fn create_browser_window(url: String) {
 
         let window_size = &window.size();
 
-        if let Some(args) = event.render_args() {
-            gl.draw(args.viewport(), |c, g| {
-                clear([1.0, 1.0, 1.0, 1.0], g);
+        if resize_debouncer.is_pending() {
+            continue;
+        }
+        window.draw_2d(&event, |c, g, _device| {
+            clear([1.0, 1.0, 1.0, 1.0], g);
                 // let device = &mut c.de
 
                 // window.draw_2d(&event, |context, graphics, device| {
@@ -202,7 +212,7 @@ pub fn create_browser_window(url: String) {
 
                         for line in &item.text_lines {
                             let ly = line.y as f64 - render_frame.scroll_y as f64;
-                            text::Text::new_color(color, (2 * (item.font_size) as u32))
+                            Text::new_color(color, 2 * (item.font_size) as u32)
                                 .draw(
                                     &line.text,
                                     glyphs,
@@ -274,7 +284,7 @@ pub fn create_browser_window(url: String) {
                     if glyphs_map.get_mut(&font_path).is_some() {
                         let glyphs = glyphs_map.get_mut(&font_path).unwrap();
 
-                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 2 * 12)
+                        Text::new_color([1.0, 1.0, 1.0, 1.0], 2 * 12)
                         .draw(
                             format!(
                                 "{:?} {:?}x{:?}",
@@ -296,7 +306,7 @@ pub fn create_browser_window(url: String) {
                         let mut lines = el_txt.split("\n");
                         for (i, line) in lines.enumerate() {
                             let font_size = 16.0;
-                            text::Text::new_color([0.0, 0.0, 0.0, 1.0], 2 * font_size as u32)
+                            Text::new_color([0.0, 0.0, 0.0, 1.0], 2 * font_size as u32)
                                 .draw(
                                     &line,
                                     glyphs,
@@ -315,7 +325,6 @@ pub fn create_browser_window(url: String) {
                 // glyphs_map.iter_mut().for_each(|(k, mut v)| {
                 //     v.factory.encoder.flush(device);
                 // });
-            });
-        }
+        });
     }
 }

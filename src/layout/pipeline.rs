@@ -161,6 +161,12 @@ pub fn measure_layout_tree(
             
             node.box_data.intrinsic_width = Some(text_width);
             node.box_data.intrinsic_height = Some(text_height);
+            let mut min_width: f32 = 0.0;
+            for word in element.node_value.split_whitespace() {
+                let word_width = text_measurer.measure(word, font_size, &font_path).0;
+                min_width = min_width.max(word_width);
+            }
+            node.box_data.intrinsic_min_width = Some(min_width);
             // Don't set content_width/height yet - that happens after text wrapping in layout
         } else {
             // For non-text elements, use specified width/height if available
@@ -182,6 +188,68 @@ pub fn measure_layout_tree(
                 _max_width
             };
             measure_layout_tree(&mut node.children, text_measurer, child_max_width);
+            if node.box_data.formatting_context != FormattingContext::TextNode {
+                let mut min_width: f32 = 0.0;
+                let mut max_width: f32 = 0.0;
+
+                // Track inline children that are on the same "line" for min-content calculation
+                let mut inline_line_min: f32 = 0.0;
+                let mut inline_line_max: f32 = 0.0;
+
+                for child in &node.children {
+                    let child_padding = child.box_data.padding.left + child.box_data.padding.right;
+                    let child_margin = child.box_data.margin.left + child.box_data.margin.right;
+                    let child_non_content = child_padding + child_margin;
+
+                    let is_inline_level = matches!(
+                        child.box_data.computed_style.display.as_str(),
+                        "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                    ) || child.box_data.formatting_context == FormattingContext::TextNode;
+
+                    if is_inline_level {
+                        // Inline children on the same line - sum their widths
+                        if let Some(child_min) = child.box_data.intrinsic_min_width {
+                            inline_line_min += child_min + child_non_content;
+                        }
+                        if let Some(child_max) = child.box_data.intrinsic_width {
+                            inline_line_max += child_max + child_non_content;
+                        }
+                    } else {
+                        // Block child - flush any accumulated inline content first
+                        if inline_line_min > 0.0 {
+                            min_width = min_width.max(inline_line_min);
+                            inline_line_min = 0.0;
+                        }
+                        if inline_line_max > 0.0 {
+                            max_width = max_width.max(inline_line_max);
+                            inline_line_max = 0.0;
+                        }
+
+                        // Block children - take max
+                        if let Some(child_min) = child.box_data.intrinsic_min_width {
+                            min_width = min_width.max(child_min + child_padding);
+                        }
+                        if let Some(child_max) = child.box_data.intrinsic_width {
+                            max_width = max_width.max(child_max + child_padding);
+                        }
+                    }
+                }
+
+                // Flush any remaining inline content
+                if inline_line_min > 0.0 {
+                    min_width = min_width.max(inline_line_min);
+                }
+                if inline_line_max > 0.0 {
+                    max_width = max_width.max(inline_line_max);
+                }
+
+                if min_width > 0.0 {
+                    node.box_data.intrinsic_min_width = Some(min_width);
+                }
+                if max_width > 0.0 {
+                    node.box_data.intrinsic_width = Some(max_width);
+                }
+            }
         }
     }
 }
@@ -347,6 +415,17 @@ fn max_intrinsic_text_width(node: &LayoutNode) -> f32 {
     node.children
         .iter()
         .map(max_intrinsic_text_width)
+        .fold(0.0_f32, |acc, w| acc.max(w))
+}
+
+fn min_intrinsic_text_width(node: &LayoutNode) -> f32 {
+    if node.box_data.formatting_context == FormattingContext::TextNode {
+        return node.box_data.intrinsic_min_width.unwrap_or(0.0);
+    }
+
+    node.children
+        .iter()
+        .map(min_intrinsic_text_width)
         .fold(0.0_f32, |acc, w| acc.max(w))
 }
 
@@ -590,6 +669,10 @@ pub fn layout_tree(
                         node.box_data.content_width = node.box_data.content_width.max(
                             child_right - content_left
                         );
+                    }
+                    let min_content_width = min_intrinsic_text_width(node);
+                    if min_content_width > 0.0 {
+                        node.box_data.intrinsic_min_width = Some(min_content_width);
                     }
                     if context.shrink_to_fit
                         && !matches!(

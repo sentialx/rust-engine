@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, fs, rc::Rc, time::Instant};
 
-use piston_window::CharacterCache;
+use piston_window::graphics::character::CharacterCache;
 
 use crate::{
     css::parse_css,
@@ -47,7 +47,7 @@ pub trait TextMeasurer {
 }
 
 pub struct GlyphsTextMeasurer<'a> {
-    pub glyphs_map: Rc<RefCell<HashMap<String, opengl_graphics::GlyphCache<'a>>>>,
+    pub glyphs_map: Rc<RefCell<HashMap<String, piston_window::Glyphs<'a>>>>,
 }
 
 impl TextMeasurer for GlyphsTextMeasurer<'_> {
