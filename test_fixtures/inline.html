@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x300">
+  <style>
+    body { margin: 0; }
+
+    /* Test 1: Horizontal inline-blocks */
+    .horiz-container {
+      display: block;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .horiz-item {
+      display: inline-block;
+      width: 50px;
+      height: 30px;
+      background: #cccccc;
+      margin-right: 10px;
+      vertical-align: top;
+    }
+
+    /* Test 2: Inline wrapping */
+    .wrap-container {
+      display: block;
+      width: 180px;
+      background: #dddddd;
+      font-size: 0;
+    }
+    .wrap-item {
+      display: inline-block;
+      width: 50px;
+      height: 20px;
+      background: #aaaaaa;
+      margin: 5px;
+      vertical-align: top;
+    }
+
+    /* Test 3: Mixed sizes on same line */
+    .mixed-container {
+      display: block;
+      width: 300px;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .mixed-small {
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+      background: #cccccc;
+      vertical-align: top;
+    }
+    .mixed-medium {
+      display: inline-block;
+      width: 60px;
+      height: 35px;
+      background: #aaaaaa;
+      vertical-align: top;
+    }
+    .mixed-large {
+      display: inline-block;
+      width: 80px;
+      height: 50px;
+      background: #888888;
+      vertical-align: top;
+    }
+
+    /* Test 4: Nested inline wrappers (display: inline is transparent) */
+    .nested-container {
+      display: block;
+      background: #eeeeee;
+      font-size: 0;
+    }
+    .nested-outer {
+      display: inline;
+    }
+    .nested-inner {
+      display: inline;
+    }
+    .nested-item {
+      display: inline-block;
+      width: 30px;
+      height: 20px;
+      background: #666666;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <div class="horiz-container"><span class="horiz-item"></span><span class="horiz-item"></span><span class="horiz-item"></span></div><div class="wrap-container"><span class="wrap-item"></span><span class="wrap-item"></span><span class="wrap-item"></span><span class="wrap-item"></span><span class="wrap-item"></span></div><div class="mixed-container"><span class="mixed-small"></span><span class="mixed-medium"></span><span class="mixed-large"></span><span class="mixed-small"></span></div><div class="nested-container"><span class="nested-outer"><span class="nested-item"></span><span class="nested-inner"><span class="nested-item"></span><span class="nested-item"></span></span><span class="nested-item"></span></span></div>
+</body>
+</html>

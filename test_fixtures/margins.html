@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x500">
+  <style>
+    body { margin: 0; }
+
+    .sibling-equal-1 {
+      display: block;
+      width: 100px;
+      height: 30px;
+      background: #aaaaaa;
+      margin-bottom: 20px;
+    }
+    .sibling-equal-2 {
+      display: block;
+      width: 100px;
+      height: 30px;
+      background: #888888;
+      margin-top: 20px;
+    }
+
+    .sibling-asym-1 {
+      display: block;
+      width: 100px;
+      height: 30px;
+      background: #cccccc;
+      margin-bottom: 10px;
+    }
+    .sibling-asym-2 {
+      display: block;
+      width: 100px;
+      height: 30px;
+      background: #666666;
+      margin-top: 40px;
+    }
+
+    .parent-top {
+      display: block;
+      width: 150px;
+      background: #dddddd;
+      margin-top: 15px;
+    }
+    .child-top {
+      display: block;
+      height: 25px;
+      background: #999999;
+      margin-top: 25px;
+    }
+
+    .parent-top-padded {
+      display: block;
+      width: 150px;
+      padding-top: 5px;
+      background: #dddddd;
+      margin-top: 15px;
+    }
+    .child-top-padded {
+      display: block;
+      height: 25px;
+      background: #999999;
+      margin-top: 25px;
+    }
+
+    .chain-1 {
+      display: block;
+      width: 80px;
+      height: 20px;
+      background: #aaaaaa;
+      margin-bottom: 15px;
+    }
+    .chain-2 {
+      display: block;
+      width: 80px;
+      height: 20px;
+      background: #888888;
+      margin-top: 10px;
+      margin-bottom: 30px;
+    }
+    .chain-3 {
+      display: block;
+      width: 80px;
+      height: 20px;
+      background: #666666;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="sibling-equal-1"></div><div class="sibling-equal-2"></div><div class="sibling-asym-1"></div><div class="sibling-asym-2"></div><div class="parent-top"><div class="child-top"></div></div><div class="parent-top-padded"><div class="child-top-padded"></div></div><div class="chain-1"></div><div class="chain-2"></div><div class="chain-3"></div>
+</body>
+</html>

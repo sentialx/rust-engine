@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport-size" content="400x400">
+  <style>
+    body { margin: 0; }
+
+    /* Test 1: Basic block with explicit dimensions */
+    .basic {
+      display: block;
+      width: 100px;
+      height: 50px;
+      background: #aaaaaa;
+      margin: 10px;
+    }
+
+    /* Test 2: Block stacking - two blocks stack vertically */
+    .stack1 {
+      display: block;
+      width: 80px;
+      height: 40px;
+      background: #cccccc;
+      margin: 5px;
+    }
+    .stack2 {
+      display: block;
+      width: 80px;
+      height: 40px;
+      background: #999999;
+      margin: 5px;
+    }
+
+    /* Test 3: Auto width - block fills container */
+    .auto-container {
+      display: block;
+      width: 200px;
+      padding: 10px;
+      background: #dddddd;
+    }
+    .auto-child {
+      display: block;
+      height: 30px;
+      background: #bbbbbb;
+    }
+
+    /* Test 4: Nested blocks */
+    .outer {
+      display: block;
+      width: 180px;
+      padding: 15px;
+      background: #eeeeee;
+    }
+    .middle {
+      display: block;
+      padding: 10px;
+      background: #cccccc;
+    }
+    .inner {
+      display: block;
+      height: 25px;
+      background: #999999;
+    }
+  </style>
+</head>
+<body>
+  <div class="basic"></div><div class="stack1"></div><div class="stack2"></div><div class="auto-container"><div class="auto-child"></div></div><div class="outer"><div class="middle"><div class="inner"></div></div></div>
+</body>
+</html>
