@@ -65,6 +65,74 @@ impl RenderFrameState {
     }
 }
 
+struct DevtoolsOverlay {
+    render: RenderFrameState,
+}
+
+impl DevtoolsOverlay {
+    fn new(viewport: Rect) -> Self {
+        Self {
+            render: RenderFrameState::new(viewport),
+        }
+    }
+
+    fn set_viewport(&mut self, width: f32, height: f32) {
+        self.render.set_viewport(width, height);
+    }
+
+    fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
+        self.render.render_if_needed(renderer);
+    }
+
+    fn buffer(&self) -> Option<&RenderedBuffer> {
+        self.render.buffer()
+    }
+
+    fn invalidate(&mut self) {
+        self.render.invalidate();
+    }
+
+    fn rebuild(&mut self, hover_info: Option<&HoverInfo>, viewport: Rect, page_height: f32) {
+        let overlay_frame = self.render.frame_mut();
+        overlay_frame.set_viewport(viewport.width, viewport.height);
+        overlay_frame.dom_tree = parse_html("<html><body></body></html>");
+        overlay_frame.default_styles = vec![];
+        overlay_frame.parsed_css = vec![];
+        overlay_frame.styles = vec![];
+
+        if let Some(body) = find_first_tag(&overlay_frame.dom_tree, "BODY") {
+            let body_style = format!(
+                "display:block; margin:0px; position:relative; width:{}px; height:{}px; background: rgba(0,0,0,0);",
+                viewport.width, page_height
+            );
+            body.borrow_mut().set_attribute("style", &body_style);
+
+            if let Some(info) = hover_info {
+                let margin_box = clamp_rect(info.hover_rect.clone());
+                let border_box = clamp_rect(info.rect.clone());
+                let content_box = clamp_rect(Rect {
+                    x: info.rect.x + info.padding.left,
+                    y: info.rect.y + info.padding.top,
+                    width: info.rect.width - info.padding.left - info.padding.right,
+                    height: info.rect.height - info.padding.top - info.padding.bottom,
+                });
+
+                // Chromium-style overlay: margin (orange), padding (green), content (blue)
+                add_inset_overlay(&body, margin_box, border_box.clone(), "rgba(255, 200, 0, 0.35)");
+                add_inset_overlay(&body, border_box.clone(), content_box.clone(), "rgba(77, 200, 0, 0.35)");
+                add_overlay_box(&body, content_box.x, content_box.y, content_box.width, content_box.height, "rgba(0, 128, 255, 0.35)");
+
+                for seg in &info.text_segments {
+                    add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "rgba(0,204,0,1.0)");
+                }
+            }
+        }
+
+        overlay_frame.full_layout();
+        self.render.invalidate();
+    }
+}
+
 struct BrowserApp {
     url: String,
     window: Option<Rc<Window>>,
@@ -73,7 +141,7 @@ struct BrowserApp {
     // Document layout (owns text measurer and font loading)
     main: RenderFrameState,
     devtools: RenderFrameState,
-    overlay: RenderFrameState,
+    overlay: DevtoolsOverlay,
 
     // Rendering
     renderer: SkiaRenderer,
@@ -129,7 +197,7 @@ fn add_overlay_box(
     }
     let div = DomElement::create("div");
     let style = format!(
-        "position:absolute; left:{}px; top:{}px; width:{}px; height:{}px; background:{};",
+        "display:block; position:absolute; left:{}px; top:{}px; width:{}px; height:{}px; background:{};",
         left, top, width, height, color
     );
     div.borrow_mut().set_attribute("style", &style);
@@ -158,6 +226,58 @@ fn add_border_box(
     add_overlay_box(parent, left + width - bw_x, top, bw_x, height, color);
 }
 
+fn add_inset_overlay(
+    parent: &Rc<RefCell<DomElement>>,
+    outer: Rect,
+    inner: Rect,
+    color: &str,
+) {
+    let outer_right = outer.x + outer.width;
+    let outer_bottom = outer.y + outer.height;
+    let inner_right = inner.x + inner.width;
+    let inner_bottom = inner.y + inner.height;
+
+    // Top band
+    if inner.y > outer.y {
+        add_overlay_box(parent, outer.x, outer.y, outer.width, inner.y - outer.y, color);
+    }
+    // Bottom band
+    if inner_bottom < outer_bottom {
+        add_overlay_box(
+            parent,
+            outer.x,
+            inner_bottom,
+            outer.width,
+            outer_bottom - inner_bottom,
+            color,
+        );
+    }
+    // Left band
+    if inner.x > outer.x {
+        add_overlay_box(parent, outer.x, inner.y, inner.x - outer.x, inner.height, color);
+    }
+    // Right band
+    if inner_right < outer_right {
+        add_overlay_box(
+            parent,
+            inner_right,
+            inner.y,
+            outer_right - inner_right,
+            inner.height,
+            color,
+        );
+    }
+}
+
+fn clamp_rect(rect: Rect) -> Rect {
+    Rect {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width.max(0.0),
+        height: rect.height.max(0.0),
+    }
+}
+
 impl BrowserApp {
     fn new(url: String) -> Self {
         Self {
@@ -166,7 +286,7 @@ impl BrowserApp {
             surface: None,
             main: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
             devtools: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
-            overlay: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
+            overlay: DevtoolsOverlay::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
             renderer: SkiaRenderer::new(),
             scroll_y: 0.0,
             pressed_up: false,
@@ -208,31 +328,7 @@ impl BrowserApp {
     fn rebuild_overlay(&mut self) {
         let viewport = self.main.frame().viewport.clone();
         let page_height = self.main.frame().page_height.max(viewport.height);
-        let overlay_frame = self.overlay.frame_mut();
-        overlay_frame.set_viewport(viewport.width, viewport.height);
-        overlay_frame.dom_tree = parse_html("<html><body></body></html>");
-        overlay_frame.parsed_css = vec![];
-        overlay_frame.styles = overlay_frame.default_styles.clone();
-
-        if let Some(body) = find_first_tag(&overlay_frame.dom_tree, "BODY") {
-            let body_style = format!(
-                "margin:0px; position:relative; width:{}px; height:{}px; background: rgba(0,0,0,0);",
-                viewport.width, page_height
-            );
-            body.borrow_mut().set_attribute("style", &body_style);
-
-            if let Some(info) = &self.hover_info {
-                add_overlay_box(&body, info.rect.x, info.rect.y, info.rect.width, info.rect.height, "rgba(0,128,255,0.3)");
-                add_border_box(&body, info.rect.x, info.rect.y, info.rect.width, info.rect.height, 2.0, "rgba(0,128,255,1.0)");
-
-                for seg in &info.text_segments {
-                    add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "rgba(0,204,0,1.0)");
-                }
-            }
-        }
-
-        overlay_frame.full_layout();
-        self.overlay.invalidate();
+        self.overlay.rebuild(self.hover_info.as_ref(), viewport, page_height);
     }
 
     fn update_devtools_content(&mut self) {
