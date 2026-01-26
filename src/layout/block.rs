@@ -1,6 +1,6 @@
 // Block formatting context layout strategy
 
-use crate::layout::flow::{ReflowContext, FormattingContext, uses_absolute_positioning};
+use crate::layout::flow::{ReflowContext, FormattingContext, PrevBlockData, uses_absolute_positioning};
 use crate::layout::boxes::{LayoutBox, LayoutNode};
 
 /// Block layout strategy - handles vertical stacking of block elements
@@ -167,21 +167,20 @@ pub fn finalize_block_dimensions(
 }
 
 impl BlockLayoutStrategy {
-    /// Layout a block element and update state in one call
-    /// Returns the new adjacent_margin_bottom
+    /// Layout a block element and update state
     pub fn layout_and_update(
         &self,
         box_data: &mut LayoutBox,
-        prev_box: Option<&LayoutBox>,
+        prev_block: Option<PrevBlockData>,
         reserved_block_y: &mut f32,
         context: &ReflowContext,
-    ) -> f32 {
+    ) {
         let x_base = context.x;
         let y_base = context.y;
 
-        if let Some(prev) = prev_box {
-            let prev_border_box_end = prev.y + prev.border_box_height();
-            let margin_collapse = prev.margin.bottom.max(box_data.margin.top);
+        if let Some(prev) = prev_block {
+            let prev_border_box_end = prev.y + prev.border_box_height;
+            let margin_collapse = prev.margin_bottom.max(box_data.margin.top);
             box_data.y = prev_border_box_end + margin_collapse;
             *reserved_block_y = (*reserved_block_y).max(prev_border_box_end);
         } else {
@@ -192,8 +191,6 @@ impl BlockLayoutStrategy {
 
         box_data.x = x_base;
         *reserved_block_y = (*reserved_block_y).max(box_data.y + box_data.margin_box_height());
-
-        box_data.margin.bottom
     }
 }
 

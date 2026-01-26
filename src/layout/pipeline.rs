@@ -14,7 +14,7 @@ use crate::html::{DomElement, NodeType, ComputedFlow};
 use crate::render_frame::TextMeasurer;
 use crate::styles::ScalarEvaluationContext;
 use crate::layout::{Rect, boxes::{LayoutBox, LayoutNode}};
-use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, InlineContext, uses_absolute_positioning};
+use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, SiblingLayoutState, uses_absolute_positioning};
 use crate::layout::block::{BlockLayoutStrategy, layout_block_children};
 use crate::layout::inline::{preprocess_text_node, compute_text_intrinsics, compute_container_intrinsics, layout_inline_content, advance_past_atomic_inline, is_atomic_inline_display, layout_inline_children};
 use crate::layout::abspos::AbsoluteLayoutStrategy;
@@ -203,102 +203,77 @@ pub fn measure_layout_tree(
 
 
 /// Layout pass: Assign positions and sizes using formatting context strategies
-/// Text segments and inline elements are positioned by the unified inline layout algorithm
 pub fn layout_tree(
     layout_nodes: &mut Vec<LayoutNode>,
     context: &ReflowContext,
-) -> (f32, f32) { // Returns (reserved_block_y, adjacent_margin_bottom)
+) -> (f32, f32) {
     let block_strategy = BlockLayoutStrategy;
     let abspos_strategy = AbsoluteLayoutStrategy;
-
-    let mut reserved_block_y = context.y;
     let line_start_x = context.layout_x_start.unwrap_or(context.x);
-    let mut inline_ctx = InlineContext::new(line_start_x, context.y, context.parent_max_width);
-    inline_ctx.active = true;
-    let mut adjacent_margin_bottom = 0.0;
-    let mut prev_node_opt: Option<&LayoutNode> = None;
+    let mut state = SiblingLayoutState::new(context.y, line_start_x, context.parent_max_width);
 
     for node in layout_nodes.iter_mut() {
-        let formatting_context = node.box_data.formatting_context;
-        let mut is_atomic_inline = false; // Track if this is an inline-block that needs ctx update after children
-
-        // Skip if display: none
         if node.box_data.computed_style.display == "none" {
             continue;
         }
 
-        // Layout based on formatting context
+        let formatting_context = node.box_data.formatting_context;
+        let mut is_atomic_inline = false;
+        let is_block = matches!(formatting_context, FormattingContext::BlockContainer);
+
+        // Position element based on formatting context
         if uses_absolute_positioning(&node.box_data.computed_style) {
             abspos_strategy.layout(&mut node.box_data, context);
         } else {
             match formatting_context {
                 FormattingContext::BlockContainer => {
-                    // Flush any pending inline content
-                    if inline_ctx.x > inline_ctx.line_start_x {
-                        reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
-                    }
-
-                    let prev_box = prev_node_opt.map(|n| &n.box_data);
-                    adjacent_margin_bottom = block_strategy.layout_and_update(
+                    state.flush_inline();
+                    block_strategy.layout_and_update(
                         &mut node.box_data,
-                        prev_box,
-                        &mut reserved_block_y,
+                        state.prev_block,
+                        &mut state.reserved_block_y,
                         context,
                     );
-
-                    // Reset inline context after block
-                    inline_ctx = InlineContext::new(line_start_x, reserved_block_y, context.parent_max_width);
-                    inline_ctx.active = true;
                 }
                 FormattingContext::InlineContainer | FormattingContext::TextNode => {
-                    // Check if this is an atomic inline (inline-block) that needs ctx update after children
                     is_atomic_inline = formatting_context == FormattingContext::InlineContainer
                         && is_atomic_inline_display(&node.box_data.computed_style.display);
-
-                    // Use unified inline layout - handles text segments and inline elements
-                    let mut single_node = std::slice::from_mut(node);
-                    layout_inline_content(single_node, &mut inline_ctx);
-
-                    // Update reserved_block_y to account for inline content
-                    // Note: For atomic inlines, this will be updated again after children layout
-                    reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
-                    adjacent_margin_bottom = 0.0;
+                    layout_inline_content(std::slice::from_mut(node), &mut state.inline_ctx);
+                    state.after_inline();
                 }
                 FormattingContext::FlexContainer | FormattingContext::GridContainer => {
                     // TODO: Implement flex/grid - treat as block for now
-                    let prev_box = prev_node_opt.map(|n| &n.box_data);
-                    adjacent_margin_bottom = block_strategy.layout_and_update(
+                    block_strategy.layout_and_update(
                         &mut node.box_data,
-                        prev_box,
-                        &mut reserved_block_y,
+                        state.prev_block,
+                        &mut state.reserved_block_y,
                         context,
                     );
                 }
             }
         }
 
-        // Layout children based on formatting context
-        let is_block = matches!(node.box_data.formatting_context, FormattingContext::BlockContainer);
+        // Layout children
         if is_block {
             layout_block_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
+            // Update state AFTER children are laid out (height is now final)
+            state.after_block(
+                node.box_data.y,
+                node.box_data.border_box_height(),
+                node.box_data.margin.bottom,
+            );
         } else {
             layout_inline_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
         }
 
-        // After children are laid out, update inline context with actual dimensions
-        // for atomic inline boxes (inline-block, etc.)
+        // Update inline context after atomic inline children are laid out
         if is_atomic_inline {
-            advance_past_atomic_inline(node, &mut inline_ctx);
-            reserved_block_y = reserved_block_y.max(inline_ctx.y + inline_ctx.line_height);
-        }
-
-        // Only track block elements as prev_node for block stacking
-        if formatting_context == FormattingContext::BlockContainer {
-            prev_node_opt = Some(node);
+            advance_past_atomic_inline(node, &mut state.inline_ctx);
+            state.after_inline();
         }
     }
 
-    (reserved_block_y, adjacent_margin_bottom)
+    (state.reserved_block_y, state.prev_block.map(|p| p.margin_bottom).unwrap_or(0.0))
 }
 
 /// Finalize pass: Copy layout results back to DOM ComputedFlow
