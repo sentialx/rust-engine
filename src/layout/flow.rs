@@ -118,6 +118,9 @@ pub struct ReflowContext {
     pub layout_x_start: Option<f32>,
     pub adjacent_margin_bottom: f32,
     pub shrink_to_fit: bool,
+    /// Parent's top margin that should collapse with first child's margin
+    /// Only set when parent has no padding/border preventing collapse
+    pub collapsible_margin_top: f32,
 }
 
 /// Helper to check if element uses absolute positioning

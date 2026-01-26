@@ -294,6 +294,7 @@ pub fn reflow(
         layout_x_start: None,
         adjacent_margin_bottom: 0.0,
         shrink_to_fit: false,
+        collapsible_margin_top: 0.0,
     };
 
     let sibling_context = context.unwrap_or(&mut default_context);
@@ -342,43 +343,43 @@ pub fn get_render_array(
         }
 
         let is_in_viewport = is_in_viewport(viewport, &rect);
-        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
-        {
-            let children_render_items = get_render_array(&mut element.children, viewport);
-            array.extend(children_render_items);
-        }
 
-        // let element = &tree[i];
+        // Add the current element first (for correct z-order: parent before children)
         let computed_flow = element.computed_flow.as_ref().unwrap();
         let computed_style = element.computed_style.as_ref().unwrap();
 
         let has_something_to_render =
             element.node_value != "" || computed_style.background_color != (0.0, 0.0, 0.0, 0.0);
-        // The element has nothing to render
-        if !is_in_viewport {
-            continue;
+
+        if is_in_viewport {
+            let style = element.inherited_style.as_ref().unwrap();
+
+            match element.node_type {
+                NodeType::Comment => {}
+                _ => {
+                    let item = RenderItem {
+                        x: computed_flow.x,
+                        y: computed_flow.y,
+                        width: computed_flow.width,
+                        height: computed_flow.height,
+                        background_color: computed_style.background_color,
+                        text_segments: element.text_segments.clone(),
+                        font_size: computed_style.font_size,
+                        font_path: style.font.get_path(),
+                        color: computed_style.color,
+                        underline: computed_style.text_decoration == "underline",
+                        element: Some(tree[i].clone()),
+                    };
+                    array.push(item);
+                }
+            }
         }
 
-        let style = element.inherited_style.as_ref().unwrap();
-
-        match element.node_type {
-            NodeType::Comment => {}
-            _ => {
-                let item = RenderItem {
-                    x: computed_flow.x,
-                    y: computed_flow.y,
-                    width: computed_flow.width,
-                    height: computed_flow.height,
-                    background_color: computed_style.background_color,
-                    text_segments: element.text_segments.clone(),
-                    font_size: computed_style.font_size,
-                    font_path: style.font.get_path(),
-                    color: computed_style.color,
-                    underline: computed_style.text_decoration == "underline",
-                    element: Some(tree[i].clone()),
-                };
-                array.insert(0, item);
-            }
+        // Then add children (in DOM order, after parent)
+        if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
+        {
+            let children_render_items = get_render_array(&mut element.children, viewport);
+            array.extend(children_render_items);
         }
     }
 

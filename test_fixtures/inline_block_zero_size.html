@@ -7,34 +7,32 @@
     .container {
       display: block;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     .normal {
       display: inline-block;
       width: 50px;
       height: 30px;
       background: #cccccc;
+      vertical-align: top;
     }
     .zero-width {
       display: inline-block;
       width: 0;
       height: 30px;
       background: #999999;
+      vertical-align: top;
     }
     .zero-height {
       display: inline-block;
       width: 50px;
       height: 0;
       background: #999999;
+      vertical-align: top;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="normal"></span>
-    <span class="zero-width"></span>
-    <span class="normal"></span>
-    <span class="zero-height"></span>
-    <span class="normal"></span>
-  </div>
+  <div class="container"><span class="normal"></span><span class="zero-width"></span><span class="normal"></span><span class="zero-height"></span><span class="normal"></span></div>
 </body>
 </html>

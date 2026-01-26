@@ -8,6 +8,7 @@
       display: block;
       width: 80px;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     /* Item wider than container - should overflow, not wrap */
     .wide {
@@ -15,19 +16,18 @@
       width: 120px;
       height: 30px;
       background: #cccccc;
+      vertical-align: top;
     }
     .normal {
       display: inline-block;
       width: 40px;
       height: 25px;
       background: #aaaaaa;
+      vertical-align: top;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="wide"></span>
-    <span class="normal"></span>
-  </div>
+  <div class="container"><span class="wide"></span><span class="normal"></span></div>
 </body>
 </html>

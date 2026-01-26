@@ -141,6 +141,7 @@ pub fn build_layout_tree(
                     layout_x_start: context.layout_x_start,
                     adjacent_margin_bottom: context.adjacent_margin_bottom,
                     shrink_to_fit,
+                    collapsible_margin_top: context.collapsible_margin_top,
                 })
             } else {
                 None
@@ -399,6 +400,7 @@ pub fn layout_tree(
                         layout_x_start: context.layout_x_start,
                         adjacent_margin_bottom,
                         shrink_to_fit: context.shrink_to_fit,
+                        collapsible_margin_top: 0.0,
                     };
                     block_strategy.update_state(
                         &node.box_data,
@@ -479,6 +481,13 @@ pub fn layout_tree(
         }
 
         if !node.children.is_empty() {
+            // Check if this node has explicit width
+            let node_has_explicit_width = {
+                let element = node.box_data.element.borrow();
+                let inherited_style = element.inherited_style.as_ref().unwrap();
+                inherited_style.width.has_numeric_value()
+            };
+
             let child_shrink_to_fit = matches!(
                 node.box_data.computed_style.display.as_str(),
                 "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
@@ -487,7 +496,20 @@ pub fn layout_tree(
                 node.box_data.computed_style.display.as_str(),
                 "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
             );
-            let parent_is_shrink_to_fit = context.shrink_to_fit || node_is_shrink_to_fit;
+            // If this node has explicit width, don't propagate shrink_to_fit to children
+            // because children should fill the explicit width, not shrink to content
+            let effective_shrink_to_fit = if node_has_explicit_width {
+                false
+            } else {
+                child_shrink_to_fit
+            };
+            // If this node has explicit width, it's not shrink-to-fit for child layout purposes
+            let effective_node_is_shrink_to_fit = if node_has_explicit_width {
+                false
+            } else {
+                node_is_shrink_to_fit
+            };
+            let parent_is_shrink_to_fit = context.shrink_to_fit || effective_node_is_shrink_to_fit;
             let parent_content_width = if parent_is_shrink_to_fit {
                 available_content_width
             } else if node.box_data.content_width > 0.0 {
@@ -496,8 +518,37 @@ pub fn layout_tree(
                 available_content_width
             };
 
-            // Calculate content y (matching how content_x includes margin)
-            let content_y = node.box_data.y + node.box_data.margin.top + node.box_data.padding.top;
+            // Calculate content y
+            // For block containers, box_data.y already includes margin (it's the border-box position)
+            // For inline elements, box_data.y is the content position, so we need to add margin
+            let is_block = matches!(
+                node.box_data.formatting_context,
+                FormattingContext::BlockContainer
+            );
+
+            // Margin collapsing: when a block has no padding.top, its margin collapses
+            // with the first child's margin. We pass the parent's margin to children
+            // so they can compute the collapsed margin.
+            let can_collapse_margin = is_block && node.box_data.padding.top == 0.0;
+            let collapsible_margin = if can_collapse_margin {
+                node.box_data.margin.top
+            } else {
+                0.0
+            };
+
+            let content_y = if is_block {
+                // Block: y is border-box position, content starts after padding
+                // If margin can collapse, subtract the parent's margin from y
+                // so the child's margin starts from the correct position
+                if can_collapse_margin {
+                    node.box_data.y + node.box_data.padding.top - node.box_data.margin.top
+                } else {
+                    node.box_data.y + node.box_data.padding.top
+                }
+            } else {
+                // Inline: y is content position, add margin and padding
+                node.box_data.y + node.box_data.margin.top + node.box_data.padding.top
+            };
 
             let child_context = ReflowContext {
                 x: content_x,
@@ -522,7 +573,8 @@ pub fn layout_tree(
                     None
                 },
                 adjacent_margin_bottom: 0.0,
-                shrink_to_fit: parent_is_shrink_to_fit || child_shrink_to_fit,
+                shrink_to_fit: parent_is_shrink_to_fit || effective_shrink_to_fit,
+                collapsible_margin_top: collapsible_margin,
             };
 
             layout_tree(&mut node.children, &child_context);
@@ -543,7 +595,9 @@ pub fn layout_tree(
                     // This is needed because text wrapping may have reduced child widths
                     node.box_data.content_width = 0.0;
                     for child in &node.children {
-                        let child_x = child.box_data.x + child.box_data.margin.left;
+                        // For all children, box_data.x is the margin box left position
+                        // margin_box_width() gives the full margin box width
+                        let child_x = child.box_data.x;
                         let mut child_right = child_x + child.box_data.margin_box_width();
                         if matches!(
                             display,
@@ -619,10 +673,20 @@ pub fn layout_tree(
                 // Reset content_height and recompute from children
                 node.box_data.content_height = 0.0;
                 for child in &node.children {
-                    let child_y = child.box_data.y + child.box_data.margin.top;
-                    let child_bottom = child_y + child.box_data.margin_box_height();
+                    // For inline elements, box_data.y is the margin box position
+                    // For block elements, box_data.y is the border box position
+                    let child_is_block = matches!(
+                        child.box_data.formatting_context,
+                        FormattingContext::BlockContainer
+                    );
+                    let child_bottom = if child_is_block {
+                        // Block: y is border box, add border_box_height + margin.bottom
+                        child.box_data.y + child.box_data.border_box_height() + child.box_data.margin.bottom
+                    } else {
+                        // Inline: y is margin box top, margin_box_height gives full height
+                        child.box_data.y + child.box_data.margin_box_height()
+                    };
                     // content_height excludes padding; measure from content box top
-                    // Must match content_y calculation (includes margin for inline elements)
                     node.box_data.content_height = node.box_data.content_height.max(
                         child_bottom - content_y
                     );
@@ -661,6 +725,7 @@ pub fn layout_tree(
                     layout_x_start: None,
                     adjacent_margin_bottom: 0.0,
                     shrink_to_fit: false,
+                    collapsible_margin_top: collapsible_margin,
                 };
 
                 layout_tree(&mut node.children, &relayout_context);
@@ -669,9 +734,15 @@ pub fn layout_tree(
                     // Recompute height after relayout.
                     node.box_data.content_height = 0.0;
                     for child in &node.children {
-                        let child_y = child.box_data.y + child.box_data.margin.top;
-                        let child_bottom = child_y + child.box_data.margin_box_height();
-                        // Must match content_y calculation
+                        let child_is_block = matches!(
+                            child.box_data.formatting_context,
+                            FormattingContext::BlockContainer
+                        );
+                        let child_bottom = if child_is_block {
+                            child.box_data.y + child.box_data.border_box_height() + child.box_data.margin.bottom
+                        } else {
+                            child.box_data.y + child.box_data.margin_box_height()
+                        };
                         node.box_data.content_height = node.box_data.content_height.max(
                             child_bottom - content_y
                         );

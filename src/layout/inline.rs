@@ -118,8 +118,8 @@ fn layout_atomic_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
         + node.box_data.padding.left + node.box_data.padding.right
         + node.box_data.margin.left + node.box_data.margin.right;
 
-    // Check if this box fits (with small tolerance for inline-blocks)
-    if should_wrap_with_tolerance(ctx, estimated_width, 8.0) {
+    // Check if this box fits (with small tolerance for rounding)
+    if should_wrap_with_tolerance(ctx, estimated_width, 0.5) {
         ctx.wrap_to_next_line();
     }
 

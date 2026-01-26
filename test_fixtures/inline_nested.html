@@ -7,33 +7,26 @@
     .container {
       display: block;
       background: #eeeeee;
+      font-size: 0; /* Eliminate strut */
     }
     .outer {
       display: inline;
-      background: #cccccc;
+      /* No background - transparent wrapper */
     }
     .inner {
       display: inline;
-      background: #999999;
+      /* No background - transparent wrapper */
     }
     .item {
       display: inline-block;
       width: 30px;
       height: 20px;
       background: #666666;
+      vertical-align: top;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="outer">
-      <span class="item"></span>
-      <span class="inner">
-        <span class="item"></span>
-        <span class="item"></span>
-      </span>
-      <span class="item"></span>
-    </span>
-  </div>
+  <div class="container"><span class="outer"><span class="item"></span><span class="inner"><span class="item"></span><span class="item"></span></span><span class="item"></span></span></div>
 </body>
 </html>

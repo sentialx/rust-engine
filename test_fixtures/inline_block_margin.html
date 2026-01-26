@@ -8,12 +8,14 @@
       display: block;
       background: #eeeeee;
       padding: 10px;
+      font-size: 0; /* Eliminate strut */
     }
     .item {
       display: inline-block;
       width: 50px;
       height: 30px;
       background: #cccccc;
+      vertical-align: top;
     }
     .margin-right { margin-right: 20px; }
     .margin-left { margin-left: 15px; }
@@ -21,10 +23,6 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <span class="item margin-right"></span>
-    <span class="item margin-both"></span>
-    <span class="item margin-left"></span>
-  </div>
+  <div class="container"><span class="item margin-right"></span><span class="item margin-both"></span><span class="item margin-left"></span></div>
 </body>
 </html>
