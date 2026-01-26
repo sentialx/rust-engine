@@ -9,7 +9,7 @@ pub struct BlockLayoutStrategy;
 /// Check if display value is a block-level display
 #[inline]
 pub fn is_block_level_display(display: &str) -> bool {
-    matches!(display, "block" | "list-item" | "table")
+    matches!(display, "block" | "list-item" | "table" | "flex" | "grid" | "flow-root")
 }
 
 /// Compute auto width for block elements

@@ -153,29 +153,60 @@ pub fn element_matches_selector(
         CssSelector::Combinator {
             combinator,
             selectors,
-        } => match combinator.as_str() {
-            ">" => parents.last().map_or(false, |parent| {
-                selectors.iter().all(|selector| {
-                    element_matches_selector(
-                        unsafe { &**parent },
-                        selector,
-                        &parents[..parents.len() - 1],
-                    )
-                })
-            }),
-            " " => parents.iter().rev().any(|parent| {
-                selectors.iter().all(|selector| {
-                    element_matches_selector(
-                        unsafe { &**parent },
-                        selector,
-                        &parents[..parents.len() - 1],
-                    )
-                })
-            }),
-            // "+" => parents.last().map_or(false, |parent| element_matches_selector(parent, selector, &parents[..parents.len()-1])),
-            // "~" => parents.iter().rev().any(|parent| element_matches_selector(parent, selector, &parents[..parents.len()-1])),
-            _ => false,
-        },
+        } => {
+            // For a combinator like ".a .b .c", selectors = [Combinator(".a .b"), Class("c")]
+            // The rightmost selector must match the current element
+            // The rest must match ancestors
+            if selectors.is_empty() {
+                return false;
+            }
+
+            // Split: rightmost selector matches element, rest match ancestors
+            let (ancestor_selectors, element_selector) = selectors.split_at(selectors.len() - 1);
+
+            // First check if element matches the rightmost selector
+            if !element_matches_selector(element, &element_selector[0], parents) {
+                return false;
+            }
+
+            // If no ancestor requirements, we're done
+            if ancestor_selectors.is_empty() {
+                return true;
+            }
+
+            // Check ancestors based on combinator type
+            match combinator.as_str() {
+                ">" => {
+                    // Direct parent must match all ancestor selectors
+                    parents.last().map_or(false, |parent| {
+                        ancestor_selectors.iter().all(|selector| {
+                            element_matches_selector(
+                                unsafe { &**parent },
+                                selector,
+                                &parents[..parents.len() - 1],
+                            )
+                        })
+                    })
+                }
+                " " => {
+                    // Some ancestor must match all ancestor selectors
+                    for (i, parent) in parents.iter().enumerate().rev() {
+                        let all_match = ancestor_selectors.iter().all(|selector| {
+                            element_matches_selector(
+                                unsafe { &**parent },
+                                selector,
+                                &parents[..i],
+                            )
+                        });
+                        if all_match {
+                            return true;
+                        }
+                    }
+                    false
+                }
+                _ => false,
+            }
+        }
         CssSelector::OrGroup { selectors } => {
             selectors.len() > 0
                 && selectors

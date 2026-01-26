@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use graviton::html::{parse_html, DomElement, NodeType};
 use graviton::layout::{compute_styles, propagate_styles, reflow, Rect};
-use graviton::render_frame::{BoxTextMeasurer, TextMeasurer};
+use graviton::text::{BoxTextMeasurer, TextMeasurer};
 use graviton::css::parse_css;
 use graviton::styles::StyleRule;
 

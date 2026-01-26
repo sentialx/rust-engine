@@ -185,6 +185,35 @@ pub fn measure_layout_tree(
             if comp_style.height > 0.0 {
                 node.box_data.content_height = comp_style.height;
             }
+
+            // For replaced elements (img, video, etc.), read width/height from HTML attributes
+            // if CSS dimensions aren't set
+            let (tag, width_attr, height_attr) = {
+                let element = node.box_data.element.borrow();
+                (
+                    element.tag_name.clone(),
+                    element.attributes.get("width").cloned(),
+                    element.attributes.get("height").cloned(),
+                )
+            };
+            if matches!(tag.as_str(), "IMG" | "VIDEO" | "CANVAS" | "IFRAME" | "EMBED" | "OBJECT") {
+                if node.box_data.content_width == 0.0 {
+                    if let Some(w) = width_attr {
+                        if let Ok(width) = w.parse::<f32>() {
+                            node.box_data.content_width = width;
+                            node.box_data.intrinsic_width = Some(width);
+                        }
+                    }
+                }
+                if node.box_data.content_height == 0.0 {
+                    if let Some(h) = height_attr {
+                        if let Ok(height) = h.parse::<f32>() {
+                            node.box_data.content_height = height;
+                            node.box_data.intrinsic_height = Some(height);
+                        }
+                    }
+                }
+            }
         }
 
         // Measure children and compute container intrinsics
