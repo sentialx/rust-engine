@@ -62,6 +62,20 @@ fn render_to_svg(frame: &Frame) -> String {
         if item.width == 0.0 || item.height == 0.0 {
             continue;
         }
+
+        // Render box shadow (before background)
+        if item.box_shadow.is_visible() && !item.box_shadow.inset {
+            render_box_shadow_svg(
+                &mut svg,
+                item.x + item.box_shadow.offset_x,
+                item.y + item.box_shadow.offset_y,
+                item.width + item.box_shadow.spread_radius * 2.0,
+                item.height + item.box_shadow.spread_radius * 2.0,
+                item.box_shadow.blur_radius,
+                item.box_shadow.color,
+            );
+        }
+
         if item.background_color != (0.0, 0.0, 0.0, 0.0) {
             // Extract class name from element if available
             let class_attr = item
@@ -214,6 +228,50 @@ fn color_to_rgba(color: ColorTupleA) -> String {
         a = (a / 255.0).clamp(0.0, 1.0);
     }
     format!("rgba({},{},{},{})", r as i32, g as i32, b as i32, a)
+}
+
+fn render_box_shadow_svg(
+    svg: &mut String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    blur_radius: f32,
+    color: ColorTupleA,
+) {
+    if blur_radius <= 0.0 {
+        // No blur - just draw a solid shadow
+        svg.push_str(&format!(
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+            x, y, width, height, color_to_rgba(color)
+        ));
+        return;
+    }
+
+    // Approximate blur with multiple layers
+    let layers = (blur_radius as i32).min(10).max(3);
+    let step = blur_radius / layers as f32;
+
+    for i in 0..layers {
+        let offset = step * (layers - i) as f32;
+        let alpha_factor = (i + 1) as f32 / (layers + 1) as f32;
+
+        let layer_color = (
+            color.0,
+            color.1,
+            color.2,
+            color.3 * alpha_factor * 0.5,
+        );
+
+        svg.push_str(&format!(
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+            x - offset,
+            y - offset,
+            width + offset * 2.0,
+            height + offset * 2.0,
+            color_to_rgba(layer_color)
+        ));
+    }
 }
 
 fn render_border_line_svg(
