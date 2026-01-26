@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <rect x="0" y="0" width="800" height="600" fill="white"/>
+  <rect x="0" y="0" width="800" height="600" fill="rgba(248,249,250,1)" data-class="skin--responsive skin-vector skin-vector-search-vue mediawiki ltr sitedir-ltr mw-hide-empty-elt ns-0 ns-subject page-Quantum_mechanics rootpage-Quantum_mechanics skin-vector-2022 action-view uls-dialog-sticky-hide"/>
+  <rect x="0" y="0" width="800" height="66" fill="rgba(255,255,255,1)" data-class="vector-header mw-header no-font-mode-scale"/>
+  <rect x="24" y="23" width="20" height="20" fill="rgba(32,33,34,1)" data-class="vector-icon mw-ui-icon-menu mw-ui-icon-wikimedia-menu"/>
+  <rect x="11" y="55" width="142" height="32" fill="rgba(255,255,255,1)" data-class="vector-dropdown-content"/>
+  <rect x="542" y="23" width="20" height="20" fill="rgba(32,33,34,1)" data-class="vector-icon mw-ui-icon-search mw-ui-icon-wikimedia-search"/>
+  <rect x="0" y="66" width="800" height="28886" fill="rgba(255,255,255,1)" data-class="mw-page-container"/>
+  <rect x="24" y="102" width="20" height="20" fill="rgba(32,33,34,1)" data-class="vector-icon mw-ui-icon-listBullet mw-ui-icon-wikimedia-listBullet"/>
+  <rect x="11" y="134" width="294" height="32" fill="rgba(255,255,255,1)" data-class="vector-dropdown-content"/>
+  <rect x="21" y="247" width="12" height="12" fill="rgba(32,33,34,1)" data-class="vector-icon mw-ui-icon-wikimedia-expand"/>
+  <rect x="21" y="415" width="12" height="12" fill="rgba(32,33,34,1)" data-class="vector-icon mw-ui-icon-wikimedia-expand"/>
+  <rect x="21" y="583" width="12" height="12" fill="rgba(32,33,34,1)" data-class="vector-icon mw-ui-icon-wikimedia-expand"/>
+  <rect x="629" y="102" width="20" height="20" fill="rgba(51,102,204,1)" data-class="vector-icon mw-ui-icon-language-progressive mw-ui-icon-wikimedia-language-progressive"/>
+  <rect x="599" y="168" width="177" height="32" fill="rgba(255,255,255,1)" data-class="vector-dropdown-content"/>
+  <rect x="428" y="320" width="348" height="473" fill="rgba(248,249,250,1)" data-class="mw-default-size"/>
+  <rect x="431" y="323" width="342" height="342" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="428" y="668" width="348" height="125" fill="rgba(248,249,250,1)"/>
+  <rect x="466" y="821" width="310" height="421" fill="rgba(248,249,250,1)" data-class="sidebar sidebar-collapse nomobile nowraplinks plainlist nowraplinks"/>
+  <rect x="24" y="2128" width="308" height="334" fill="rgba(248,249,250,1)" data-class="mw-default-size mw-halign-left"/>
+  <rect x="27" y="2131" width="302" height="302" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="24" y="2436" width="308" height="26" fill="rgba(248,249,250,1)"/>
+  <rect x="24" y="2664" width="308" height="393" fill="rgba(248,249,250,1)" data-class="mw-default-size mw-halign-left"/>
+  <rect x="27" y="2667" width="302" height="302" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="24" y="2972" width="308" height="85" fill="rgba(248,249,250,1)"/>
+  <rect x="458" y="4767" width="318" height="648" fill="rgba(248,249,250,1)" data-class="mw-default-size"/>
+  <rect x="461" y="4770" width="312" height="312" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="458" y="5085" width="318" height="330" fill="rgba(248,249,250,1)"/>
+  <rect x="408" y="8085" width="368" height="414" fill="rgba(248,249,250,1)" data-class="mw-halign-right"/>
+  <rect x="411" y="8088" width="362" height="362" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="408" y="8453" width="368" height="46" fill="rgba(248,249,250,1)"/>
+  <rect x="518" y="9289" width="258" height="304" fill="rgba(248,249,250,1)" data-class="mw-default-size"/>
+  <rect x="521" y="9292" width="252" height="252" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="518" y="9547" width="258" height="46" fill="rgba(248,249,250,1)"/>
+  <rect x="468" y="10785" width="308" height="591" fill="rgba(248,249,250,1)" data-class="mw-default-size mw-halign-right"/>
+  <rect x="471" y="10788" width="302" height="302" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="468" y="11093" width="308" height="283" fill="rgba(248,249,250,1)"/>
+  <rect x="438" y="11940" width="338" height="364" fill="rgba(248,249,250,1)" data-class="mw-default-size mw-halign-right"/>
+  <rect x="441" y="11943" width="332" height="332" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="438" y="12278" width="338" height="26" fill="rgba(248,249,250,1)"/>
+  <rect x="466" y="13683" width="310" height="302" fill="rgba(248,249,250,1)" data-class="sidebar sidebar-collapse nomobile nowraplinks"/>
+  <rect x="474" y="13956" width="14" height="14" fill="rgba(218,221,227,1)" data-class="CategoryTreeEmptyBullet"/>
+  <rect x="545" y="15993" width="231" height="406" fill="rgba(248,249,250,1)" data-class="unsolved"/>
+  <rect x="518" y="17097" width="258" height="403" fill="rgba(248,249,250,1)" data-class="mw-default-size"/>
+  <rect x="521" y="17100" width="252" height="252" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="518" y="17355" width="258" height="145" fill="rgba(248,249,250,1)"/>
+  <rect x="578" y="18135" width="198" height="263" fill="rgba(248,249,250,1)" data-class="mw-default-size"/>
+  <rect x="581" y="18138" width="192" height="192" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="578" y="18333" width="198" height="65" fill="rgba(248,249,250,1)"/>
+  <rect x="24" y="18819" width="358" height="404" fill="rgba(248,249,250,1)" data-class="mw-default-size mw-halign-left"/>
+  <rect x="27" y="18822" width="352" height="352" fill="rgba(255,255,255,1)" data-class="mw-file-element"/>
+  <rect x="24" y="19177" width="358" height="46" fill="rgba(248,249,250,1)"/>
+  <rect x="538" y="28027" width="238" height="304" fill="rgba(248,249,250,1)" data-class="side-box metadata side-box-right sister-box sistersitebox plainlinks"/>
+  <rect x="24" y="28498" width="752" height="36" fill="rgba(253,253,253,1)" data-class="navbox"/>
+  <rect x="28" y="28502" width="744" height="28" fill="rgba(204,204,255,1)" data-class="navbox-title"/>
+  <rect x="28" y="28530" width="110" height="111" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28530" width="124" height="301" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="152" y="28530" width="225" height="301" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even"/>
+  <rect x="28" y="28530" width="117" height="132" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28530" width="96" height="132" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="124" y="28530" width="128" height="132" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even"/>
+  <rect x="28" y="28530" width="127" height="238" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28530" width="113" height="175" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="141" y="28530" width="216" height="175" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even"/>
+  <rect x="28" y="28530" width="81" height="238" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28530" width="106" height="639" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="134" y="28530" width="189" height="639" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even"/>
+  <rect x="28" y="28530" width="103" height="132" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28530" width="79" height="111" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="107" y="28530" width="134" height="111" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even"/>
+  <rect x="28" y="28530" width="85" height="50" fill="rgba(221,221,255,1)" data-class="navbox-abovebelow"/>
+  <rect x="24" y="28533" width="752" height="36" fill="rgba(253,253,253,1)" data-class="navbox"/>
+  <rect x="28" y="28537" width="744" height="28" fill="rgba(204,204,255,1)" data-class="navbox-title"/>
+  <rect x="28" y="28565" width="91" height="69" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28565" width="110" height="69" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="138" y="28565" width="109" height="69" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even hlist"/>
+  <rect x="28" y="28565" width="89" height="196" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28565" width="79" height="175" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="107" y="28565" width="247" height="175" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even hlist"/>
+  <rect x="28" y="28565" width="137" height="217" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28565" width="79" height="111" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="107" y="28565" width="203" height="111" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even hlist"/>
+  <rect x="24" y="28568" width="752" height="63" fill="rgba(253,253,253,1)" data-class="portal-bar noprint metadata noviewer portal-bar-bordered"/>
+  <rect x="24" y="28630" width="752" height="36" fill="rgba(253,253,253,1)" data-class="navbox authority-control"/>
+  <rect x="28" y="28634" width="744" height="28" fill="rgba(204,204,255,1)" data-class="navbox-title"/>
+  <rect x="28" y="28662" width="113" height="48" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="28" y="28662" width="84" height="132" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="112" y="28662" width="130" height="132" fill="rgba(247,247,247,1)" data-class="navbox-list-with-group navbox-list navbox-even"/>
+  <rect x="28" y="28662" width="66" height="48" fill="rgba(221,221,255,1)" data-class="navbox-group"/>
+  <rect x="24" y="28682" width="752" height="38" fill="rgba(248,249,250,1)" data-class="catlinks"/>
+  <rect x="562" y="28900" width="102" height="44" fill="rgba(248,249,250,1)" data-class="cdx-button cdx-button--fake-button cdx-button--size-large cdx-button--fake-button--enabled"/>
+  <rect x="670" y="28900" width="106" height="44" fill="rgba(248,249,250,1)" data-class="cdx-button cdx-button--fake-button cdx-button--size-large cdx-button--fake-button--enabled"/>
+</svg>

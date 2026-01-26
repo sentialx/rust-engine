@@ -52,6 +52,32 @@ pub trait TextMeasurer {
     fn ascent(&mut self, font_size: f32, font_family: &str) -> f32;
 }
 
+pub struct BoxTextMeasurer {
+    pub char_width_ratio: f32,
+    pub ascent_ratio: f32,
+}
+
+impl Default for BoxTextMeasurer {
+    fn default() -> Self {
+        Self {
+            char_width_ratio: 0.6,
+            ascent_ratio: 0.8,
+        }
+    }
+}
+
+impl TextMeasurer for BoxTextMeasurer {
+    fn measure(&mut self, text: &str, font_size: f32, _font_family: &str) -> (f32, f32) {
+        let width = text.chars().count() as f32 * font_size * self.char_width_ratio;
+        let height = font_size;
+        (width, height)
+    }
+
+    fn ascent(&mut self, font_size: f32, _font_family: &str) -> f32 {
+        font_size * self.ascent_ratio
+    }
+}
+
 pub struct GlyphsTextMeasurer<'a> {
     pub glyphs_map: Rc<RefCell<HashMap<String, piston_window::Glyphs<'a>>>>,
 }

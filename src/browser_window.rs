@@ -62,13 +62,15 @@ pub fn create_browser_window(url: String) {
     let mut el_txt = "".to_string();
     let mut element: Option<&DomElement> = None;
 
-    let devtools_width = 300.0;
+    let mut devtools_visible = true;
+    let devtools_panel_width = 300.0;
+    let devtools_width = |visible: bool| if visible { devtools_panel_width } else { 0.0 };
 
     let window_size = window.size();
     let viewport = Rect {
         x: 0.0,
         y: 0.0,
-        width: window_size.width as f32 - devtools_width,
+        width: window_size.width as f32 - devtools_width(devtools_visible),
         height: window_size.height as f32,
     };
 
@@ -97,6 +99,13 @@ pub fn create_browser_window(url: String) {
                 pressed_up = true;
             } else if key == Key::Down {
                 pressed_down = true;
+            } else if key == Key::I {
+                devtools_visible = !devtools_visible;
+                let window_size = window.size();
+                render_frame.viewport.width = window_size.width as f32 - devtools_width(devtools_visible);
+                render_frame.viewport.height = window_size.height as f32;
+                render_frame.reflow();
+                render_frame.fast_render();
             }
         };
 
@@ -133,7 +142,7 @@ pub fn create_browser_window(url: String) {
         if event.resize_args().is_some() {
             let window_size = window.size();
             resize_debouncer.push((
-                window_size.width as f32 - devtools_width,
+                window_size.width as f32 - devtools_width(devtools_visible),
                 window_size.height as f32,
             ));
         }
@@ -179,6 +188,7 @@ pub fn create_browser_window(url: String) {
         }
 
         let window_size = &window.size();
+        let devtools_width = devtools_width(devtools_visible);
 
         if resize_debouncer.is_pending() {
             continue;
@@ -243,22 +253,24 @@ pub fn create_browser_window(url: String) {
 
                 let dev_tools_x = window_size.width as f32 - devtools_width;
 
-                // separator
-                rectangle(
-                    [0.0, 0.0, 0.0, 0.12],
-                    [0.0, 0.0, 1 as f64, window_size.height as f64],
-                    c.transform.trans(dev_tools_x as f64, 0.0),
-                    g,
-                );
+                if devtools_visible {
+                    // separator
+                    rectangle(
+                        [0.0, 0.0, 0.0, 0.12],
+                        [0.0, 0.0, 1 as f64, window_size.height as f64],
+                        c.transform.trans(dev_tools_x as f64, 0.0),
+                        g,
+                    );
 
-                rectangle(
-                    [1.0, 1.0, 1.0, 1.0],
-                    [0.0, 0.0, devtools_width as f64, window_size.height as f64],
-                    c.transform.trans(dev_tools_x as f64, 0.0),
-                    g,
-                );
+                    rectangle(
+                        [1.0, 1.0, 1.0, 1.0],
+                        [0.0, 0.0, devtools_width as f64, window_size.height as f64],
+                        c.transform.trans(dev_tools_x as f64, 0.0),
+                        g,
+                    );
+                }
 
-                if element.is_some() {
+                if devtools_visible && element.is_some() {
                     let el = element.unwrap().borrow();
                     let computed_flow = el.computed_flow.as_ref().unwrap();
                     let el_y = computed_flow.y as f64 - render_frame.scroll_y as f64;
@@ -304,7 +316,7 @@ pub fn create_browser_window(url: String) {
                     );
 
                     // // split newlines
-                    if glyphs_map.get_mut(&font_path).is_some() {
+                    if devtools_visible && glyphs_map.get_mut(&font_path).is_some() {
                         let glyphs = glyphs_map.get_mut(&font_path).unwrap();
 
                         Text::new_color([1.0, 1.0, 1.0, 1.0], 2 * 12)
