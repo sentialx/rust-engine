@@ -35,3 +35,19 @@ This compares SVG output from Graviton against Chromium-rendered baselines.
    preprocessing (word splitting, measurement, ascent) - not layout positioning.
    Layout positioning of text is validated through the unified inline layout
    algorithm which is tested via baseline comparison with inline elements.
+
+---
+
+## DevTools Protocol
+
+Graviton provides a CDP-compatible devtools agent for programmatic page inspection.
+
+```bash
+cargo run --bin devtools_agent -- page.html [width] [height]
+```
+
+Reads JSON commands from stdin, writes responses to stdout. Uses standard [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) format.
+
+**Supported domains:** DOM, CSS, Page, Input, Runtime, Overlay
+
+**See:** [docs/devtools_protocol.md](docs/devtools_protocol.md) for full reference.
