@@ -221,8 +221,10 @@ pub fn layout_tree(
         let mut is_atomic_inline = false;
         let is_block = matches!(formatting_context, FormattingContext::BlockContainer);
 
+        let is_absolute = uses_absolute_positioning(&node.box_data.computed_style);
+
         // Position element based on formatting context
-        if uses_absolute_positioning(&node.box_data.computed_style) {
+        if is_absolute {
             abspos_strategy.layout(&mut node.box_data, context);
         } else {
             match formatting_context {
@@ -256,24 +258,48 @@ pub fn layout_tree(
         // Layout children
         if is_block {
             layout_block_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
-            // Update state AFTER children are laid out (height is now final)
-            state.after_block(
-                node.box_data.y,
-                node.box_data.border_box_height(),
-                node.box_data.margin.bottom,
-            );
+            if !is_absolute {
+                // Update state AFTER children are laid out (height is now final)
+                state.after_block(
+                    node.box_data.y,
+                    node.box_data.border_box_height(),
+                    node.box_data.margin.bottom,
+                );
+            }
         } else {
             layout_inline_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
+            if !is_absolute && is_atomic_inline {
+                // Update inline context after atomic inline children are laid out
+                advance_past_atomic_inline(node, &mut state.inline_ctx);
+                state.after_inline();
+            }
         }
 
-        // Update inline context after atomic inline children are laid out
-        if is_atomic_inline {
-            advance_past_atomic_inline(node, &mut state.inline_ctx);
-            state.after_inline();
+        if node.box_data.computed_style.position == "relative" {
+            let dx = node.box_data.computed_style.inset.left;
+            let dy = node.box_data.computed_style.inset.top;
+            if dx != 0.0 || dy != 0.0 {
+                offset_layout_node(node, dx, dy);
+            }
         }
     }
 
     (state.reserved_block_y, state.prev_block.map(|p| p.margin_bottom).unwrap_or(0.0))
+}
+
+fn offset_layout_node(node: &mut LayoutNode, dx: f32, dy: f32) {
+    node.box_data.x += dx;
+    node.box_data.y += dy;
+    {
+        let mut element = node.box_data.element.borrow_mut();
+        for seg in &mut element.text_segments {
+            seg.x += dx;
+            seg.y += dy;
+        }
+    }
+    for child in node.children.iter_mut() {
+        offset_layout_node(child, dx, dy);
+    }
 }
 
 /// Finalize pass: Copy layout results back to DOM ComputedFlow
