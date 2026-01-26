@@ -3,9 +3,145 @@
 // All inline content (text segments, inline elements, inline-block) flows through
 // the same algorithm. Text nodes are treated as sequences of inline items (words).
 
-use crate::html::{DomElement, NodeType};
-use crate::layout::flow::{FormattingContext, InlineContext};
+use crate::html::{DomElement, NodeType, TextSegment};
+use crate::layout::flow::{FormattingContext, InlineContext, ReflowContext, uses_absolute_positioning};
 use crate::layout::boxes::LayoutNode;
+use crate::layout::block::compute_block_height_from_children;
+use crate::render_frame::TextMeasurer;
+
+/// Preprocess text node: split into words and measure each
+/// Caches measurements - only re-measures if font_size changed or segments are empty
+pub fn preprocess_text_node(
+    element: &mut DomElement,
+    text_measurer: &mut dyn TextMeasurer,
+    font_size: f32,
+    font_path: &str,
+) {
+    // Check if we can reuse existing measurements
+    let can_reuse = !element.text_segments.is_empty()
+        && element.cached_font_size == Some(font_size)
+        && element.cached_font_path.as_deref() == Some(font_path);
+
+    if can_reuse {
+        for seg in &mut element.text_segments {
+            seg.x = 0.0;
+            seg.y = 0.0;
+        }
+        return;
+    }
+
+    // Need to re-measure
+    element.text_segments.clear();
+    element.cached_font_size = Some(font_size);
+    element.cached_font_path = Some(font_path.to_string());
+
+    // Handle HTML entities
+    let processed_value = element.node_value
+        .replace("&nbsp;", " ")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<");
+
+    let (space_w, _) = text_measurer.measure(" ", font_size, font_path);
+    element.space_width = space_w;
+
+    let ascent = text_measurer.ascent(font_size, font_path);
+
+    for word in processed_value.split_whitespace() {
+        let (w, h) = text_measurer.measure(word, font_size, font_path);
+        element.text_segments.push(TextSegment {
+            text: word.to_string(),
+            width: w,
+            height: h,
+            ascent,
+            x: 0.0,
+            y: 0.0,
+        });
+    }
+
+    element.node_value = processed_value;
+}
+
+/// Compute intrinsic dimensions for a text node from its segments
+pub fn compute_text_intrinsics(node: &mut LayoutNode) {
+    let element = node.box_data.element.borrow();
+    if element.text_segments.is_empty() {
+        return;
+    }
+
+    // Max-content width: sum of all segments + spaces (single line)
+    let total_width: f32 = element.text_segments.iter().map(|s| s.width).sum::<f32>()
+        + element.space_width * (element.text_segments.len().saturating_sub(1) as f32);
+    let max_height: f32 = element.text_segments.iter().map(|s| s.height).fold(0.0, f32::max);
+
+    // Min-content width: widest single word
+    let min_width: f32 = element.text_segments.iter().map(|s| s.width).fold(0.0, f32::max);
+
+    drop(element);
+
+    node.box_data.intrinsic_width = Some(total_width);
+    node.box_data.intrinsic_height = Some(max_height);
+    node.box_data.intrinsic_min_width = Some(min_width);
+}
+
+/// Compute intrinsic widths for a container from its children
+pub fn compute_container_intrinsics(node: &mut LayoutNode) {
+    let mut min_width: f32 = 0.0;
+    let mut max_width: f32 = 0.0;
+    let mut inline_line_min: f32 = 0.0;
+    let mut inline_line_max: f32 = 0.0;
+
+    for child in &node.children {
+        let child_padding = child.box_data.padding.left + child.box_data.padding.right;
+        let child_margin = child.box_data.margin.left + child.box_data.margin.right;
+        let child_non_content = child_padding + child_margin;
+
+        let is_inline_level = matches!(
+            child.box_data.computed_style.display.as_str(),
+            "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+        ) || child.box_data.formatting_context == FormattingContext::TextNode;
+
+        if is_inline_level {
+            if let Some(child_min) = child.box_data.intrinsic_min_width {
+                inline_line_min += child_min + child_non_content;
+            }
+            if let Some(child_max) = child.box_data.intrinsic_width {
+                inline_line_max += child_max + child_non_content;
+            }
+        } else {
+            // Block child - flush inline content
+            if inline_line_min > 0.0 {
+                min_width = min_width.max(inline_line_min);
+                inline_line_min = 0.0;
+            }
+            if inline_line_max > 0.0 {
+                max_width = max_width.max(inline_line_max);
+                inline_line_max = 0.0;
+            }
+
+            if let Some(child_min) = child.box_data.intrinsic_min_width {
+                min_width = min_width.max(child_min + child_padding);
+            }
+            if let Some(child_max) = child.box_data.intrinsic_width {
+                max_width = max_width.max(child_max + child_padding);
+            }
+        }
+    }
+
+    // Flush remaining inline content
+    if inline_line_min > 0.0 {
+        min_width = min_width.max(inline_line_min);
+    }
+    if inline_line_max > 0.0 {
+        max_width = max_width.max(inline_line_max);
+    }
+
+    if min_width > 0.0 {
+        node.box_data.intrinsic_min_width = Some(min_width);
+    }
+    if max_width > 0.0 {
+        node.box_data.intrinsic_width = Some(max_width);
+    }
+}
 
 /// Check if display value uses shrink-to-fit sizing
 #[inline]
@@ -134,6 +270,201 @@ pub fn compute_shrink_to_fit_width(
 /// Compute content_y for an inline element
 pub fn compute_inline_content_y(box_data: &crate::layout::boxes::LayoutBox) -> f32 {
     box_data.y + box_data.margin.top + box_data.padding.top
+}
+
+/// Build child context for an inline element's children (including inline-block)
+pub fn build_inline_child_context(
+    node: &LayoutNode,
+    context: &ReflowContext,
+    content_x: f32,
+    content_y: f32,
+    available_content_width: f32,
+) -> ReflowContext {
+    let display = node.box_data.computed_style.display.as_str();
+    let node_is_shrink_to_fit = is_shrink_to_fit_display(display);
+
+    // Check if this node has explicit width
+    let node_has_explicit_width = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.width.has_numeric_value()
+    };
+
+    let effective_shrink_to_fit = if node_has_explicit_width { false } else { node_is_shrink_to_fit };
+    let parent_is_shrink_to_fit = context.shrink_to_fit || effective_shrink_to_fit;
+
+    let parent_content_width = if parent_is_shrink_to_fit {
+        available_content_width
+    } else if node.box_data.content_width > 0.0 {
+        node.box_data.content_width
+    } else {
+        available_content_width
+    };
+
+    ReflowContext {
+        x: content_x,
+        y: content_y,
+        rel_x: if node.box_data.computed_style.position == "relative"
+            || uses_absolute_positioning(&node.box_data.computed_style)
+        {
+            content_x
+        } else {
+            context.rel_x
+        },
+        rel_y: if node.box_data.computed_style.position == "relative"
+            || uses_absolute_positioning(&node.box_data.computed_style)
+        {
+            content_y
+        } else {
+            context.rel_y
+        },
+        font_size: node.box_data.computed_style.font_size,
+        parent_width: node.box_data.content_width,
+        parent_height: node.box_data.content_height,
+        parent_max_width: parent_content_width,
+        layout_x_start: if display == "inline" {
+            Some(node.box_data.x)
+        } else {
+            None
+        },
+        adjacent_margin_bottom: 0.0,
+        shrink_to_fit: parent_is_shrink_to_fit,
+        collapsible_margin_top: 0.0,
+    }
+}
+
+/// Finalize inline element dimensions after children are laid out
+pub fn finalize_inline_dimensions(
+    node: &mut LayoutNode,
+    content_y: f32,
+    max_content_width: f32,
+    context_shrink_to_fit: bool,
+) {
+    let display = node.box_data.computed_style.display.clone();
+
+    let width_has_value = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.width.has_numeric_value()
+    };
+    let height_has_value = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.height.has_numeric_value()
+    };
+
+    if !width_has_value {
+        if is_shrink_to_fit_display(&display) || context_shrink_to_fit {
+            node.box_data.content_width = compute_shrink_to_fit_width(
+                node,
+                &node.children,
+                max_content_width,
+                context_shrink_to_fit,
+            );
+            let min_content_width = min_intrinsic_text_width(node);
+            if min_content_width > 0.0 {
+                node.box_data.intrinsic_min_width = Some(min_content_width);
+            }
+        }
+    }
+
+    if !height_has_value {
+        node.box_data.content_height = compute_block_height_from_children(&node.children, content_y);
+    }
+}
+
+/// Check if inline-block needs relayout and build the relayout context
+pub fn build_relayout_context(
+    node: &LayoutNode,
+    context: &ReflowContext,
+    content_x: f32,
+    content_y: f32,
+    collapsible_margin: f32,
+) -> Option<ReflowContext> {
+    let display = node.box_data.computed_style.display.as_str();
+    let node_is_shrink_to_fit = is_shrink_to_fit_display(display);
+
+    let width_has_value = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.width.has_numeric_value()
+    };
+
+    // Only relayout atomic inlines without explicit width that use shrink-to-fit
+    if width_has_value || !is_atomic_inline_display(display) || !node_is_shrink_to_fit {
+        return None;
+    }
+
+    Some(ReflowContext {
+        x: content_x,
+        y: content_y,
+        rel_x: if node.box_data.computed_style.position == "relative"
+            || uses_absolute_positioning(&node.box_data.computed_style)
+        {
+            content_x
+        } else {
+            context.rel_x
+        },
+        rel_y: if node.box_data.computed_style.position == "relative"
+            || uses_absolute_positioning(&node.box_data.computed_style)
+        {
+            content_y
+        } else {
+            context.rel_y
+        },
+        font_size: node.box_data.computed_style.font_size,
+        parent_width: node.box_data.content_width,
+        parent_height: node.box_data.content_height,
+        parent_max_width: node.box_data.content_width,
+        layout_x_start: None,
+        adjacent_margin_bottom: 0.0,
+        shrink_to_fit: false,
+        collapsible_margin_top: collapsible_margin,
+    })
+}
+
+/// Finalize dimensions after relayout
+pub fn finalize_after_relayout(node: &mut LayoutNode, content_y: f32) {
+    let height_has_value = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.height.has_numeric_value()
+    };
+
+    if !height_has_value {
+        node.box_data.content_height = compute_block_height_from_children(&node.children, content_y);
+    }
+}
+
+/// Layout children of an inline element (including inline-block)
+pub fn layout_inline_children(
+    node: &mut LayoutNode,
+    context: &ReflowContext,
+    layout_fn: &mut dyn FnMut(&mut Vec<LayoutNode>, &ReflowContext),
+) {
+    if node.children.is_empty() {
+        return;
+    }
+
+    let content_x = node.box_data.x + node.box_data.margin.left + node.box_data.padding.left;
+    let available_width = (context.parent_max_width - (content_x - context.x)).max(0.0);
+    let max_content_width = (available_width
+        - node.box_data.padding.right
+        - node.box_data.margin.right)
+        .max(0.0);
+
+    let content_y = compute_inline_content_y(&node.box_data);
+    let child_context = build_inline_child_context(node, context, content_x, content_y, available_width);
+
+    layout_fn(&mut node.children, &child_context);
+
+    finalize_inline_dimensions(node, content_y, max_content_width, context.shrink_to_fit);
+
+    // Inline-block may need relayout after shrink-to-fit width is determined
+    if let Some(relayout_ctx) = build_relayout_context(node, context, content_x, content_y, 0.0) {
+        layout_fn(&mut node.children, &relayout_ctx);
+        finalize_after_relayout(node, content_y);
+    }
 }
 
 /// Unified inline formatting context layout
