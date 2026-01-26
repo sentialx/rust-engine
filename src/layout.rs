@@ -194,14 +194,180 @@ impl CssVariablesContext {
     }
 }
 
+/// Index for fast style rule lookup
+/// Groups rules by their key selector (rightmost simple selector)
+#[derive(Debug)]
+pub struct StyleRuleIndex {
+    pub by_tag: HashMap<String, Vec<usize>>,    // tag name -> rule indices
+    pub by_class: HashMap<String, Vec<usize>>,  // class name -> rule indices
+    pub by_id: HashMap<String, Vec<usize>>,     // id -> rule indices
+    pub universal: Vec<usize>,                   // rules that match anything (* or complex)
+}
+
+impl StyleRuleIndex {
+    pub fn new(rules: &Vec<StyleRule>) -> StyleRuleIndex {
+        let mut index = StyleRuleIndex {
+            by_tag: HashMap::new(),
+            by_class: HashMap::new(),
+            by_id: HashMap::new(),
+            universal: Vec::new(),
+        };
+
+        for (i, rule) in rules.iter().enumerate() {
+            index.index_selector(&rule.selector, i);
+        }
+
+        index
+    }
+
+    fn index_selector(&mut self, selector: &CssSelector, rule_index: usize) {
+        match selector {
+            CssSelector::Tag(tag) => {
+                if tag == "*" {
+                    self.universal.push(rule_index);
+                } else {
+                    self.by_tag
+                        .entry(tag.to_lowercase())
+                        .or_insert_with(Vec::new)
+                        .push(rule_index);
+                }
+            }
+            CssSelector::Class(class) => {
+                self.by_class
+                    .entry(class.clone())
+                    .or_insert_with(Vec::new)
+                    .push(rule_index);
+            }
+            CssSelector::Id(id) => {
+                self.by_id
+                    .entry(id.clone())
+                    .or_insert_with(Vec::new)
+                    .push(rule_index);
+            }
+            CssSelector::AndGroup { selectors } => {
+                // For AndGroup, index by the most specific selector
+                // Priority: ID > Class > Tag
+                let mut indexed = false;
+                for sel in selectors {
+                    if let CssSelector::Id(id) = sel {
+                        self.by_id
+                            .entry(id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(rule_index);
+                        indexed = true;
+                        break;
+                    }
+                }
+                if !indexed {
+                    for sel in selectors {
+                        if let CssSelector::Class(class) = sel {
+                            self.by_class
+                                .entry(class.clone())
+                                .or_insert_with(Vec::new)
+                                .push(rule_index);
+                            indexed = true;
+                            break;
+                        }
+                    }
+                }
+                if !indexed {
+                    for sel in selectors {
+                        if let CssSelector::Tag(tag) = sel {
+                            if tag == "*" {
+                                self.universal.push(rule_index);
+                            } else {
+                                self.by_tag
+                                    .entry(tag.to_lowercase())
+                                    .or_insert_with(Vec::new)
+                                    .push(rule_index);
+                            }
+                            indexed = true;
+                            break;
+                        }
+                    }
+                }
+                if !indexed {
+                    self.universal.push(rule_index);
+                }
+            }
+            CssSelector::OrGroup { selectors } => {
+                // OrGroup matches if ANY selector matches - index by all
+                for sel in selectors {
+                    self.index_selector(sel, rule_index);
+                }
+            }
+            CssSelector::Combinator { selectors, .. } => {
+                // For combinators like "div > .foo", index by rightmost (last) selector
+                if let Some(last) = selectors.last() {
+                    self.index_selector(last, rule_index);
+                } else {
+                    self.universal.push(rule_index);
+                }
+            }
+            _ => {
+                // Attribute selectors, pseudo-classes, etc. go to universal
+                self.universal.push(rule_index);
+            }
+        }
+    }
+
+    /// Get candidate rule indices for an element
+    pub fn get_candidates(&self, element: &DomElement) -> Vec<usize> {
+        let mut candidates: Vec<usize> = Vec::new();
+
+        // Add rules by tag
+        if let Some(indices) = self.by_tag.get(&element.tag_name.to_lowercase()) {
+            candidates.extend(indices);
+        }
+
+        // Add rules by classes
+        for class in &element.class_list {
+            if let Some(indices) = self.by_class.get(class) {
+                candidates.extend(indices);
+            }
+        }
+
+        // Add rules by ID
+        if let Some(id) = element.attributes.get("id") {
+            if let Some(indices) = self.by_id.get(id) {
+                candidates.extend(indices);
+            }
+        }
+
+        // Add universal rules
+        candidates.extend(&self.universal);
+
+        // Sort and deduplicate to maintain rule order
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        candidates
+    }
+}
+
 pub fn compute_styles(
     tree: &mut Vec<Rc<RefCell<DomElement>>>,
     style: &Vec<StyleRule>,
     parents: &mut Vec<*mut DomElement>,
     var_ctx: Option<CssVariablesContext>,
 ) {
-    let is_root = parents.len() == 0;
+    // Build index on first call (when parents is empty)
+    let index = if parents.is_empty() {
+        Some(StyleRuleIndex::new(style))
+    } else {
+        None
+    };
 
+    compute_styles_with_index(tree, style, parents, var_ctx, index.as_ref());
+}
+
+fn compute_styles_with_index(
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
+    style: &Vec<StyleRule>,
+    parents: &mut Vec<*mut DomElement>,
+    var_ctx: Option<CssVariablesContext>,
+    index: Option<&StyleRuleIndex>,
+) {
     let mut var_ctx = var_ctx;
 
     if var_ctx.is_none() {
@@ -223,9 +389,15 @@ pub fn compute_styles(
 
     for i in 0..tree.len() {
         let mut element = tree[i].borrow_mut();
-        let mut hoverable = false;
 
-        for style_rule in style {
+        // Use index to get candidate rules, or fall back to all rules
+        let candidates: Vec<usize> = match index {
+            Some(idx) => idx.get_candidates(&element),
+            None => (0..style.len()).collect(),
+        };
+
+        for rule_idx in candidates {
+            let style_rule = &style[rule_idx];
             if element_matches_selector(&element, &style_rule.selector, parents) {
                 element.style.insert_declarations(&style_rule.declarations, var_ctx.as_ref().unwrap());
                 element.matched_styles.push(style_rule.clone());
@@ -235,7 +407,7 @@ pub fn compute_styles(
         if element.children.len() > 0 && element.tag_name != "SCRIPT" && element.tag_name != "STYLE"
         {
             parents.push(tree[i].as_ptr());
-            compute_styles(&mut element.children, style, parents, var_ctx.clone());
+            compute_styles_with_index(&mut element.children, style, parents, var_ctx.clone(), index);
             parents.pop();
         }
     }

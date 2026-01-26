@@ -83,7 +83,7 @@ pub fn create_browser_window(url: String) {
 
     let zoom = 1.0;
     let devtools_zoom = 0.65;
-    let mut resize_debouncer = Debouncer::new(Duration::from_millis(75));
+    let mut resize_debouncer = Debouncer::new(Duration::from_millis(2));
 
     while let Some(event) = window.next() {
         let mouse = event.mouse_cursor_args();

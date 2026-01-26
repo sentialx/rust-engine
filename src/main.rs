@@ -4,7 +4,7 @@ use graviton::css;
 use graviton::css_value::{parse_css_value, tokenize_css_value};
 
 fn main() {
-create_browser_window(String::from("text_fixtures/wikipedia.html"));
+create_browser_window(String::from("test_fixtures/wikipedia.html"));
 
     let val = "rgba(255, 255, 255, 0.4)";
     let parsed = parse_css_value(tokenize_css_value(val));
