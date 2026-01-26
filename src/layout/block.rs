@@ -1,6 +1,6 @@
 // Block formatting context layout strategy
 
-use crate::layout::flow::{ReflowContext, FormattingContext};
+use crate::layout::flow::{ReflowContext, FormattingContext, uses_absolute_positioning};
 use crate::layout::boxes::{LayoutBox, LayoutNode};
 
 /// Block layout strategy - handles vertical stacking of block elements
@@ -96,61 +96,129 @@ pub fn compute_block_height_from_children(
     height
 }
 
+/// Build child context for a block element's children
+pub fn build_block_child_context(
+    node: &LayoutNode,
+    context: &ReflowContext,
+    content_x: f32,
+    content_y: f32,
+    available_content_width: f32,
+    collapsible_margin: f32,
+) -> ReflowContext {
+    let parent_content_width = if node.box_data.content_width > 0.0 {
+        node.box_data.content_width
+    } else {
+        available_content_width
+    };
+
+    ReflowContext {
+        x: content_x,
+        y: content_y,
+        rel_x: if node.box_data.computed_style.position == "relative"
+            || uses_absolute_positioning(&node.box_data.computed_style)
+        {
+            content_x
+        } else {
+            context.rel_x
+        },
+        rel_y: if node.box_data.computed_style.position == "relative"
+            || uses_absolute_positioning(&node.box_data.computed_style)
+        {
+            content_y
+        } else {
+            context.rel_y
+        },
+        font_size: node.box_data.computed_style.font_size,
+        parent_width: node.box_data.content_width,
+        parent_height: node.box_data.content_height,
+        parent_max_width: parent_content_width,
+        layout_x_start: None,
+        adjacent_margin_bottom: 0.0,
+        shrink_to_fit: false,
+        collapsible_margin_top: collapsible_margin,
+    }
+}
+
+/// Finalize block dimensions after children are laid out
+pub fn finalize_block_dimensions(
+    node: &mut LayoutNode,
+    content_y: f32,
+    available_content_width: f32,
+) {
+    let width_has_value = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.width.has_numeric_value()
+    };
+    let height_has_value = {
+        let element = node.box_data.element.borrow();
+        let inherited_style = element.inherited_style.as_ref().unwrap();
+        inherited_style.height.has_numeric_value()
+    };
+
+    if !width_has_value {
+        // Block auto width is clamped to available width
+        node.box_data.content_width = node.box_data.content_width.min(available_content_width);
+    }
+
+    if !height_has_value {
+        node.box_data.content_height = compute_block_height_from_children(&node.children, content_y);
+    }
+}
+
 impl BlockLayoutStrategy {
-    /// Layout a block element
-    pub fn layout(
+    /// Layout a block element and update state in one call
+    /// Returns the new adjacent_margin_bottom
+    pub fn layout_and_update(
         &self,
         box_data: &mut LayoutBox,
         prev_box: Option<&LayoutBox>,
         reserved_block_y: &mut f32,
         context: &ReflowContext,
-        previous_margin_bottom: f32,
-    ) -> (f32, f32) {
+    ) -> f32 {
         let x_base = context.x;
         let y_base = context.y;
-        
-        if let Some(prev) = prev_box {
-            // Position after previous block's border box
-            let prev_border_box_end = prev.y + prev.border_box_height();
 
-            // Collapse margins: use max of previous margin.bottom and current margin.top
+        if let Some(prev) = prev_box {
+            let prev_border_box_end = prev.y + prev.border_box_height();
             let margin_collapse = prev.margin.bottom.max(box_data.margin.top);
             box_data.y = prev_border_box_end + margin_collapse;
-
-            // Update reserved_block_y
             *reserved_block_y = (*reserved_block_y).max(prev_border_box_end);
         } else {
-            // First block element - use reserved_block_y which accounts for any preceding inline content
-            // (e.g., when a <div> follows a <strong> inside the same parent)
             let y_start = (*reserved_block_y).max(y_base);
-
-            // Handle parent-child margin collapsing
-            // context.collapsible_margin_top contains parent's margin that should collapse with this child
             let collapsed_margin = context.collapsible_margin_top.max(box_data.margin.top);
             box_data.y = y_start + collapsed_margin;
         }
-        
+
         box_data.x = x_base;
-        
-        // Update reserved_block_y for next element
-        *reserved_block_y = (*reserved_block_y).max(
-            box_data.y + box_data.margin_box_height()
-        );
-        
-        (box_data.x, box_data.y)
+        *reserved_block_y = (*reserved_block_y).max(box_data.y + box_data.margin_box_height());
+
+        box_data.margin.bottom
     }
-    
-    /// Update layout state after laying out a block
-    pub fn update_state(
-        &self,
-        box_data: &LayoutBox,
-        reserved_block_y: &mut f32,
-        context: &mut ReflowContext,
-        adjacent_margin_bottom: f32,
-    ) {
-        *reserved_block_y = (*reserved_block_y).max(
-            box_data.y + box_data.margin_box_height()
-        );
-        context.adjacent_margin_bottom = adjacent_margin_bottom;
+}
+
+/// Layout children of a block element
+pub fn layout_block_children(
+    node: &mut LayoutNode,
+    context: &ReflowContext,
+    layout_fn: &mut dyn FnMut(&mut Vec<LayoutNode>, &ReflowContext),
+) {
+    let content_x = node.box_data.x + node.box_data.margin.left + node.box_data.padding.left;
+    let available_width = (context.parent_max_width - (content_x - context.x)).max(0.0);
+
+    // Compute auto width for blocks (even childless ones)
+    if let Some(auto_width) = compute_block_auto_width(&node.box_data, context) {
+        node.box_data.content_width = auto_width;
     }
+
+    if node.children.is_empty() {
+        return;
+    }
+
+    let (content_y, collapsible_margin, _) = compute_block_content_y(&node.box_data);
+    let child_context = build_block_child_context(node, context, content_x, content_y, available_width, collapsible_margin);
+
+    layout_fn(&mut node.children, &child_context);
+
+    finalize_block_dimensions(node, content_y, available_width);
 }
