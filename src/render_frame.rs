@@ -6,7 +6,7 @@ use rusttype::Scale;
 use crate::{
     css::parse_css,
     html::{parse_html, DomElement, NodeType},
-    layout::{compute_styles, get_render_array, propagate_styles, reflow, Rect, RenderItem},
+    layout::{compute_styles, get_render_array, propagate_styles, reflow, reflow_and_cache, reflow_with_cache, Rect, RenderItem, boxes::LayoutNode},
     styles::StyleRule,
 };
 
@@ -41,6 +41,7 @@ pub struct RenderFrame<'a> {
     pub url: String,
     pub text_measurer: &'a mut dyn TextMeasurer,
     pub default_styles: Vec<StyleRule>,
+    pub cached_layout_tree: Option<Vec<LayoutNode>>,
 }
 
 pub trait TextMeasurer {
@@ -133,6 +134,7 @@ impl<'a> RenderFrame<'a> {
             url: "".to_string(),
             text_measurer,
             default_styles,
+            cached_layout_tree: None,
         }
     }
 
@@ -157,6 +159,8 @@ impl<'a> RenderFrame<'a> {
         self.parsed_css = [embedded_styles, external_styles].concat();
         self.styles = [self.default_styles.clone(), self.parsed_css.clone()].concat();
 
+        // Clear cached layout tree when loading new content
+        self.cached_layout_tree = None;
         self.render();
     }
 
@@ -184,8 +188,16 @@ impl<'a> RenderFrame<'a> {
     pub fn reflow(&mut self) {
         let s = Instant::now();
 
-        reflow(&mut self.dom_tree, self.text_measurer, None, &self.viewport);
-        println!("Reflow took: {:?}", s.elapsed());
+        // Use cached layout tree if available (fast path for resize)
+        if let Some(ref mut cached_tree) = self.cached_layout_tree {
+            reflow_with_cache(&mut self.dom_tree, self.text_measurer, None, &self.viewport, Some(cached_tree));
+            println!("Reflow (cached) took: {:?}", s.elapsed());
+        } else {
+            // Full reflow and cache the tree
+            let layout_tree = reflow_and_cache(&mut self.dom_tree, self.text_measurer, &self.viewport);
+            self.cached_layout_tree = Some(layout_tree);
+            println!("Reflow (full) took: {:?}", s.elapsed());
+        }
     }
 
     pub fn compute_styles(&mut self) {
@@ -201,6 +213,8 @@ impl<'a> RenderFrame<'a> {
         let s = Instant::now();
 
         self.compute_styles();
+        // Clear cache before full render (styles might have changed)
+        self.cached_layout_tree = None;
         self.reflow();
         self.fast_render();
 

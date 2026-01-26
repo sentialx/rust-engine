@@ -450,8 +450,21 @@ pub fn reflow(
     context: Option<&mut ReflowContext>,
     viewport: &Rect,
 ) {
+    reflow_with_cache(tree, text_measurer, context, viewport, None);
+}
+
+/// Reflow with optional cached layout tree for resize optimization
+/// If cached_tree is Some, skips build+measure and only runs layout+finalize
+pub fn reflow_with_cache(
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
+    text_measurer: &mut dyn TextMeasurer,
+    context: Option<&mut ReflowContext>,
+    viewport: &Rect,
+    cached_tree: Option<&mut Vec<boxes::LayoutNode>>,
+) {
     use crate::layout::pipeline::{
         build_layout_tree, finalize_layout_tree, layout_tree, measure_layout_tree,
+        reset_layout_positions,
     };
 
     let mut default_context = ReflowContext {
@@ -471,18 +484,56 @@ pub fn reflow(
 
     let sibling_context = context.unwrap_or(&mut default_context);
 
-    // Build pass: Create layout tree from DOM
-    let mut layout_nodes = build_layout_tree(tree, sibling_context);
+    match cached_tree {
+        Some(layout_nodes) => {
+            // Fast path: reuse cached tree, only re-layout
+            reset_layout_positions(layout_nodes);
+            layout_tree(layout_nodes, sibling_context);
+            finalize_layout_tree(layout_nodes);
+        }
+        None => {
+            // Full path: build + measure + layout + finalize
+            let mut layout_nodes = build_layout_tree(tree, sibling_context);
+            let max_width = sibling_context.parent_max_width;
+            measure_layout_tree(&mut layout_nodes, text_measurer, max_width);
+            layout_tree(&mut layout_nodes, sibling_context);
+            finalize_layout_tree(&layout_nodes);
+        }
+    }
+}
 
-    // Measure pass: Preprocess text into segments and compute intrinsic sizes
-    let max_width = sibling_context.parent_max_width;
+/// Full reflow that returns the layout tree for caching
+pub fn reflow_and_cache(
+    tree: &mut Vec<Rc<RefCell<DomElement>>>,
+    text_measurer: &mut dyn TextMeasurer,
+    viewport: &Rect,
+) -> Vec<boxes::LayoutNode> {
+    use crate::layout::pipeline::{
+        build_layout_tree, finalize_layout_tree, layout_tree, measure_layout_tree,
+    };
+
+    let mut context = ReflowContext {
+        x: 0.0,
+        y: 0.0,
+        rel_x: 0.0,
+        rel_y: 0.0,
+        font_size: 16.0,
+        parent_width: viewport.width,
+        parent_height: viewport.height,
+        parent_max_width: viewport.width,
+        layout_x_start: None,
+        adjacent_margin_bottom: 0.0,
+        shrink_to_fit: false,
+        collapsible_margin_top: 0.0,
+    };
+
+    let mut layout_nodes = build_layout_tree(tree, &context);
+    let max_width = context.parent_max_width;
     measure_layout_tree(&mut layout_nodes, text_measurer, max_width);
-
-    // Layout pass: Position all elements (text segments positioned directly)
-    layout_tree(&mut layout_nodes, sibling_context);
-
-    // Finalize pass: Copy results back to DOM
+    layout_tree(&mut layout_nodes, &context);
     finalize_layout_tree(&layout_nodes);
+
+    layout_nodes
 }
 
 pub fn get_render_array(
