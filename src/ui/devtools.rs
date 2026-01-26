@@ -1,6 +1,7 @@
 use crate::html::{parse_html, DomElement, NodeType};
 use crate::layout::Rect;
 use crate::renderer::{RenderedBuffer, SkiaRenderer};
+use crate::styles::ComputedStyle;
 use crate::ui::browser_window::RenderFrameState;
 
 use std::cell::RefCell;
@@ -81,6 +82,20 @@ impl DevtoolsOverlay {
                 for seg in &text_segments {
                     add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "rgba(0,204,0,1.0)");
                 }
+
+                // Add info popup (positioned above the element)
+                let popup_height = 100.0; // approximate height
+                let popup_x = border_box.x.min(viewport.width - 220.0).max(8.0);
+                let popup_y = (border_box.y - popup_height - 8.0).max(8.0);
+                add_info_popup(
+                    &body,
+                    popup_x,
+                    popup_y,
+                    &element.tag_name,
+                    flow.width,
+                    flow.height,
+                    style,
+                );
             }
         }
 
@@ -218,5 +233,159 @@ fn collect_text_segments(element: &DomElement, out: &mut Vec<Rect>) {
         } else {
             collect_text_segments(&child, out);
         }
+    }
+}
+
+fn add_info_popup(
+    parent: &Rc<RefCell<DomElement>>,
+    left: f32,
+    top: f32,
+    tag_name: &str,
+    width: f32,
+    height: f32,
+    style: &ComputedStyle,
+) {
+    let popup = DomElement::create("div");
+    let popup_style = format!(
+        "display:block; position:absolute; left:{}px; top:{}px; width:200px; \
+         background:rgba(255,255,255,0.95); padding:8px; \
+         box-shadow: 0 2px 8px rgba(0,0,0,0.15);",
+        left, top
+    );
+    popup.borrow_mut().set_attribute("style", &popup_style);
+
+    // Header: tag name and dimensions
+    let header = DomElement::create("div");
+    header.borrow_mut().set_attribute("style", "display:block; margin-bottom:6px;");
+
+    let tag_span = DomElement::create("span");
+    let tag_color = get_tag_color(tag_name);
+    tag_span.borrow_mut().set_attribute(
+        "style",
+        &format!("color:{}; font-weight:700; font-size:13px;", tag_color),
+    );
+    tag_span.borrow_mut().set_text_content(&tag_name.to_lowercase());
+    header.borrow_mut().append_child(tag_span);
+
+    let dims_span = DomElement::create("span");
+    dims_span.borrow_mut().set_attribute(
+        "style",
+        "color:#666; font-size:12px; margin-left:8px;",
+    );
+    dims_span.borrow_mut().set_text_content(&format!("{:.0} x {:.0}", width, height));
+    header.borrow_mut().append_child(dims_span);
+
+    popup.borrow_mut().append_child(header);
+
+    // Color row
+    let (r, g, b, _a) = style.color;
+    let color_hex = format!("#{:02x}{:02x}{:02x}", r as u8, g as u8, b as u8);
+    add_property_row(&popup, "Color", &color_hex, Some(style.color));
+
+    // Background color row (if not transparent)
+    let (bg_r, bg_g, bg_b, bg_a) = style.background_color;
+    if bg_a > 0.0 {
+        let bg_hex = format!("#{:02x}{:02x}{:02x}", bg_r as u8, bg_g as u8, bg_b as u8);
+        add_property_row(&popup, "Background", &bg_hex, Some(style.background_color));
+    }
+
+    // Font row
+    let font_info = format!(
+        "{}px {}",
+        style.font_size as i32,
+        style.font_family
+    );
+    add_property_row(&popup, "Font", &font_info, None);
+
+    // Margin row
+    let margin = &style.margin;
+    let margin_str = if margin.top == margin.right && margin.right == margin.bottom && margin.bottom == margin.left {
+        format!("{}px", margin.top as i32)
+    } else if margin.top == margin.bottom && margin.left == margin.right {
+        format!("{}px {}px", margin.top as i32, margin.left as i32)
+    } else {
+        format!(
+            "{}px {}px {}px {}px",
+            margin.top as i32,
+            margin.right as i32,
+            margin.bottom as i32,
+            margin.left as i32
+        )
+    };
+    add_property_row(&popup, "Margin", &margin_str, None);
+
+    // Padding row (if non-zero)
+    let padding = &style.padding;
+    if padding.top != 0.0 || padding.right != 0.0 || padding.bottom != 0.0 || padding.left != 0.0 {
+        let padding_str = if padding.top == padding.right && padding.right == padding.bottom && padding.bottom == padding.left {
+            format!("{}px", padding.top as i32)
+        } else if padding.top == padding.bottom && padding.left == padding.right {
+            format!("{}px {}px", padding.top as i32, padding.left as i32)
+        } else {
+            format!(
+                "{}px {}px {}px {}px",
+                padding.top as i32,
+                padding.right as i32,
+                padding.bottom as i32,
+                padding.left as i32
+            )
+        };
+        add_property_row(&popup, "Padding", &padding_str, None);
+    }
+
+    parent.borrow_mut().append_child(popup);
+}
+
+fn add_property_row(
+    parent: &Rc<RefCell<DomElement>>,
+    label: &str,
+    value: &str,
+    color_swatch: Option<(f32, f32, f32, f32)>,
+) {
+    let row = DomElement::create("div");
+    row.borrow_mut().set_attribute(
+        "style",
+        "display:block; margin-bottom:4px; font-size:11px;",
+    );
+
+    let label_span = DomElement::create("span");
+    label_span.borrow_mut().set_attribute(
+        "style",
+        "color:#888; width:50px; display:inline-block;",
+    );
+    label_span.borrow_mut().set_text_content(label);
+    row.borrow_mut().append_child(label_span);
+
+    if let Some((r, g, b, _a)) = color_swatch {
+        let swatch = DomElement::create("span");
+        swatch.borrow_mut().set_attribute(
+            "style",
+            &format!(
+                "display:inline-block; width:12px; height:12px; \
+                 background:rgb({},{},{}); margin-right:4px;",
+                r as u8, g as u8, b as u8
+            ),
+        );
+        row.borrow_mut().append_child(swatch);
+    }
+
+    let value_span = DomElement::create("span");
+    value_span.borrow_mut().set_attribute("style", "color:#333;");
+    value_span.borrow_mut().set_text_content(value);
+    row.borrow_mut().append_child(value_span);
+
+    parent.borrow_mut().append_child(row);
+}
+
+fn get_tag_color(tag_name: &str) -> &'static str {
+    match tag_name.to_uppercase().as_str() {
+        "DIV" | "SPAN" | "SECTION" | "ARTICLE" | "HEADER" | "FOOTER" | "NAV" | "MAIN" | "ASIDE" => "#881280",
+        "P" | "H1" | "H2" | "H3" | "H4" | "H5" | "H6" => "#881280",
+        "A" => "#1a0dab",
+        "IMG" | "VIDEO" | "AUDIO" | "CANVAS" | "SVG" => "#994500",
+        "INPUT" | "BUTTON" | "SELECT" | "TEXTAREA" | "FORM" => "#994500",
+        "UL" | "OL" | "LI" => "#881280",
+        "TABLE" | "TR" | "TD" | "TH" | "THEAD" | "TBODY" => "#881280",
+        _ => "#881280",
     }
 }
