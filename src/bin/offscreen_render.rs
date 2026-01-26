@@ -4,8 +4,8 @@ use std::fs;
 use std::rc::Rc;
 
 use graviton::colors::ColorTupleA;
+use graviton::frame::Frame;
 use graviton::layout::Rect;
-use graviton::render_frame::{BoxTextMeasurer, RenderFrame};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -34,24 +34,22 @@ fn main() {
         height,
     };
 
-    let mut text_measurer = BoxTextMeasurer::default();
-
-    let mut render_frame = RenderFrame::new(viewport, &mut text_measurer);
-    render_frame.load_url(input);
+    let mut frame = Frame::new(viewport);
+    frame.load_url(input);
 
     if env::var("OFFSCREEN_DEBUG").is_ok() {
-        dump_layout(&render_frame.dom_tree, 0);
+        dump_layout(&frame.dom_tree, 0);
     }
 
-    let svg = render_to_svg(&render_frame);
+    let svg = render_to_svg(&frame);
     fs::write(output, svg).expect("failed to write SVG");
     println!("Wrote SVG to {}", output);
 }
 
-fn render_to_svg(render_frame: &RenderFrame) -> String {
+fn render_to_svg(frame: &Frame) -> String {
     let mut svg = String::new();
-    let width = render_frame.viewport.width;
-    let height = render_frame.viewport.height;
+    let width = frame.viewport.width;
+    let height = frame.viewport.height;
 
     svg.push_str(&format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">",
@@ -59,7 +57,7 @@ fn render_to_svg(render_frame: &RenderFrame) -> String {
     ));
     svg.push_str("<rect x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" fill=\"white\" />");
 
-    for item in &render_frame.render_array {
+    for item in &frame.render_array {
         // Skip zero-dimension elements (Chromium doesn't render them)
         if item.width == 0.0 || item.height == 0.0 {
             continue;

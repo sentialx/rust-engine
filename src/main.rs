@@ -1,5 +1,5 @@
 use std::string::String;
-use graviton::browser_window::create_browser_window;
+use graviton::ui::browser_window::create_browser_window;
 use graviton::css;
 use graviton::css_value::{parse_css_value, tokenize_css_value};
 

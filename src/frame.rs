@@ -10,25 +10,7 @@ use crate::{
     text::FontManager,
 };
 
-/// Information about the hovered element for devtools overlay
-#[derive(Clone, Debug, PartialEq)]
-pub struct HoverInfo {
-    pub tag_name: String,
-    pub rect: Rect,
-    pub hover_rect: Rect,
-    pub margin: crate::styles::ComputedMargin,
-    pub padding: crate::styles::ComputedMargin,
-    pub text_segments: Vec<TextSegmentRect>,
-}
-
-/// Bounding box for a text segment
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextSegmentRect {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
+/// Information about a hovered element is represented by its DOM node
 
 /// Recursively extract CSS content from <style> tags in the DOM tree
 fn extract_style_tags(tree: &Vec<Rc<RefCell<DomElement>>>, css: &mut String) {
@@ -224,8 +206,8 @@ impl Frame {
     }
 
     /// Hit test to find the element at a given point (in page coordinates)
-    /// Returns info about the hovered element including tag name and text segments
-    pub fn hit_test(&self, x: f32, y: f32) -> Option<HoverInfo> {
+    /// Returns the deepest element that contains the point
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<Rc<RefCell<DomElement>>> {
         use crate::layout::rect_contains;
 
         // Traverse DOM tree to find deepest element at point
@@ -233,8 +215,8 @@ impl Frame {
             tree: &Vec<Rc<RefCell<DomElement>>>,
             x: f32,
             y: f32,
-        ) -> Option<HoverInfo> {
-            let mut result: Option<HoverInfo> = None;
+        ) -> Option<Rc<RefCell<DomElement>>> {
+            let mut result: Option<Rc<RefCell<DomElement>>> = None;
 
             for element_rc in tree {
                 let element = element_rc.borrow();
@@ -251,37 +233,9 @@ impl Frame {
                         width: flow.width,
                         height: flow.height,
                     };
-                    let hover_rect = flow.hover_rect.clone();
-                    let (margin, padding) = element
-                        .computed_style
-                        .as_ref()
-                        .map(|style| (style.margin.clone(), style.padding.clone()))
-                        .unwrap_or_else(|| (crate::styles::ComputedMargin {
-                            top: 0.0,
-                            right: 0.0,
-                            bottom: 0.0,
-                            left: 0.0,
-                        }, crate::styles::ComputedMargin {
-                            top: 0.0,
-                            right: 0.0,
-                            bottom: 0.0,
-                            left: 0.0,
-                        }));
-
                     if rect_contains(&rect, x, y) {
-                        // Collect text segments from this element and its text children
-                        let mut text_segments = Vec::new();
-                        collect_text_segments(&element, &mut text_segments);
-
                         // This element contains the point, save it
-                        result = Some(HoverInfo {
-                            tag_name: element.tag_name.clone(),
-                            rect: rect.clone(),
-                            hover_rect,
-                            margin,
-                            padding,
-                            text_segments,
-                        });
+                        result = Some(element_rc.clone());
 
                         // Check children for a more specific (deeper) match
                         if let Some(child_info) = hit_test_tree(&element.children, x, y) {
@@ -292,29 +246,6 @@ impl Frame {
             }
 
             result
-        }
-
-        // Collect text segment rects from element and all recursive children
-        fn collect_text_segments(element: &DomElement, out: &mut Vec<TextSegmentRect>) {
-            for child_rc in &element.children {
-                let child = child_rc.borrow();
-                if child.node_type == NodeType::Text {
-                    // Collect text segments from text nodes
-                    for seg in &child.text_segments {
-                        if seg.width > 0.0 && seg.height > 0.0 {
-                            out.push(TextSegmentRect {
-                                x: seg.x,
-                                y: seg.y,
-                                width: seg.width,
-                                height: seg.height,
-                            });
-                        }
-                    }
-                } else {
-                    // Recurse into element children
-                    collect_text_segments(&child, out);
-                }
-            }
         }
 
         hit_test_tree(&self.dom_tree, x, y)
