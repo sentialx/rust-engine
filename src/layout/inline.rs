@@ -32,7 +32,6 @@ impl InlineLayoutStrategy {
                     box_data.y = inline_ctx.y;
                 } else {
                     // Start new inline line
-                    let prev_style = &prev.computed_style;
                     let next_x = prev.x + prev.margin_box_width();
                     inline_ctx.start_new_line(next_x, prev.y);
                     box_data.x = inline_ctx.x;
@@ -53,10 +52,24 @@ impl InlineLayoutStrategy {
 
         // Wrap to next line if this inline box would overflow the available width.
         let max_right = context.x + context.parent_max_width;
+        let mut should_wrap = false;
         if inline_ctx.active
             && box_data.margin_box_width() > 0.0
-            && box_data.x + box_data.margin_box_width() > max_right + 0.01
+            && box_data.x + box_data.margin_box_width()
+                > max_right
+                    + if matches!(
+                        box_data.computed_style.display.as_str(),
+                        "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                    ) {
+                        8.0
+                    } else {
+                        0.01
+                    }
         {
+            should_wrap = true;
+        }
+
+        if should_wrap {
             let next_y = inline_ctx.y + inline_ctx.line_height;
             inline_ctx.start_new_line(x_base, next_y);
             box_data.x = inline_ctx.x;

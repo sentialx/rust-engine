@@ -193,6 +193,7 @@ pub fn measure_text_after_layout(
     text_measurer: &mut dyn TextMeasurer,
     max_width: f32,
     layout_x_start: f32,
+    force_nowrap: bool,
 ) {
     use crate::layout::wrap_text;
     
@@ -220,7 +221,7 @@ pub fn measure_text_after_layout(
             let font_size = comp_style.font_size;
             
             // Handle text wrapping with actual positions
-            let lines = if white_space != "nowrap" {
+            let lines = if white_space != "nowrap" && !force_nowrap {
                 wrap_text(
                     processed_value.clone(),
                     max_width,
@@ -266,8 +267,45 @@ pub fn measure_text_after_layout(
         // Measure children text after their layout
         if !node.children.is_empty() {
             // All elements establish their own layout context for text wrapping
-            let child_layout_x_start =
-                node.box_data.x + node.box_data.margin.left + node.box_data.padding.left;
+            let parent_display = node.box_data.computed_style.display.as_str();
+            let child_layout_x_start = if parent_display == "inline" {
+                layout_x_start
+            } else {
+                node.box_data.x + node.box_data.margin.left + node.box_data.padding.left
+            };
+            let available_line_width = if matches!(
+                parent_display,
+                "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+            ) && node.box_data.content_width > 0.0
+            {
+                node.box_data.content_width
+            } else {
+                max_width
+            };
+            let child_force_nowrap = if force_nowrap {
+                true
+            } else if matches!(
+                parent_display,
+                "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+            ) {
+                let has_block_child = node.children.iter().any(|child| {
+                    matches!(
+                        child.box_data.computed_style.display.as_str(),
+                        "block" | "list-item" | "table"
+                    )
+                });
+                let max_text_width = max_intrinsic_text_width(node);
+                let content_width = if node.box_data.content_width > 0.0 {
+                    node.box_data.content_width
+                } else {
+                    available_line_width
+                };
+                let fits_without_wrap =
+                    max_text_width > 0.0 && max_text_width <= content_width + 0.01;
+                !has_block_child && fits_without_wrap
+            } else {
+                false
+            };
             
             let child_max_width = if node.box_data.computed_style.width > 0.0 {
                 // Element has explicit width - use content width directly
@@ -276,18 +314,54 @@ pub fn measure_text_after_layout(
                 node.box_data.computed_style.display.as_str(),
                 "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
             ) {
-                // Avoid shrink feedback loops for shrink-to-fit containers
-                max_width
+                // Avoid shrink feedback loops for shrink-to-fit containers,
+                // but do not allow text to exceed a known content width.
+                if node.box_data.content_width > 0.0 {
+                    node.box_data.content_width.min(available_line_width)
+                } else {
+                    available_line_width
+                }
             } else if node.box_data.content_width > 0.0 {
-                // Use computed content width if available (e.g. block auto width)
-                node.box_data.content_width
+                // Use computed content width if available (e.g. block auto width).
+                node.box_data.content_width.min(available_line_width)
             } else {
                 // max_width is already in the parent's content coordinate space
-                max_width
+                available_line_width
             };
-            measure_text_after_layout(&mut node.children, text_measurer, child_max_width, child_layout_x_start);
+            measure_text_after_layout(
+                &mut node.children,
+                text_measurer,
+                child_max_width,
+                child_layout_x_start,
+                child_force_nowrap,
+            );
         }
     }
+}
+
+fn max_intrinsic_text_width(node: &LayoutNode) -> f32 {
+    if node.box_data.formatting_context == FormattingContext::TextNode {
+        return node.box_data.intrinsic_width.unwrap_or(0.0);
+    }
+
+    node.children
+        .iter()
+        .map(max_intrinsic_text_width)
+        .fold(0.0_f32, |acc, w| acc.max(w))
+}
+
+fn has_breakable_text(element: &DomElement) -> bool {
+    if element.node_type == NodeType::Text {
+        return element.node_value.chars().any(|c| c.is_whitespace());
+    }
+
+    for child in &element.children {
+        if has_breakable_text(&child.borrow()) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Layout pass: Assign positions and sizes using formatting context strategies
@@ -426,14 +500,9 @@ pub fn layout_tree(
                 node.box_data.computed_style.display.as_str(),
                 "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
             );
-            let parent_content_width = if context.shrink_to_fit || node_is_shrink_to_fit {
-                // Avoid shrink feedback loops: measure children against available width.
-                // Inline-like elements should keep full line width and wrap instead of shrinking.
-                if node_is_shrink_to_fit {
-                    available_content_width
-                } else {
-                    max_content_width_for_line
-                }
+            let parent_is_shrink_to_fit = context.shrink_to_fit || node_is_shrink_to_fit;
+            let parent_content_width = if parent_is_shrink_to_fit {
+                available_content_width
             } else if node.box_data.content_width > 0.0 {
                 node.box_data.content_width
             } else {
@@ -463,7 +532,7 @@ pub fn layout_tree(
                     None
                 },
                 adjacent_margin_bottom: 0.0,
-                shrink_to_fit: child_shrink_to_fit,
+                shrink_to_fit: parent_is_shrink_to_fit || child_shrink_to_fit,
             };
             
             layout_tree(&mut node.children, &child_context);
@@ -485,7 +554,35 @@ pub fn layout_tree(
                     node.box_data.content_width = 0.0;
                     for child in &node.children {
                         let child_x = child.box_data.x + child.box_data.margin.left;
-                        let child_right = child_x + child.box_data.margin_box_width();
+                        let mut child_right = child_x + child.box_data.margin_box_width();
+                        if matches!(
+                            display,
+                            "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                        ) && child.box_data.formatting_context == FormattingContext::TextNode
+                        {
+                            if let Some(intrinsic_width) = child.box_data.intrinsic_width {
+                                let non_content = child.box_data.padding.left
+                                    + child.box_data.padding.right
+                                    + child.box_data.margin.left
+                                    + child.box_data.margin.right;
+                                child_right = child_x + intrinsic_width + non_content;
+                            }
+                        }
+                        if matches!(
+                            child.box_data.computed_style.display.as_str(),
+                            "block" | "list-item" | "table"
+                        ) && child.box_data.computed_style.width <= 0.0
+                        {
+                            let max_text_width = max_intrinsic_text_width(child);
+                            if max_text_width > 0.0 {
+                                let non_content = child.box_data.padding.left
+                                    + child.box_data.padding.right
+                                    + child.box_data.margin.left
+                                    + child.box_data.margin.right;
+                                child_right =
+                                    child_right.max(child_x + max_text_width + non_content);
+                            }
+                        }
                         // content_width excludes padding; measure from content box left
                         let content_left = node.box_data.x
                             + node.box_data.margin.left
@@ -494,10 +591,28 @@ pub fn layout_tree(
                             child_right - content_left
                         );
                     }
-                    // Clamp only for non-inline-like content; inline items should wrap instead.
-                    if !is_shrink_to_fit {
+                    if context.shrink_to_fit
+                        && !matches!(
+                            display,
+                            "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                        )
+                    {
                         node.box_data.content_width =
                             node.box_data.content_width.min(max_content_width_for_line);
+                    } else if matches!(
+                        display,
+                        "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                    ) {
+                        let has_breaks = {
+                            let element = node.box_data.element.borrow();
+                            has_breakable_text(&element)
+                        };
+                        if has_breaks {
+                            node.box_data.content_width = node
+                                .box_data
+                                .content_width
+                                .min(max_content_width_for_line);
+                        }
                     }
                 } else {
                     // Keep block auto width (already set earlier), but clamp defensively.
@@ -505,7 +620,7 @@ pub fn layout_tree(
                         node.box_data.content_width.min(available_content_width);
                 }
             }
-            
+
             if !inherited_style.height.has_numeric_value() {
                 // Reset content_height and recompute from children
                 node.box_data.content_height = 0.0;
@@ -517,6 +632,56 @@ pub fn layout_tree(
                     node.box_data.content_height = node.box_data.content_height.max(
                         child_bottom - content_top
                     );
+                }
+            }
+
+            // Second pass: after shrink-to-fit width is known, let block children fill it.
+            if !inherited_style.width.has_numeric_value()
+                && matches!(
+                    node.box_data.computed_style.display.as_str(),
+                    "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
+                )
+                && node_is_shrink_to_fit
+            {
+                let relayout_context = ReflowContext {
+                    x: content_x,
+                    y: node.box_data.y + node.box_data.padding.top,
+                    rel_x: if node.box_data.computed_style.position == "relative"
+                        || uses_absolute_positioning(&node.box_data.computed_style)
+                    {
+                        content_x
+                    } else {
+                        context.rel_x
+                    },
+                    rel_y: if node.box_data.computed_style.position == "relative"
+                        || uses_absolute_positioning(&node.box_data.computed_style)
+                    {
+                        node.box_data.y + node.box_data.padding.top
+                    } else {
+                        context.rel_y
+                    },
+                    font_size: node.box_data.computed_style.font_size,
+                    parent_width: node.box_data.content_width,
+                    parent_height: node.box_data.content_height,
+                    parent_max_width: node.box_data.content_width,
+                    layout_x_start: None,
+                    adjacent_margin_bottom: 0.0,
+                    shrink_to_fit: false,
+                };
+
+                layout_tree(&mut node.children, &relayout_context);
+
+                if !inherited_style.height.has_numeric_value() {
+                    // Recompute height after relayout.
+                    node.box_data.content_height = 0.0;
+                    for child in &node.children {
+                        let child_y = child.box_data.y + child.box_data.margin.top;
+                        let child_bottom = child_y + child.box_data.margin_box_height();
+                        let content_top = node.box_data.y + node.box_data.padding.top;
+                        node.box_data.content_height = node.box_data.content_height.max(
+                            child_bottom - content_top
+                        );
+                    }
                 }
             }
         }
