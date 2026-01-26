@@ -65,10 +65,15 @@ pub fn handle(
                     // First, clear all hover states
                     clear_hover_states(&frame.dom_tree);
 
-                    // Then set hover on the element under cursor
+                    // Then set hover on the element under cursor and return its nodeId
                     if let Some(element) = frame.hit_test(x, y) {
-                        let mut el = element.borrow_mut();
-                        el.is_hovered = true;
+                        {
+                            let mut el = element.borrow_mut();
+                            el.is_hovered = true;
+                        }
+                        // Return the hovered element's nodeId so caller can use Overlay.highlightNode
+                        let node_id = server.get_or_create_node_id(&element);
+                        return Response::success(id, json!({ "nodeId": node_id }));
                     }
                 }
                 _ => {}

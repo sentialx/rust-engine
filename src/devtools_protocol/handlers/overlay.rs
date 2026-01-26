@@ -30,8 +30,8 @@ pub fn handle(
                 .or_else(|| params.get("backendNodeId").and_then(|v| v.as_u64()));
 
             match node_id {
-                Some(id) => {
-                    server.set_highlighted_node(Some(id));
+                Some(nid) => {
+                    server.set_highlighted_node(Some(nid));
                     Response::success(id, json!({}))
                 }
                 None => {
