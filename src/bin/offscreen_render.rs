@@ -3,12 +3,9 @@ use std::env;
 use std::fs;
 use std::rc::Rc;
 
-use find_folder::Search;
-use piston_window::{PistonWindow, WindowSettings};
-
 use graviton::colors::ColorTupleA;
 use graviton::layout::Rect;
-use graviton::render_frame::{GlyphsTextMeasurer, RenderFrame};
+use graviton::render_frame::{BoxTextMeasurer, RenderFrame};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -37,43 +34,7 @@ fn main() {
         height,
     };
 
-    // Initialize a minimal window so glyph cache can load
-    let mut _window: PistonWindow = WindowSettings::new("Graviton Offscreen", [1, 1])
-        .exit_on_esc(false)
-        .build()
-        .expect("failed to create offscreen window");
-
-    let assets = Search::ParentsThenKids(3, 3)
-        .for_folder("assets")
-        .expect("assets folder not found");
-
-    let glyphs_map: Rc<
-        RefCell<std::collections::HashMap<String, piston_window::Glyphs<'static>>>,
-    > = Rc::new(RefCell::new(
-        std::collections::HashMap::<String, piston_window::Glyphs<'static>>::new(),
-    ));
-
-    let add_font = |name: &str,
-                    map: &Rc<
-        RefCell<std::collections::HashMap<String, piston_window::Glyphs<'static>>>,
-    >| {
-        let glyphs = _window
-            .load_font(
-                assets.join(name),
-                piston_window::wgpu_graphics::TextureSettings::new(),
-            )
-            .unwrap();
-        map.borrow_mut().insert(name.to_string(), glyphs);
-    };
-
-    add_font("Times New Roman 400.ttf", &glyphs_map);
-    add_font("Times New Roman 700.ttf", &glyphs_map);
-    add_font("Times New Roman Italique 400.ttf", &glyphs_map);
-    add_font("Times New Roman Italique 700.ttf", &glyphs_map);
-
-    let mut text_measurer = GlyphsTextMeasurer {
-        glyphs_map: glyphs_map.clone(),
-    };
+    let mut text_measurer = BoxTextMeasurer::default();
 
     let mut render_frame = RenderFrame::new(viewport, &mut text_measurer);
     render_frame.load_url(input);
@@ -128,27 +89,16 @@ fn render_to_svg(render_frame: &RenderFrame) -> String {
         }
 
         if !item.text_segments.is_empty() {
-            let font_family = font_family_from_path(&item.font_path);
-            let font_weight = font_weight_from_path(&item.font_path);
-            let text_color = color_to_rgba(item.color);
-            let decoration = if item.underline { "underline" } else { "none" };
-
             for seg in &item.text_segments {
-                if seg.text.is_empty() {
+                if seg.width == 0.0 || seg.height == 0.0 {
                     continue;
                 }
-                // SVG text y-coordinate is the baseline (top + ascent)
-                let y = seg.y + seg.ascent;
                 svg.push_str(&format!(
-                    "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\" text-decoration=\"{}\">{}</text>",
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"rgba(255,0,0,0.5)\"/>",
                     seg.x,
-                    y,
-                    font_family,
-                    item.font_size,
-                    font_weight,
-                    text_color,
-                    decoration,
-                    escape_xml(&seg.text)
+                    seg.y,
+                    seg.width,
+                    seg.height
                 ));
             }
         }
@@ -235,26 +185,3 @@ fn color_to_rgba(color: ColorTupleA) -> String {
     format!("rgba({},{},{},{})", r as i32, g as i32, b as i32, a)
 }
 
-fn font_family_from_path(path: &str) -> &str {
-    if path.contains("Times New Roman") {
-        "Times New Roman"
-    } else {
-        "Times New Roman"
-    }
-}
-
-fn font_weight_from_path(path: &str) -> &'static str {
-    if path.contains("700") {
-        "700"
-    } else {
-        "400"
-    }
-}
-
-fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}

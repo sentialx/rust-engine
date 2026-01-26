@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use graviton::html::{parse_html, DomElement};
 use graviton::layout::{compute_styles, propagate_styles, reflow, Rect};
-use graviton::render_frame::TextMeasurer;
+use graviton::render_frame::{BoxTextMeasurer, TextMeasurer};
 use graviton::css::parse_css;
 use graviton::styles::StyleRule;
 
@@ -280,5 +280,16 @@ fn test_ascent_used_for_baseline() {
 
     // With height=20 and ascent=16, baseline is at y+16, which leaves 4px for descenders
     assert_eq!(seg.height - seg.ascent, 4.0, "Should have 4px below baseline for descenders");
+}
+
+#[test]
+fn test_box_text_measurer_dimensions() {
+    let mut measurer = BoxTextMeasurer::default();
+    let (width, height) = measurer.measure("abcd", 10.0, "Times New Roman");
+    let ascent = measurer.ascent(10.0, "Times New Roman");
+
+    assert_eq!(height, 10.0, "Box measurer uses font size as height");
+    assert_eq!(width, 24.0, "Box measurer uses 0.6x font size per character");
+    assert_eq!(ascent, 8.0, "Box measurer uses 0.8x font size for ascent");
 }
 
