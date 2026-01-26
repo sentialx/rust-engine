@@ -35,6 +35,8 @@ pub struct Rect {
     pub height: f32,
 }
 
+use crate::properties::border::ComputedBorder;
+
 #[derive(Clone, Debug)]
 pub struct RenderItem {
     pub x: f32,
@@ -47,6 +49,7 @@ pub struct RenderItem {
     pub background_color: ColorTupleA,
     pub color: ColorTupleA,
     pub underline: bool,
+    pub border: ComputedBorder,
     pub element: Option<Rc<RefCell<DomElement>>>,
 }
 
@@ -617,7 +620,8 @@ fn get_render_array_inner(
             .collect();
 
         // Only create RenderItem if there's something visible to render
-        if has_visible_background || !visible_text_segments.is_empty() {
+        let has_visible_border = computed_style.border.has_visible_border();
+        if has_visible_background || has_visible_border || !visible_text_segments.is_empty() {
             stats.in_viewport += 1;
 
             if element.node_type != NodeType::Comment {
@@ -637,6 +641,7 @@ fn get_render_array_inner(
                     font_path: style.font.get_path(),
                     color: computed_style.color,
                     underline: computed_style.text_decoration == "underline",
+                    border: computed_style.border.clone(),
                     element: Some(tree[i].clone()),
                 };
                 array.push(item);

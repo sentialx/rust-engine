@@ -70,6 +70,7 @@ pub fn build_layout_tree(
                 // Evaluate style properties
                 inherited_style.margin.evaluate(&font_scalar_ctx);
                 inherited_style.padding.evaluate(&font_scalar_ctx);
+                inherited_style.border.evaluate(&font_scalar_ctx);
                 inherited_style.font_size.evaluate(&font_scalar_ctx);
                 inherited_style.inset.evaluate(&font_scalar_ctx);
                 inherited_style.width.evaluate(&parent_width_scalar_ctx);

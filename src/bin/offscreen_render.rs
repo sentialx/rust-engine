@@ -86,6 +86,43 @@ fn render_to_svg(frame: &Frame) -> String {
             ));
         }
 
+        // Render borders
+        let border = &item.border;
+
+        // Top border
+        if border.top.is_visible() {
+            render_border_line_svg(
+                &mut svg, item.x, item.y, item.width, border.top.width,
+                true, &border.top.style, border.top.color
+            );
+        }
+
+        // Bottom border
+        if border.bottom.is_visible() {
+            render_border_line_svg(
+                &mut svg, item.x, item.y + item.height - border.bottom.width,
+                item.width, border.bottom.width,
+                true, &border.bottom.style, border.bottom.color
+            );
+        }
+
+        // Left border
+        if border.left.is_visible() {
+            render_border_line_svg(
+                &mut svg, item.x, item.y, border.left.width, item.height,
+                false, &border.left.style, border.left.color
+            );
+        }
+
+        // Right border
+        if border.right.is_visible() {
+            render_border_line_svg(
+                &mut svg, item.x + item.width - border.right.width, item.y,
+                border.right.width, item.height,
+                false, &border.right.style, border.right.color
+            );
+        }
+
         // Note: Text segments are not rendered by default since text is not visible
         // in Chromium baselines. Enable with OFFSCREEN_DEBUG_TEXT=1 for debugging.
         if env::var("OFFSCREEN_DEBUG_TEXT").is_ok() && !item.text_segments.is_empty() {
@@ -177,5 +214,80 @@ fn color_to_rgba(color: ColorTupleA) -> String {
         a = (a / 255.0).clamp(0.0, 1.0);
     }
     format!("rgba({},{},{},{})", r as i32, g as i32, b as i32, a)
+}
+
+fn render_border_line_svg(
+    svg: &mut String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    horizontal: bool,
+    style: &str,
+    color: ColorTupleA,
+) {
+    let fill = color_to_rgba(color);
+
+    match style {
+        "dashed" => {
+            let border_width = if horizontal { height } else { width };
+            let dash_len = (border_width * 3.0).max(3.0);
+            let gap_len = dash_len;
+
+            if horizontal {
+                let mut cx = x;
+                while cx < x + width {
+                    let segment_width = dash_len.min(x + width - cx);
+                    svg.push_str(&format!(
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+                        cx, y, segment_width, height, fill
+                    ));
+                    cx += dash_len + gap_len;
+                }
+            } else {
+                let mut cy = y;
+                while cy < y + height {
+                    let segment_height = dash_len.min(y + height - cy);
+                    svg.push_str(&format!(
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+                        x, cy, width, segment_height, fill
+                    ));
+                    cy += dash_len + gap_len;
+                }
+            }
+        }
+        "dotted" => {
+            let border_width = if horizontal { height } else { width };
+            let dot_size = border_width.max(1.0);
+            let gap_len = dot_size;
+
+            if horizontal {
+                let mut cx = x;
+                while cx < x + width {
+                    svg.push_str(&format!(
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+                        cx, y, dot_size, height, fill
+                    ));
+                    cx += dot_size + gap_len;
+                }
+            } else {
+                let mut cy = y;
+                while cy < y + height {
+                    svg.push_str(&format!(
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+                        x, cy, width, dot_size, fill
+                    ));
+                    cy += dot_size + gap_len;
+                }
+            }
+        }
+        _ => {
+            // solid (default)
+            svg.push_str(&format!(
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+                x, y, width, height, fill
+            ));
+        }
+    }
 }
 

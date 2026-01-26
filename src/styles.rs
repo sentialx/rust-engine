@@ -3,6 +3,7 @@ use crate::css::*;
 use crate::css_value::{CssSizeUnit, CssValue};
 use crate::html::{DomElement, NodeType};
 use crate::layout::CssVariablesContext;
+use crate::properties::border::{Border, BorderSide, ComputedBorder};
 use crate::properties::color::Color;
 use crate::properties::font::{Font, FontFamily, FontWeight};
 use crate::properties::font_size::FontSize;
@@ -134,6 +135,7 @@ pub struct ComputedMargin {
 pub struct ComputedStyle {
   pub margin: ComputedMargin,
   pub padding: ComputedMargin,
+  pub border: ComputedBorder,
   pub font_family: String,
   pub font_weight: i32,
   pub font_size: f32,
@@ -155,6 +157,7 @@ pub struct ComputedStyle {
 pub struct Style {
   pub margin: Margin,
   pub padding: Margin,
+  pub border: Border,
   pub font: Font,
   pub font_size: FontSize,
   pub display: StringProperty,
@@ -201,6 +204,7 @@ impl Style {
     Style {
       margin: Margin::empty(),
       padding: Margin::empty(),
+      border: Border::empty(),
       font: Font::empty(),
       font_size: FontSize::empty(),
       display: StringProperty::empty(false, "inline"),
@@ -270,6 +274,68 @@ impl Style {
         "height" => self.height = MarginComponent::from_value(value),
         "white-space" => self.white_space.from_value(value),
         "visibility" => self.visibility.from_value(value),
+        // Border shorthand
+        "border" => self.border = Border::from_shorthand(value),
+        // Border side shorthands
+        "border-top" => self.border.top = BorderSide::from_shorthand(value),
+        "border-right" => self.border.right = BorderSide::from_shorthand(value),
+        "border-bottom" => self.border.bottom = BorderSide::from_shorthand(value),
+        "border-left" => self.border.left = BorderSide::from_shorthand(value),
+        // Border width
+        "border-width" => {
+          let side = BorderSide::from_width_value(value);
+          self.border.top.width = side.width.clone();
+          self.border.right.width = side.width.clone();
+          self.border.bottom.width = side.width.clone();
+          self.border.left.width = side.width;
+          // Set style to solid if not already set
+          if self.border.top.style == "none" { self.border.top.style = "solid".to_string(); }
+          if self.border.right.style == "none" { self.border.right.style = "solid".to_string(); }
+          if self.border.bottom.style == "none" { self.border.bottom.style = "solid".to_string(); }
+          if self.border.left.style == "none" { self.border.left.style = "solid".to_string(); }
+        }
+        "border-top-width" => {
+          self.border.top = BorderSide::from_width_value(value);
+          if self.border.top.style == "none" { self.border.top.style = "solid".to_string(); }
+        }
+        "border-right-width" => {
+          self.border.right = BorderSide::from_width_value(value);
+          if self.border.right.style == "none" { self.border.right.style = "solid".to_string(); }
+        }
+        "border-bottom-width" => {
+          self.border.bottom = BorderSide::from_width_value(value);
+          if self.border.bottom.style == "none" { self.border.bottom.style = "solid".to_string(); }
+        }
+        "border-left-width" => {
+          self.border.left = BorderSide::from_width_value(value);
+          if self.border.left.style == "none" { self.border.left.style = "solid".to_string(); }
+        }
+        // Border style
+        "border-style" => {
+          let style_str = match &value {
+            CssValue::Multiple(values) => {
+              values.first().and_then(|v| match v {
+                CssValue::String(s) => Some(s.clone()),
+                _ => None,
+              })
+            }
+            CssValue::String(s) => Some(s.clone()),
+            _ => None,
+          };
+          if let Some(s) = style_str {
+            self.border.top.style = s.clone();
+            self.border.right.style = s.clone();
+            self.border.bottom.style = s.clone();
+            self.border.left.style = s;
+          }
+        }
+        // Border color
+        "border-color" => {
+          self.border.top.color.from_value(value.clone());
+          self.border.right.color.from_value(value.clone());
+          self.border.bottom.color.from_value(value.clone());
+          self.border.left.color.from_value(value);
+        }
         _ => {}
       }
     }
@@ -279,6 +345,7 @@ impl Style {
     Style {
       margin: self.margin.create_inherited(inherit_style),
       padding: self.padding.create_inherited(inherit_style),
+      border: self.border.create_inherited(inherit_style),
       font: self.font.create_inherited(inherit_style),
       font_size: self.font_size.create_inherited(inherit_style),
       display: self.display.create_inherited(&inherit_style.display),
@@ -301,6 +368,7 @@ impl Style {
     ComputedStyle {
       margin: self.margin.to_computed(),
       padding: self.padding.to_computed(),
+      border: self.border.to_computed(),
       font_family: self.font.family.get(),
       font_weight: self.font.weight.get(),
       font_size: self.font_size.get(),

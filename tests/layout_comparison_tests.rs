@@ -246,6 +246,14 @@ fn test_overlay_layout_old() {
     }
 }
 
+#[test]
+fn test_borders() {
+    // Tests: border shorthand, individual sides, border with padding, border-width
+    if let Err(e) = compare_layout("borders") {
+        panic!("{}", e);
+    }
+}
+
 // =============================================================================
 // Unit tests for comparison logic
 // =============================================================================
