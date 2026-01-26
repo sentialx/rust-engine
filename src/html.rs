@@ -68,6 +68,8 @@ pub struct DomElement {
   pub computed_style: Option<ComputedStyle>,
   pub text_segments: Vec<TextSegment>,  // Preprocessed words with positions
   pub space_width: f32,                  // Width of space character
+  pub cached_font_size: Option<f32>,     // For text measurement caching
+  pub cached_font_path: Option<String>,  // For text measurement caching
   pub class_list: Vec<String>,
   pub matched_styles: Vec<StyleRule>,
   pub var_contexts: Vec<CssVariablesContext>,
@@ -91,6 +93,8 @@ impl DomElement {
       is_hovered: false,
       text_segments: vec![],
       space_width: 0.0,
+      cached_font_size: None,
+      cached_font_path: None,
       class_list: vec![],
       matched_styles: vec![],
       var_contexts: vec![],

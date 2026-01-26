@@ -9,13 +9,32 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 /// Preprocess text node: split into words and measure each
+/// Caches measurements - only re-measures if font_size changed or segments are empty
 fn preprocess_text_node(
     element: &mut DomElement,
     text_measurer: &mut dyn TextMeasurer,
     font_size: f32,
     font_path: &str,
 ) {
+    // Check if we can reuse existing measurements
+    // Segments are valid if they exist, have same font size, and text hasn't changed
+    let can_reuse = !element.text_segments.is_empty()
+        && element.cached_font_size == Some(font_size)
+        && element.cached_font_path.as_deref() == Some(font_path);
+
+    if can_reuse {
+        // Just reset positions, keep measurements
+        for seg in &mut element.text_segments {
+            seg.x = 0.0;
+            seg.y = 0.0;
+        }
+        return;
+    }
+
+    // Need to re-measure
     element.text_segments.clear();
+    element.cached_font_size = Some(font_size);
+    element.cached_font_path = Some(font_path.to_string());
 
     // Handle HTML entities
     let processed_value = element.node_value
@@ -799,6 +818,32 @@ pub fn finalize_layout_tree(
         // Finalize children
         if !node.children.is_empty() {
             finalize_layout_tree(&node.children);
+        }
+    }
+}
+
+/// Reset layout positions for re-layout (used when reusing cached tree)
+/// Keeps intrinsic measurements, resets computed positions
+pub fn reset_layout_positions(layout_nodes: &mut Vec<LayoutNode>) {
+    for node in layout_nodes.iter_mut() {
+        // Reset position and computed dimensions
+        node.box_data.x = 0.0;
+        node.box_data.y = 0.0;
+        node.box_data.content_width = node.box_data.computed_style.width.max(0.0);
+        node.box_data.content_height = node.box_data.computed_style.height.max(0.0);
+
+        // Reset text segment positions (keep measurements)
+        {
+            let mut element = node.box_data.element.borrow_mut();
+            for seg in &mut element.text_segments {
+                seg.x = 0.0;
+                seg.y = 0.0;
+            }
+        }
+
+        // Recursively reset children
+        if !node.children.is_empty() {
+            reset_layout_positions(&mut node.children);
         }
     }
 }
