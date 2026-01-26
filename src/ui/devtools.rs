@@ -83,19 +83,47 @@ impl DevtoolsOverlay {
                     add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
                 }
 
-                // Add info popup (positioned above the element)
-                let popup_height = 100.0; // approximate height
+                // Add info popup (position will be adjusted after layout)
                 let popup_x = border_box.x.min(viewport.width - 220.0).max(8.0);
-                let popup_y = (border_box.y - popup_height - 8.0).max(8.0);
-                add_info_popup(
+                let popup = add_info_popup(
                     &body,
                     popup_x,
-                    popup_y,
+                    0.0, // temporary y position
                     &element.tag_name,
                     flow.width,
                     flow.height,
                     style,
                 );
+
+                // Do layout to get actual popup height
+                overlay_frame.full_layout();
+
+                // Get computed popup height and reposition
+                let popup_height = popup
+                    .borrow()
+                    .computed_flow
+                    .as_ref()
+                    .map(|f| f.height)
+                    .unwrap_or(100.0);
+
+                let above_y = border_box.y - popup_height - 8.0;
+                let below_y = border_box.y + border_box.height + 8.0;
+
+                let popup_y = if above_y >= 8.0 {
+                    above_y
+                } else if below_y + popup_height < page_height {
+                    below_y
+                } else {
+                    8.0_f32.max(above_y)
+                };
+
+                // Update popup position
+                {
+                    let mut popup_ref = popup.borrow_mut();
+                    let current_style = popup_ref.attributes.get("style").cloned().unwrap_or_default();
+                    let new_style = current_style.replace("top:0px;", &format!("top:{}px;", popup_y));
+                    popup_ref.set_attribute("style", &new_style);
+                }
             }
         }
 
@@ -246,12 +274,12 @@ fn add_info_popup(
     width: f32,
     height: f32,
     style: &ComputedStyle,
-) {
+) -> Rc<RefCell<DomElement>> {
     let popup = DomElement::create("div");
     let popup_style = format!(
         "display:block; position:absolute; left:{}px; top:{}px; width:200px; \
-         background:rgba(255,255,255,0.95); padding:8px; \
-         box-shadow: 0 2px 8px rgba(0,0,0,0.15); border: 1px solid rgba(0, 0, 0, 0.15);",
+         background:rgba(255,255,255,0.97); padding:10px; \
+         box-shadow: 0 2px 4px rgba(0,0,0,0.08);",
         left, top
     );
     popup.borrow_mut().set_attribute("style", &popup_style);
@@ -355,7 +383,8 @@ fn add_info_popup(
         add_property_row(&popup, "Border", &border_str, Some(border.top.color));
     }
 
-    parent.borrow_mut().append_child(popup);
+    parent.borrow_mut().append_child(popup.clone());
+    popup
 }
 
 fn add_property_row(

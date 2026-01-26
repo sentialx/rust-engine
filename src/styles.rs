@@ -4,6 +4,7 @@ use crate::css_value::{CssSizeUnit, CssValue};
 use crate::html::{DomElement, NodeType};
 use crate::layout::CssVariablesContext;
 use crate::properties::border::{Border, BorderSide, ComputedBorder};
+use crate::properties::box_shadow::{BoxShadow, ComputedBoxShadow};
 use crate::properties::color::Color;
 use crate::properties::font::{Font, FontFamily, FontWeight};
 use crate::properties::font_size::FontSize;
@@ -136,6 +137,7 @@ pub struct ComputedStyle {
   pub margin: ComputedMargin,
   pub padding: ComputedMargin,
   pub border: ComputedBorder,
+  pub box_shadow: ComputedBoxShadow,
   pub font_family: String,
   pub font_weight: i32,
   pub font_size: f32,
@@ -158,6 +160,7 @@ pub struct Style {
   pub margin: Margin,
   pub padding: Margin,
   pub border: Border,
+  pub box_shadow: BoxShadow,
   pub font: Font,
   pub font_size: FontSize,
   pub display: StringProperty,
@@ -205,6 +208,7 @@ impl Style {
       margin: Margin::empty(),
       padding: Margin::empty(),
       border: Border::empty(),
+      box_shadow: BoxShadow::empty(),
       font: Font::empty(),
       font_size: FontSize::empty(),
       display: StringProperty::empty(false, "inline"),
@@ -336,6 +340,10 @@ impl Style {
           self.border.bottom.color.from_value(value.clone());
           self.border.left.color.from_value(value);
         }
+        // Box shadow
+        "box-shadow" => {
+          self.box_shadow.from_value(value);
+        }
         _ => {}
       }
     }
@@ -346,6 +354,7 @@ impl Style {
       margin: self.margin.create_inherited(inherit_style),
       padding: self.padding.create_inherited(inherit_style),
       border: self.border.create_inherited(inherit_style),
+      box_shadow: self.box_shadow.create_inherited(inherit_style),
       font: self.font.create_inherited(inherit_style),
       font_size: self.font_size.create_inherited(inherit_style),
       display: self.display.create_inherited(&inherit_style.display),
@@ -369,6 +378,7 @@ impl Style {
       margin: self.margin.to_computed(),
       padding: self.padding.to_computed(),
       border: self.border.to_computed(),
+      box_shadow: self.box_shadow.to_computed(),
       font_family: self.font.family.get(),
       font_weight: self.font.weight.get(),
       font_size: self.font_size.get(),

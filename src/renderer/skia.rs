@@ -93,6 +93,59 @@ fn draw_border_line(
     }
 }
 
+/// Draw a box shadow with blur approximation
+/// Uses layered semi-transparent rectangles to simulate blur
+fn draw_box_shadow(
+    pixmap: &mut Pixmap,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    blur_radius: f32,
+    color: ColorTupleA,
+) {
+    if blur_radius <= 0.0 {
+        // No blur - just draw a solid shadow
+        let mut paint = Paint::default();
+        paint.set_color(css_color_to_skia(color));
+        paint.anti_alias = false;
+        if let Some(rect) = SkiaRect::from_xywh(x, y, width, height) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+        return;
+    }
+
+    // Approximate blur with multiple layers
+    // More layers = smoother blur but slower
+    let layers = (blur_radius as i32).min(10).max(3);
+    let step = blur_radius / layers as f32;
+
+    for i in 0..layers {
+        let offset = step * (layers - i) as f32;
+        let alpha_factor = (i + 1) as f32 / (layers + 1) as f32;
+
+        let layer_color = (
+            color.0,
+            color.1,
+            color.2,
+            color.3 * alpha_factor * 0.5,
+        );
+
+        let mut paint = Paint::default();
+        paint.set_color(css_color_to_skia(layer_color));
+        paint.anti_alias = false;
+
+        if let Some(rect) = SkiaRect::from_xywh(
+            x - offset,
+            y - offset,
+            width + offset * 2.0,
+            height + offset * 2.0,
+        ) {
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
+}
+
 /// Glyph info stored in the atlas
 struct GlyphInfo {
     x: u32,
@@ -266,6 +319,19 @@ impl Renderer for SkiaRenderer {
 
         // Render all items to page buffer
         for item in items {
+            // Draw box shadow (before background)
+            if item.box_shadow.is_visible() && !item.box_shadow.inset {
+                draw_box_shadow(
+                    &mut page_pm,
+                    item.x * scale + item.box_shadow.offset_x * scale,
+                    item.y * scale + item.box_shadow.offset_y * scale,
+                    item.width * scale + item.box_shadow.spread_radius * scale * 2.0,
+                    item.height * scale + item.box_shadow.spread_radius * scale * 2.0,
+                    item.box_shadow.blur_radius * scale,
+                    item.box_shadow.color,
+                );
+            }
+
             // Draw background
             if item.background_color != (0.0, 0.0, 0.0, 0.0) {
                 let mut paint = Paint::default();

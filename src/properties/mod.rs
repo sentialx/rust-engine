@@ -5,3 +5,4 @@ pub mod font_style;
 pub mod string_property;
 pub mod color;
 pub mod border;
+pub mod box_shadow;
