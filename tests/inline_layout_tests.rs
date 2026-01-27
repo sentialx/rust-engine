@@ -158,3 +158,38 @@ fn test_inline_wrap_resets_x() {
         );
     }
 }
+
+#[test]
+fn test_inline_wrap_advances_y_for_wrapped_inline() {
+    let html = r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { margin: 0; padding: 8px; }
+    .container { width: 80px; }
+    .a, .b, .c { display: inline; background: red; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="a">first</span> <span class="b">second</span> <span class="c">third</span>
+  </div>
+</body>
+</html>
+"#;
+
+    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
+    frame.load_html(html);
+
+    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let a = boxes.iter().find(|(c, _, _, _, _)| c == "a").unwrap();
+    let b = boxes.iter().find(|(c, _, _, _, _)| c == "b").unwrap();
+    let c = boxes.iter().find(|(c, _, _, _, _)| c == "c").unwrap();
+
+    println!("Inline boxes: a={:?}, b={:?}, c={:?}", a, b, c);
+
+    // If the third inline wrapped, it should be positioned on a later line (y increased).
+    assert!(c.2 > a.2, "Wrapped inline should advance y: a.y={:.2}, c.y={:.2}", a.2, c.2);
+    assert!(c.2 >= b.2, "Wrapped inline should not be above previous inline: b.y={:.2}, c.y={:.2}", b.2, c.2);
+}

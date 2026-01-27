@@ -298,7 +298,16 @@ pub fn layout_tree(
                 );
             }
         } else {
-            layout_inline_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
+            let is_transparent_inline = formatting_context == FormattingContext::InlineContainer
+                && node.box_data.computed_style.display == "inline"
+                && !is_atomic_inline;
+            let has_block_child = node.children.iter().any(|child| {
+                child.box_data.formatting_context == FormattingContext::BlockContainer
+            });
+
+            if !is_transparent_inline || has_block_child {
+                layout_inline_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
+            }
             if !is_absolute && is_atomic_inline {
                 // Update inline context after atomic inline children are laid out
                 advance_past_atomic_inline(node, &mut state.inline_ctx);
@@ -344,6 +353,15 @@ pub fn finalize_layout_tree(
 
         let flow_y = if node.box_data.formatting_context == FormattingContext::BlockContainer {
             node.box_data.y
+        } else if node.box_data.formatting_context == FormattingContext::InlineContainer
+            && node.box_data.computed_style.display == "inline"
+            && !node.children.is_empty()
+        {
+            let mut min_child_y: f32 = f32::MAX;
+            for child in &node.children {
+                min_child_y = min_child_y.min(child.box_data.y);
+            }
+            min_child_y + node.box_data.margin.top
         } else {
             node.box_data.y + node.box_data.margin.top
         };
