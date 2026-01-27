@@ -16,7 +16,14 @@ use crate::styles::ScalarEvaluationContext;
 use crate::layout::{Rect, boxes::{LayoutBox, LayoutNode}};
 use crate::layout::flow::{FormattingContext, get_formatting_context, ReflowContext, SiblingLayoutState, uses_absolute_positioning};
 use crate::layout::block::{BlockLayoutStrategy, layout_block_children};
-use crate::layout::inline::{preprocess_text_node, compute_text_intrinsics, compute_container_intrinsics, layout_inline_content, advance_past_atomic_inline, is_atomic_inline_display, layout_inline_children};
+use crate::layout::inline::{
+    preprocess_text_node,
+    compute_text_intrinsics,
+    compute_container_intrinsics,
+    layout_inline_content,
+    layout_inline_children,
+    should_layout_inline_children_in_block_pass,
+};
 use crate::layout::abspos::AbsoluteLayoutStrategy;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -249,7 +256,6 @@ pub fn layout_tree(
         }
 
         let formatting_context = node.box_data.formatting_context;
-        let mut is_atomic_inline = false;
         let is_block = matches!(formatting_context, FormattingContext::BlockContainer);
 
         let is_absolute = uses_absolute_positioning(&node.box_data.computed_style);
@@ -269,9 +275,12 @@ pub fn layout_tree(
                     );
                 }
                 FormattingContext::InlineContainer | FormattingContext::TextNode => {
-                    is_atomic_inline = formatting_context == FormattingContext::InlineContainer
-                        && is_atomic_inline_display(&node.box_data.computed_style.display);
-                    layout_inline_content(std::slice::from_mut(node), &mut state.inline_ctx);
+                    layout_inline_content(
+                        std::slice::from_mut(node),
+                        &mut state.inline_ctx,
+                        context,
+                        &mut |children, ctx| { layout_tree(children, ctx); },
+                    );
                     state.after_inline();
                 }
                 FormattingContext::FlexContainer | FormattingContext::GridContainer => {
@@ -298,20 +307,8 @@ pub fn layout_tree(
                 );
             }
         } else {
-            let is_transparent_inline = formatting_context == FormattingContext::InlineContainer
-                && node.box_data.computed_style.display == "inline"
-                && !is_atomic_inline;
-            let has_block_child = node.children.iter().any(|child| {
-                child.box_data.formatting_context == FormattingContext::BlockContainer
-            });
-
-            if !is_transparent_inline || has_block_child {
+            if should_layout_inline_children_in_block_pass(node) {
                 layout_inline_children(node, context, &mut |children, ctx| { layout_tree(children, ctx); });
-            }
-            if !is_absolute && is_atomic_inline {
-                // Update inline context after atomic inline children are laid out
-                advance_past_atomic_inline(node, &mut state.inline_ctx);
-                state.after_inline();
             }
         }
 
