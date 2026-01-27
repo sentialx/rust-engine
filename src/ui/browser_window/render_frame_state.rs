@@ -1,8 +1,8 @@
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::events::{EventHandler, EventSink};
-use crate::frame::Frame;
+use crate::frame::{Frame, RenderDelegate};
 use crate::layout::Rect;
 use crate::renderer::{RenderedBuffer, Renderer, SkiaRenderer};
 
@@ -10,21 +10,18 @@ pub(crate) struct RenderFrameState {
     frame: Rc<RefCell<Frame>>,
     sink: Option<Rc<RefCell<EventSink>>>,
     buffer: Option<RenderedBuffer>,
-    dirty: bool,
 }
 
 impl RenderFrameState {
     /// Create a render frame with event handling (for interactive frames)
     pub(crate) fn new(viewport: Rect) -> Self {
         let frame = Frame::new(viewport);
-        // EventSink now includes DefaultEventHandler automatically
         let sink = EventSink::new(frame.clone());
 
         Self {
             frame,
             sink: Some(Rc::new(RefCell::new(sink))),
             buffer: None,
-            dirty: true,
         }
     }
 
@@ -34,8 +31,12 @@ impl RenderFrameState {
             frame: Frame::new(viewport),
             sink: None,
             buffer: None,
-            dirty: true,
         }
+    }
+
+    /// Set the render delegate for this frame
+    pub(crate) fn set_render_delegate(&mut self, delegate: Weak<dyn RenderDelegate>) {
+        self.frame.borrow_mut().set_render_delegate(delegate);
     }
 
     pub(crate) fn frame(&self) -> std::cell::Ref<'_, Frame> {
@@ -61,11 +62,6 @@ impl RenderFrameState {
         self.sink.as_ref().map(|s| s.borrow().scroll_y()).unwrap_or(0.0)
     }
 
-    pub(crate) fn invalidate(&mut self) {
-        self.buffer = None;
-        self.dirty = true;
-    }
-
     pub(crate) fn set_viewport(&mut self, width: f32, height: f32) {
         let frame = self.frame.borrow();
         let width_changed = (frame.viewport.width - width).abs() > 0.01;
@@ -75,23 +71,14 @@ impl RenderFrameState {
         }
         drop(frame);
 
-        let mut frame = self.frame.borrow_mut();
-        frame.set_viewport(width, height);
-        drop(frame);
-
-        self.invalidate();
+        self.frame.borrow_mut().set_viewport(width, height);
+        // Frame's set_viewport already sets render_needed via build_render_array
     }
 
-    pub(crate) fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
+    pub(crate) fn render(&mut self, renderer: &mut SkiaRenderer) {
         // Process any pending style changes before rendering
-        if self.frame.borrow_mut().update_styles_if_needed() {
-            self.invalidate();
-        }
-
-        if self.dirty || self.buffer.is_none() {
-            self.buffer = Some(renderer.render(&self.frame.borrow()));
-            self.dirty = false;
-        }
+        self.frame.borrow_mut().update_styles_if_needed();
+        self.buffer = Some(renderer.render(&self.frame.borrow()));
     }
 
     pub(crate) fn buffer(&self) -> Option<&RenderedBuffer> {

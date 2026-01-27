@@ -2,6 +2,7 @@ mod render_frame_state;
 
 pub(crate) use render_frame_state::RenderFrameState;
 use crate::events::{EventRouter, FrameRegion, InputEventKind};
+use crate::frame::RenderDelegate;
 use crate::layout::Rect;
 use crate::renderer::{CompositeRegion, Renderer, SkiaRenderer};
 use crate::ui::devtools_manager::DevtoolsManager;
@@ -20,10 +21,22 @@ use winit::window::{Window, WindowId};
 
 use softbuffer::Surface;
 
+/// Delegate that forwards render requests to the window
+struct WindowRenderDelegate {
+    window: Rc<Window>,
+}
+
+impl RenderDelegate for WindowRenderDelegate {
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+}
+
 struct BrowserApp {
     url: String,
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    render_delegate: Option<Rc<WindowRenderDelegate>>,
 
     // Document layout
     main: RenderFrameState,
@@ -61,6 +74,7 @@ impl BrowserApp {
             url,
             window: None,
             surface: None,
+            render_delegate: None,
             main,
             devtools,
             router: EventRouter::new(),
@@ -77,7 +91,7 @@ impl BrowserApp {
 
     fn load_url(&mut self) {
         self.main.frame_mut().load_url(&self.url);
-        self.main.invalidate();
+        // load_url calls full_layout which sets render_needed
         self.devtools.clear_selection();
     }
 
@@ -122,7 +136,6 @@ impl BrowserApp {
     fn dispatch_event(&mut self, kind: InputEventKind, logical_x: f32, logical_y: f32) -> bool {
         let result = self.router.dispatch(kind, logical_x, logical_y);
 
-        // Style processing happens automatically in render_if_needed
         // Just update devtools if needed for non-scroll events
         if result.handled && !matches!(kind, InputEventKind::Scroll { .. }) {
             if self.devtools.is_visible() {
@@ -133,9 +146,9 @@ impl BrowserApp {
         result.handled
     }
 
-    fn render_frame(&mut self) {
-        self.main.render_if_needed(&mut self.renderer);
-        self.devtools.render_if_needed(&mut self.renderer);
+    fn render(&mut self) {
+        self.main.render(&mut self.renderer);
+        self.devtools.render(&mut self.renderer);
 
         let main_scroll_y = self.main.scroll_y();
         let devtools_scroll_y = self.devtools.panel_scroll_y();
@@ -207,8 +220,9 @@ impl BrowserApp {
         if (new_scale - self.scale_factor).abs() > 0.001 {
             self.scale_factor = new_scale;
             self.renderer.clear_caches();
-            self.main.invalidate();
-            self.devtools.invalidate();
+            if let Some(ref window) = self.window {
+                window.request_redraw();
+            }
         }
     }
 }
@@ -241,8 +255,14 @@ impl ApplicationHandler for BrowserApp {
         self.main.set_viewport(main_width, logical_height);
         self.devtools.set_viewport(devtools_width, logical_height, main_width);
 
-        self.window = Some(window);
+        self.window = Some(window.clone());
         self.surface = Some(surface);
+
+        // Set up render delegate so frames can request redraws
+        let delegate = Rc::new(WindowRenderDelegate { window });
+        self.render_delegate = Some(delegate.clone());
+        self.main.set_render_delegate(Rc::downgrade(&delegate) as _);
+        self.devtools.set_render_delegate(Rc::downgrade(&delegate) as _);
 
         // Set up event routing
         self.setup_event_routing();
@@ -275,16 +295,10 @@ impl ApplicationHandler for BrowserApp {
                 let devtools_width = self.devtools.reserved_width();
                 self.resize_debouncer.push((logical_width - devtools_width, logical_height));
                 self.handle_resize(new_size);
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
             }
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.handle_scale_factor_changed(scale_factor);
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
             }
 
             WindowEvent::KeyboardInput {
@@ -307,9 +321,7 @@ impl ApplicationHandler for BrowserApp {
                         if self.devtools.is_visible() {
                             self.update_devtools();
                         }
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
-                        }
+                        // Redraw triggered automatically via DOM changes
                     }
                     Key::Named(NamedKey::ArrowUp) => {
                         self.pressed_up = pressed;
@@ -418,7 +430,7 @@ impl ApplicationHandler for BrowserApp {
                 }
 
                 // Render and present
-                self.render_frame();
+                self.render();
                 self.present();
             }
 

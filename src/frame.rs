@@ -47,8 +47,15 @@ pub struct Frame {
     pub cached_layout_tree: Option<Vec<LayoutNode>>,
     /// Dirty flag for style recomputation
     styles_dirty: Cell<bool>,
+    /// Delegate to notify when render is needed
+    render_delegate: Option<Weak<dyn RenderDelegate>>,
     /// Weak self-reference for passing to DomElements
     self_ref: Option<Weak<RefCell<Frame>>>,
+}
+
+/// Trait for objects that can handle render requests from Frame
+pub trait RenderDelegate {
+    fn request_redraw(&self);
 }
 
 impl Frame {
@@ -69,6 +76,7 @@ impl Frame {
             default_styles,
             cached_layout_tree: None,
             styles_dirty: Cell::new(false),
+            render_delegate: None,
             self_ref: None,
         }));
 
@@ -82,6 +90,21 @@ impl Frame {
     /// This method takes &self (not &mut self) so it can be called while Frame is borrowed.
     pub fn mark_styles_dirty(&self) {
         self.styles_dirty.set(true);
+        self.request_redraw();
+    }
+
+    /// Set the delegate to be notified when re-render is needed
+    pub fn set_render_delegate(&mut self, delegate: Weak<dyn RenderDelegate>) {
+        self.render_delegate = Some(delegate);
+    }
+
+    /// Request a redraw from the delegate (public for direct Frame modifications)
+    pub fn request_redraw(&self) {
+        if let Some(ref weak) = self.render_delegate {
+            if let Some(delegate) = weak.upgrade() {
+                delegate.request_redraw();
+            }
+        }
     }
 
     /// Get a short display name for logging (derived from URL)
@@ -319,7 +342,7 @@ impl Frame {
             .fold(0.0_f32, |a, b| a.max(b));
 
         println!(
-            "[{}] Build render array: {:?}, items: {:?}, page_height: {:?}",
+            "[{}] Redraw: {:?}, items: {:?}, page_height: {:?}",
             self.log_name(),
             s.elapsed(),
             self.render_array.len(),

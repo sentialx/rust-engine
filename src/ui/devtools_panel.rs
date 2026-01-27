@@ -1,7 +1,5 @@
 use crate::events::EventSink;
 use crate::dom::{DomElement, NodeType};
-use crate::frame::Frame;
-use crate::html::parse_html;
 use crate::layout::Rect;
 use crate::renderer::{RenderedBuffer, SkiaRenderer};
 use crate::ui::browser_window::RenderFrameState;
@@ -26,21 +24,22 @@ impl DevtoolsPanel {
         self.render.set_viewport(width, height);
     }
 
-    pub fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
-        self.render.render_if_needed(renderer);
+    pub fn render(&mut self, renderer: &mut SkiaRenderer) {
+        self.render.render(renderer);
     }
 
     pub fn buffer(&self) -> Option<&RenderedBuffer> {
         self.render.buffer()
     }
 
-    pub fn invalidate(&mut self) {
-        self.render.invalidate();
+    /// Set render delegate
+    pub fn set_render_delegate(&mut self, delegate: std::rc::Weak<dyn crate::frame::RenderDelegate>) {
+        self.render.set_render_delegate(delegate);
     }
 
     pub fn load(&mut self) {
         self.render.frame_mut().load_url("devtools.html");
-        self.render.invalidate();
+        // load_url calls full_layout which sets render_needed
         self.loaded = true;
     }
 
@@ -117,43 +116,22 @@ impl DevtoolsPanel {
         let computed_el = self.render.frame_mut().get_element_by_id("computed-styles");
         let dims_el = self.render.frame_mut().get_element_by_id("box-dimensions");
 
-        {
-            let frame = self.render.frame();
-            if let Some(el) = breadcrumb_el {
-                set_inner_html(&el, &breadcrumb_html, &frame);
-            }
-            if let Some(el) = tree_el {
-                set_inner_html(&el, &tree_html, &frame);
-            }
-            if let Some(el) = styles_el {
-                set_inner_html(&el, &styles_html, &frame);
-            }
-            if let Some(el) = computed_el {
-                set_inner_html(&el, &computed_html, &frame);
-            }
+        if let Some(el) = breadcrumb_el {
+            el.borrow_mut().set_inner_html(&breadcrumb_html);
+        }
+        if let Some(el) = tree_el {
+            el.borrow_mut().set_inner_html(&tree_html);
+        }
+        if let Some(el) = styles_el {
+            el.borrow_mut().set_inner_html(&styles_html);
+        }
+        if let Some(el) = computed_el {
+            el.borrow_mut().set_inner_html(&computed_html);
         }
         if let Some(el) = dims_el {
             el.borrow_mut().set_text_content(&box_dims);
         }
-
-        self.render.frame_mut().full_layout();
-        self.render.invalidate();
-    }
-}
-
-// Helper: Set innerHTML by clearing children and parsing new HTML
-fn set_inner_html(element: &Rc<RefCell<DomElement>>, html: &str, frame: &Frame) {
-    let mut el = element.borrow_mut();
-    el.children.clear();
-
-    // Parse the HTML fragment using the IR
-    let ir_nodes = parse_html(&format!("<div>{}</div>", html));
-    let parsed = frame.build_dom_from_ir(&ir_nodes, None);
-    if let Some(wrapper) = parsed.first() {
-        let wrapper_ref = wrapper.borrow();
-        for child in &wrapper_ref.children {
-            el.children.push(child.clone());
-        }
+        // DOM modifications via set_text_content/set_inner_html trigger mark_dirty
     }
 }
 

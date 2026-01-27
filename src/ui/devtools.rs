@@ -13,6 +13,8 @@ use std::rc::Rc;
 pub struct DevtoolsOverlay {
     render: RenderFrameState,
     has_content: bool,
+    /// Cached body element to avoid re-parsing HTML
+    body: Option<Rc<RefCell<DomElement>>>,
 }
 
 impl DevtoolsOverlay {
@@ -20,6 +22,7 @@ impl DevtoolsOverlay {
         Self {
             render: RenderFrameState::new_render_only(viewport),
             has_content: false,
+            body: None,
         }
     }
 
@@ -27,16 +30,28 @@ impl DevtoolsOverlay {
         self.render.set_viewport(width, height);
     }
 
-    pub fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
-        self.render.render_if_needed(renderer);
+    pub fn render(&mut self, renderer: &mut SkiaRenderer) {
+        self.render.render(renderer);
     }
 
     pub fn buffer(&self) -> Option<&RenderedBuffer> {
         self.render.buffer()
     }
 
-    pub fn invalidate(&mut self) {
-        self.render.invalidate();
+    /// Set render delegate
+    pub fn set_render_delegate(&mut self, delegate: std::rc::Weak<dyn crate::frame::RenderDelegate>) {
+        self.render.set_render_delegate(delegate);
+    }
+
+    /// Reset the overlay completely (e.g., on page refresh)
+    pub fn reset(&mut self) {
+        self.body = None;
+        self.has_content = false;
+        let mut frame = self.render.frame_mut();
+        frame.dom_tree.clear();
+        frame.render_array.clear();
+        frame.cached_layout_tree = None;
+        frame.request_redraw();
     }
 
     pub fn rebuild(&mut self, hover_info: Option<&Rc<RefCell<DomElement>>>, viewport: Rect, page_height: f32) {
@@ -44,32 +59,44 @@ impl DevtoolsOverlay {
 
         if hover_info.is_none() {
             if self.has_content {
+                // Just clear body children instead of entire DOM
+                if let Some(ref body) = self.body {
+                    body.borrow_mut().children.clear();
+                }
                 let mut frame = self.render.frame_mut();
-                frame.dom_tree.clear();
                 frame.render_array.clear();
                 frame.page_height = 0.0;
                 frame.cached_layout_tree = None;
-                drop(frame);
-                self.render.invalidate();
+                frame.request_redraw();
                 self.has_content = false;
             }
             return;
         }
 
         self.has_content = true;
-        {
-            let mut frame = self.render.frame_mut();
-            let ir_nodes = parse_html("<html><body></body></html>");
-            frame.dom_tree = frame.build_dom_from_ir(&ir_nodes, None);
-            frame.default_styles = vec![];
-            frame.parsed_css = vec![];
-            frame.styles = vec![];
-        }
 
-        // Find body element
-        let dom_tree = self.render.frame().dom_tree.clone();
-        let Some(body) = find_first_tag(&dom_tree, "BODY") else {
-            return;
+        // Initialize DOM structure only once
+        let body = if let Some(ref body) = self.body {
+            // Clear previous overlay elements
+            body.borrow_mut().children.clear();
+            body.clone()
+        } else {
+            // First time: parse and cache
+            {
+                let mut frame = self.render.frame_mut();
+                let ir_nodes = parse_html("<html><body></body></html>");
+                frame.dom_tree = frame.build_dom_from_ir(&ir_nodes, None);
+                frame.default_styles = vec![];
+                frame.parsed_css = vec![];
+                frame.styles = vec![];
+            }
+
+            let dom_tree = self.render.frame().dom_tree.clone();
+            let Some(body) = find_first_tag(&dom_tree, "BODY") else {
+                return;
+            };
+            self.body = Some(body.clone());
+            body
         };
 
         let body_style = format!(
@@ -130,17 +157,13 @@ impl DevtoolsOverlay {
                 )
             };
 
-            // Drop borrow of element before mutably borrowing frame
+            // Drop borrow of element before positioning popup
             drop(element);
 
-            // Do layout to get actual popup height
-            self.render.frame_mut().full_layout();
-
-            // Get computed popup height and reposition
+            // Get popup height (forces layout if needed)
             let popup_height = popup
                 .borrow()
-                .computed_flow
-                .as_ref()
+                .get_computed_flow()
                 .map(|f| f.height)
                 .unwrap_or(100.0);
 
@@ -163,9 +186,7 @@ impl DevtoolsOverlay {
                 popup_ref.set_attribute("style", &new_style);
             }
         }
-
-        self.render.frame_mut().full_layout();
-        self.render.invalidate();
+        // DOM modifications via set_attribute trigger mark_dirty which sets render_needed
     }
 }
 

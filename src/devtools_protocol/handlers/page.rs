@@ -85,7 +85,7 @@ pub fn handle(
                 let mut overlay = DevtoolsOverlay::new(viewport.clone());
                 overlay.set_viewport(viewport.width, viewport.height);
                 overlay.rebuild(highlighted.as_ref(), viewport, page_height);
-                overlay.render_if_needed(&mut renderer);
+                overlay.render(&mut renderer);
 
                 // Composite main + overlay
                 let mut regions = vec![
