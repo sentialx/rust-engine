@@ -2,36 +2,213 @@
 <html>
   <head>
     <style>
+      * {
+        box-sizing: border-box;
+      }
       body {
-        font-family: sans-serif;
-        font-size: 12px;
-        margin: 8px;
-        background: #ffffff;
+        font-family: monospace;
+        font-size: 11px;
+        margin: 0;
+        padding: 0;
+        background: #1e1e1e;
+        color: #d4d4d4;
       }
-      .section {
-        margin-bottom: 12px;
+      .panel {
+        display: block;
       }
-      .label {
-        color: #666666;
-        font-size: 10px;
-      }
-      #tag-name {
+      .panel-header {
+        background: #252526;
+        padding: 6px 10px;
         font-weight: bold;
-        color: #881280;
+        font-size: 11px;
+        color: #cccccc;
+        border-bottom: 1px solid #3c3c3c;
       }
-      #dimensions {
-        color: #1a1aa6;
+      .panel-content {
+        padding: 8px;
+      }
+
+      /* Elements panel - DOM tree */
+      #elements-tree {
+        padding: 4px 0;
+      }
+      .tree-node {
+        padding: 2px 0;
+        cursor: default;
+      }
+      .tree-node.selected {
+        background: #094771;
+      }
+      .tree-node.hovered {
+        background: #2a2d2e;
+      }
+      .tree-indent {
+        display: inline-block;
+        width: 12px;
+      }
+      .tree-toggle {
+        display: inline-block;
+        width: 12px;
+        color: #858585;
+      }
+      .tag-name {
+        color: #569cd6;
+      }
+      .attr-name {
+        color: #9cdcfe;
+      }
+      .attr-value {
+        color: #ce9178;
+      }
+      .text-content {
+        color: #d4d4d4;
+      }
+      .comment {
+        color: #6a9955;
+      }
+
+      /* Breadcrumb */
+      #breadcrumb {
+        background: #252526;
+        padding: 4px 10px;
+        border-bottom: 1px solid #3c3c3c;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .crumb {
+        color: #569cd6;
+        display: inline;
+      }
+      .crumb-sep {
+        color: #858585;
+        margin: 0 4px;
+      }
+      .crumb.current {
+        color: #dcdcaa;
+      }
+      .pin-indicator {
+        background: #4ec9b0;
+        color: #1e1e1e;
+        padding: 1px 6px;
+        font-size: 9px;
+        font-weight: bold;
+        margin-right: 8px;
+      }
+
+      /* Styles panel */
+      #styles-panel {
+        border-top: 1px solid #3c3c3c;
+      }
+      .style-rule {
+        margin-bottom: 8px;
+      }
+      .style-selector {
+        color: #dcdcaa;
+        margin-bottom: 2px;
+      }
+      .style-prop {
+        padding-left: 16px;
+        color: #9cdcfe;
+      }
+      .style-value {
+        color: #ce9178;
+      }
+
+      /* Computed styles */
+      #computed-panel {
+        border-top: 1px solid #3c3c3c;
+      }
+      .computed-prop {
+        padding: 2px 0;
+        font-size: 11px;
+      }
+      .computed-name {
+        color: #9cdcfe;
+      }
+      .computed-value {
+        color: #ce9178;
+      }
+      .color-swatch {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin-right: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      /* Box model */
+      #box-model {
+        border-top: 1px solid #3c3c3c;
+      }
+      .box-diagram {
+        margin: 10px auto;
+        width: 200px;
+        text-align: center;
+      }
+      .box-margin {
+        background: #f9cc9d;
+        padding: 8px;
+      }
+      .box-border {
+        background: #fddd9b;
+        padding: 8px;
+      }
+      .box-padding {
+        background: #c3d08b;
+        padding: 8px;
+      }
+      .box-content {
+        background: #8cb4d5;
+        padding: 10px 5px;
+        color: #1e1e1e;
+        font-weight: bold;
+      }
+      .box-label {
+        font-size: 9px;
+        color: #1e1e1e;
       }
     </style>
   </head>
   <body>
-    <div class="section">
-      <div class="label">Element</div>
-      <div id="tag-name">--</div>
+    <div id="breadcrumb"></div>
+
+    <div class="panel" id="elements-panel">
+      <div class="panel-header">Elements</div>
+      <div class="panel-content">
+        <div id="elements-tree"></div>
+      </div>
     </div>
-    <div class="section">
-      <div class="label">Dimensions</div>
-      <div id="dimensions">--</div>
+
+    <div class="panel" id="styles-panel">
+      <div class="panel-header">Styles</div>
+      <div class="panel-content">
+        <div id="matched-styles"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="computed-panel">
+      <div class="panel-header">Computed</div>
+      <div class="panel-content">
+        <div id="computed-styles"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="box-model">
+      <div class="panel-header">Box Model</div>
+      <div class="panel-content">
+        <div class="box-diagram">
+          <div class="box-margin">
+            <div class="box-label">margin</div>
+            <div class="box-border">
+              <div class="box-label">border</div>
+              <div class="box-padding">
+                <div class="box-label">padding</div>
+                <div class="box-content" id="box-dimensions">-- x --</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </body>
 </html>
