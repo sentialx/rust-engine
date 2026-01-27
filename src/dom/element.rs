@@ -4,6 +4,7 @@ use std::rc::{Rc, Weak};
 
 use crate::css::parse_css;
 use crate::frame::Frame;
+use crate::html::parse_html;
 use crate::layout::{CssVariablesContext, Rect};
 use crate::styles::{ComputedStyle, Declaration, Style, StyleRule};
 
@@ -244,6 +245,37 @@ impl DomElement {
             self.children.push(Rc::new(RefCell::new(text_node)));
         }
         self.mark_dirty();
+    }
+
+    pub fn set_inner_html(&mut self, html: &str) {
+        self.children.clear();
+        if let Some(ref frame_ref) = self.frame {
+            if let Some(frame) = frame_ref.upgrade() {
+                let ir_nodes = parse_html(&format!("<div>{}</div>", html));
+                let parsed = frame.borrow().build_dom_from_ir(&ir_nodes, None);
+                if let Some(wrapper) = parsed.first() {
+                    let wrapper_ref = wrapper.borrow();
+                    for child in &wrapper_ref.children {
+                        self.children.push(child.clone());
+                    }
+                }
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// Get computed flow, forcing layout if dirty.
+    /// Returns None if element hasn't been laid out or layout can't run (frame borrowed).
+    pub fn get_computed_flow(&self) -> Option<ComputedFlow> {
+        // Force layout if needed
+        if let Some(ref weak_frame) = self.frame {
+            if let Some(frame) = weak_frame.upgrade() {
+                if let Ok(mut borrowed) = frame.try_borrow_mut() {
+                    borrowed.update_styles_if_needed();
+                }
+            }
+        }
+        self.computed_flow.clone()
     }
 
     pub fn set_attribute(&mut self, key: &str, value: &str) {

@@ -7,7 +7,9 @@ use crate::ui::devtools::DevtoolsOverlay;
 use crate::ui::devtools_panel::DevtoolsPanel;
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+
+use crate::frame::RenderDelegate;
 
 /// Manages all devtools-related state and logic
 pub struct DevtoolsManager {
@@ -15,6 +17,8 @@ pub struct DevtoolsManager {
     overlay: DevtoolsOverlay,
     panel_width: f32,
     selection: Rc<RefCell<DevtoolsSelection>>,
+    /// Track last selected element to avoid redundant updates
+    last_selected: Option<Weak<RefCell<DomElement>>>,
 }
 
 impl DevtoolsManager {
@@ -39,6 +43,19 @@ impl DevtoolsManager {
             overlay: DevtoolsOverlay::new(empty_rect),
             panel_width: 300.0,
             selection,
+            last_selected: None,
+        }
+    }
+
+    /// Check if the selected element has changed since last update
+    fn selection_changed(&self) -> bool {
+        let current = self.selected_element();
+        match (&self.last_selected, &current) {
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+            (Some(weak), Some(strong)) => {
+                weak.upgrade().map_or(true, |prev| !Rc::ptr_eq(&prev, strong))
+            }
         }
     }
 
@@ -88,6 +105,8 @@ impl DevtoolsManager {
     /// Clear all selection state (e.g., on page refresh)
     pub fn clear_selection(&mut self) {
         self.selection.borrow_mut().clear();
+        self.last_selected = None;
+        self.overlay.reset();
     }
 
     pub fn load(&mut self) {
@@ -99,10 +118,12 @@ impl DevtoolsManager {
         self.overlay.set_viewport(main_viewport_width, height);
     }
 
-    pub fn invalidate(&mut self) {
-        self.panel.invalidate();
-        self.overlay.invalidate();
+    /// Set render delegate for panel and overlay frames
+    pub fn set_render_delegate(&mut self, delegate: Weak<dyn RenderDelegate>) {
+        self.panel.set_render_delegate(delegate.clone());
+        self.overlay.set_render_delegate(delegate);
     }
+
 
     pub fn update_content(&mut self, main_dom_tree: &Vec<Rc<RefCell<DomElement>>>) {
         let selected = self.selected_element();
@@ -115,16 +136,23 @@ impl DevtoolsManager {
         self.overlay.rebuild(selected.as_ref(), main_viewport, page_height);
     }
 
-    /// Update both panel content and overlay
+    /// Update both panel content and overlay (only if selection changed)
     pub fn update(&mut self, main_dom_tree: &Vec<Rc<RefCell<DomElement>>>, main_viewport: Rect, page_height: f32) {
+        if !self.selection_changed() {
+            return;
+        }
+
+        // Update last_selected tracking
+        self.last_selected = self.selected_element().map(|rc| Rc::downgrade(&rc));
+
         self.update_content(main_dom_tree);
         self.rebuild_overlay(main_viewport, page_height);
     }
 
-    pub fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
+    pub fn render(&mut self, renderer: &mut SkiaRenderer) {
         if self.is_visible() {
-            self.panel.render_if_needed(renderer);
-            self.overlay.render_if_needed(renderer);
+            self.panel.render(renderer);
+            self.overlay.render(renderer);
         }
     }
 
