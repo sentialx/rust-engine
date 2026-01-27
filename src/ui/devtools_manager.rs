@@ -173,6 +173,7 @@ impl DevtoolsManager {
                 buffer: panel_buffer,
                 dest_x: main_viewport_width,
                 scroll_y: panel_scroll_y,
+                opaque: true,
             });
         }
 
@@ -181,6 +182,7 @@ impl DevtoolsManager {
                 buffer: overlay_buffer,
                 dest_x: 0.0,
                 scroll_y: main_scroll_y,
+                opaque: false, // Overlay needs alpha blending
             });
         }
     }

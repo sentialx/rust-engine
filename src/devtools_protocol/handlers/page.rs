@@ -93,6 +93,7 @@ pub fn handle(
                         buffer: &main_buffer,
                         dest_x: 0.0,
                         scroll_y: 0.0,
+                        opaque: true,
                     },
                 ];
 
@@ -101,6 +102,7 @@ pub fn handle(
                         buffer: overlay_buffer,
                         dest_x: 0.0,
                         scroll_y: 0.0,
+                        opaque: false,
                     });
                 }
 

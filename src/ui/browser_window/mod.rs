@@ -10,7 +10,7 @@ use crate::utils::Debouncer;
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -147,8 +147,13 @@ impl BrowserApp {
     }
 
     fn render(&mut self) {
+        let t0 = Instant::now();
         self.main.render(&mut self.renderer);
+        println!("  main render: {:?}", t0.elapsed());
+
+        let t1 = Instant::now();
         self.devtools.render(&mut self.renderer);
+        println!("  devtools render: {:?}", t1.elapsed());
 
         let main_scroll_y = self.main.scroll_y();
         let devtools_scroll_y = self.devtools.panel_scroll_y();
@@ -159,6 +164,7 @@ impl BrowserApp {
                 buffer: main_buffer,
                 dest_x: 0.0,
                 scroll_y: main_scroll_y,
+                opaque: true,
             });
         }
 
@@ -169,7 +175,9 @@ impl BrowserApp {
             devtools_scroll_y,
         );
 
+        let t2 = Instant::now();
         self.renderer.composite(&regions);
+        println!("  composite: {:?}", t2.elapsed());
     }
 
     fn present(&mut self) {
@@ -184,6 +192,7 @@ impl BrowserApp {
             return;
         }
 
+        let t0 = Instant::now();
         surface
             .resize(
                 NonZeroU32::new(width).unwrap(),
@@ -193,9 +202,15 @@ impl BrowserApp {
 
         let mut buffer = surface.buffer_mut().expect("Failed to get buffer");
         let display_buffer = self.renderer.get_display_buffer();
+        println!("  surface setup: {:?}", t0.elapsed());
 
+        let t1 = Instant::now();
         buffer.copy_from_slice(display_buffer);
+        println!("  buffer copy: {:?}", t1.elapsed());
+
+        let t2 = Instant::now();
         buffer.present().expect("Failed to present buffer");
+        println!("  present: {:?}", t2.elapsed());
     }
 
     fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {
