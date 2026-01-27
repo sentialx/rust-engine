@@ -31,7 +31,16 @@ impl RenderFrameState {
     }
 
     pub(crate) fn set_viewport(&mut self, width: f32, height: f32) {
+        let width_changed = (self.frame.viewport.width - width).abs() > 0.01;
+        let height_changed = (self.frame.viewport.height - height).abs() > 0.01;
+        if !width_changed && !height_changed {
+            return;
+        }
+
         self.frame.set_viewport(width, height);
+        if self.frame.cached_layout_tree.is_some() {
+            self.frame.fast_reflow();
+        }
         self.invalidate();
     }
 

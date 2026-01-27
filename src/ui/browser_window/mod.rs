@@ -91,11 +91,6 @@ impl BrowserApp {
         self.main.invalidate();
     }
 
-    fn do_reflow(&mut self) {
-        self.main.frame_mut().full_layout();
-        self.main.invalidate();
-    }
-
     fn load_devtools(&mut self) {
         self.devtools.frame_mut().load_url("devtools.html");
         self.devtools.invalidate();
@@ -343,7 +338,6 @@ impl ApplicationHandler for BrowserApp {
                             self.main.set_viewport(logical_width - devtools_width, logical_height);
                             self.devtools.set_viewport(devtools_width, logical_height);
                             self.overlay.set_viewport(logical_width - devtools_width, logical_height);
-                            self.do_reflow();
                             if self.devtools_visible {
                                 self.load_devtools();
                             }
@@ -421,10 +415,6 @@ impl ApplicationHandler for BrowserApp {
                     self.main.set_viewport(width, height);
                     self.devtools.set_viewport(self.devtools_width(), height);
                     self.overlay.set_viewport(width, height);
-                    self.do_reflow();
-                    if self.devtools_visible {
-                        self.load_devtools();
-                    }
                     self.rebuild_overlay();
                 }
 

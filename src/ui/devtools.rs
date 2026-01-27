@@ -9,12 +9,14 @@ use std::rc::Rc;
 
 pub struct DevtoolsOverlay {
     render: RenderFrameState,
+    has_content: bool,
 }
 
 impl DevtoolsOverlay {
     pub fn new(viewport: Rect) -> Self {
         Self {
             render: RenderFrameState::new(viewport),
+            has_content: false,
         }
     }
 
@@ -37,6 +39,20 @@ impl DevtoolsOverlay {
     pub fn rebuild(&mut self, hover_info: Option<&Rc<RefCell<DomElement>>>, viewport: Rect, page_height: f32) {
         let overlay_frame = self.render.frame_mut();
         overlay_frame.set_viewport(viewport.width, viewport.height);
+
+        if hover_info.is_none() {
+            if self.has_content {
+                overlay_frame.dom_tree.clear();
+                overlay_frame.render_array.clear();
+                overlay_frame.page_height = 0.0;
+                overlay_frame.cached_layout_tree = None;
+                self.render.invalidate();
+                self.has_content = false;
+            }
+            return;
+        }
+
+        self.has_content = true;
         overlay_frame.dom_tree = parse_html("<html><body></body></html>");
         overlay_frame.default_styles = vec![];
         overlay_frame.parsed_css = vec![];
@@ -468,4 +484,3 @@ fn get_tag_color(tag_name: &str) -> &'static str {
         _ => "#881280",
     }
 }
-
