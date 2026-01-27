@@ -369,6 +369,26 @@ pub fn handle(
             Response::success(id, json!({ "node": node }))
         }
 
+        "getTextSegments" => {
+            let node_id = match params.get("nodeId").and_then(|v| v.as_u64()) {
+                Some(id) => id,
+                None => return Response::error(id, ERROR_INVALID_PARAMS, "Missing nodeId parameter"),
+            };
+
+            let element = match server.get_element_by_id(node_id) {
+                Some(el) => el,
+                None => return Response::error(id, ERROR_INVALID_PARAMS, "Node not found"),
+            };
+
+            let el = element.borrow();
+            let mut segments = Vec::new();
+
+            // Collect text segments from this element's text children
+            collect_text_segments_recursive(&el, &mut segments);
+
+            Response::success(id, json!({ "textSegments": segments }))
+        }
+
         _ => Response::error(id, ERROR_METHOD_NOT_FOUND, &format!("Unknown DOM method: {}", command)),
     }
 }
@@ -469,5 +489,28 @@ fn generate_outer_html(element: &Rc<RefCell<DomElement>>) -> String {
             html.push_str(&format!("</{}>", tag));
             html
         }
+    }
+}
+
+/// Collect text segments recursively from element and its children
+fn collect_text_segments_recursive(el: &DomElement, out: &mut Vec<Value>) {
+    // Add segments from text nodes
+    if el.node_type == NodeType::Text {
+        for seg in &el.text_segments {
+            out.push(json!({
+                "text": seg.text,
+                "x": seg.x,
+                "y": seg.y,
+                "width": seg.width,
+                "height": seg.height,
+                "ascent": seg.ascent
+            }));
+        }
+    }
+
+    // Recurse into children
+    for child_rc in &el.children {
+        let child = child_rc.borrow();
+        collect_text_segments_recursive(&child, out);
     }
 }
