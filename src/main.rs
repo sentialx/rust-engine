@@ -4,8 +4,8 @@ use graviton::css;
 use graviton::css_value::{parse_css_value, tokenize_css_value};
 
 fn main() {
-    // create_browser_window(String::from("test_fixtures/wikipedia.html"));
-    create_browser_window(String::from("test_fixtures/nomad_fulcrum.html"));
+    create_browser_window(String::from("test_fixtures/wikipedia.html"));
+    // create_browser_window(String::from("test_fixtures/nomad_fulcrum.html"));
     // create_browser_window(String::from("ui_demo.html"));
 
     let val = "rgba(255, 255, 255, 0.4)";

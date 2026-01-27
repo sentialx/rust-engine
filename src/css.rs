@@ -77,7 +77,8 @@ pub fn tokenize_css_selector(input: &str) -> Vec<CssSelectorToken> {
                 });
 
                 if let Some(&next_ch) = chars.peek() {
-                    if next_ch == '=' || next_ch == '~' || next_ch == '*' || next_ch == '|' || next_ch == '$' || next_ch == '^' {
+                    if next_ch == '~' || next_ch == '*' || next_ch == '|' || next_ch == '$' || next_ch == '^' {
+                        // Two-character operators: ~=, *=, |=, $=, ^=
                         let operator = chars.next().unwrap().to_string();
                         tokens.push(CssSelectorToken {
                             token_type: CssSelectorTokenType::AttributeOperator,
@@ -85,15 +86,28 @@ pub fn tokenize_css_selector(input: &str) -> Vec<CssSelectorToken> {
                         });
 
                         if let Some('=') = chars.peek() {
-                            chars.next();
+                            chars.next(); // consume the '='
                             let value = collect_while(&mut chars, |c| c != ']').trim().to_string();
-                            // Strip the quotes from the attribute value
                             let value = value.trim_matches(|c| c == '\'' || c == '\"').to_string();
                             tokens.push(CssSelectorToken {
                                 token_type: CssSelectorTokenType::AttributeValue,
-                                value: value,
+                                value,
                             });
                         }
+                    } else if next_ch == '=' {
+                        // Single '=' operator for exact match
+                        chars.next(); // consume '='
+                        tokens.push(CssSelectorToken {
+                            token_type: CssSelectorTokenType::AttributeOperator,
+                            value: "=".to_string(),
+                        });
+
+                        let value = collect_while(&mut chars, |c| c != ']').trim().to_string();
+                        let value = value.trim_matches(|c| c == '\'' || c == '\"').to_string();
+                        tokens.push(CssSelectorToken {
+                            token_type: CssSelectorTokenType::AttributeValue,
+                            value,
+                        });
                     }
                 }
 
@@ -111,7 +125,34 @@ pub fn tokenize_css_selector(input: &str) -> Vec<CssSelectorToken> {
                         value,
                     });
                 } else {
-                    let value = collect_while(&mut chars, |c| c.is_alphanumeric() || c == '-');
+                    let name = collect_while(&mut chars, |c| c.is_alphanumeric() || c == '-');
+                    // Check for parentheses (e.g., :nth-child(2n+1), :not(.class))
+                    let value = if chars.peek() == Some(&'(') {
+                        chars.next(); // consume '('
+                        let mut paren_depth = 1;
+                        let mut content = String::new();
+                        while let Some(&ch) = chars.peek() {
+                            if ch == '(' {
+                                paren_depth += 1;
+                                content.push(ch);
+                                chars.next();
+                            } else if ch == ')' {
+                                paren_depth -= 1;
+                                if paren_depth == 0 {
+                                    chars.next(); // consume final ')'
+                                    break;
+                                }
+                                content.push(ch);
+                                chars.next();
+                            } else {
+                                content.push(ch);
+                                chars.next();
+                            }
+                        }
+                        format!("{}({})", name, content)
+                    } else {
+                        name
+                    };
                     tokens.push(CssSelectorToken {
                         token_type: CssSelectorTokenType::Pseudo,
                         value,
@@ -300,7 +341,8 @@ pub fn wrap_ctx_selectors_into_new_ctx(contexts: &mut Vec<CssSelector>, new_ctx:
 }
 
 pub fn is_parent_combinator(combinator: &str) -> bool {
-    return combinator == ">" || combinator == " ";
+    // Also includes sibling combinators since they work similarly for selector structuring
+    return combinator == ">" || combinator == " " || combinator == "+" || combinator == "~";
 }
 
 pub fn parse_css_selector(tokens: &[CssSelectorToken]) -> CssSelector {

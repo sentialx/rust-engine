@@ -97,7 +97,16 @@ impl Frame {
     pub fn load_url(&mut self, url: &str) {
         self.url = url.to_string();
         let contents = fs::read_to_string(&self.url).expect("error while reading the file");
-        self.dom_tree = parse_html(&contents);
+        self.load_html_internal(&contents, true);
+    }
+
+    pub fn load_html(&mut self, html: &str) {
+        self.url = String::new();
+        self.load_html_internal(html, false);
+    }
+
+    fn load_html_internal(&mut self, html: &str, load_external_css: bool) {
+        self.dom_tree = parse_html(html);
 
         let mut embedded_css = String::new();
         extract_style_tags(&self.dom_tree, &mut embedded_css);
@@ -108,9 +117,13 @@ impl Frame {
             vec![]
         };
 
-        let external_styles = fs::read_to_string("style.css")
-            .map(|style| parse_css(&style))
-            .unwrap_or_else(|_| vec![]);
+        let external_styles = if load_external_css {
+            fs::read_to_string("style.css")
+                .map(|style| parse_css(&style))
+                .unwrap_or_else(|_| vec![])
+        } else {
+            vec![]
+        };
 
         self.parsed_css = [embedded_styles, external_styles].concat();
         self.styles = [self.default_styles.clone(), self.parsed_css.clone()].concat();

@@ -9,6 +9,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Context for sibling-based CSS selectors (+ combinator, ~ combinator, :nth-child, etc.)
+#[derive(Clone, Debug)]
+pub struct SiblingContext {
+    pub index: usize,                    // Current element's index among siblings
+    pub total: usize,                    // Total number of siblings
+    pub siblings: Vec<*mut DomElement>,  // All siblings for ~ combinator
+}
+
 // Declare layout submodules (files in src/layout/ directory)
 #[path = "layout/boxes.rs"]
 pub mod boxes;
@@ -111,12 +119,20 @@ pub fn element_matches_selector(
     selector: &CssSelector,
     parents: &[*mut DomElement],
 ) -> bool {
+    element_matches_selector_with_siblings(element, selector, parents, None)
+}
+
+pub fn element_matches_selector_with_siblings(
+    element: &DomElement,
+    selector: &CssSelector,
+    parents: &[*mut DomElement],
+    siblings: Option<&SiblingContext>,
+) -> bool {
     match selector {
         CssSelector::Tag(tag) => element.tag_name.eq_ignore_ascii_case(tag) || tag == "*",
         CssSelector::Id(id) => element.attributes.get("id").map_or(false, |v| v == id),
         CssSelector::Class(class) => {
             element.class_list.iter().any(|c| c == class)
-            // element.attributes.get("class").map_or(false, |v| v.split_whitespace().any(|c| c == class))
         }
         CssSelector::Attribute {
             name,
@@ -143,12 +159,27 @@ pub fn element_matches_selector(
             None => element.attributes.contains_key(name),
         },
         CssSelector::PseudoClass(pseudo) => {
-            // Handle pseudo-classes
-            false // For now, we just return true
+            match pseudo.as_str() {
+                "first-child" => siblings.map_or(false, |ctx| ctx.index == 0),
+                "last-child" => siblings.map_or(false, |ctx| ctx.index == ctx.total - 1),
+                "only-child" => siblings.map_or(false, |ctx| ctx.total == 1),
+                "empty" => element.children.is_empty(),
+                _ => {
+                    // Handle nth-child(expr) and not(selector)
+                    if pseudo.starts_with("nth-child(") && pseudo.ends_with(")") {
+                        let expr = &pseudo[10..pseudo.len() - 1];
+                        parse_and_match_nth_child(expr, siblings)
+                    } else if pseudo.starts_with("not(") && pseudo.ends_with(")") {
+                        parse_and_match_not(pseudo, element, parents, siblings)
+                    } else {
+                        false
+                    }
+                }
+            }
         }
-        CssSelector::PseudoElement(pseudo) => {
+        CssSelector::PseudoElement(_pseudo) => {
             // Handle pseudo-elements
-            false // For now, we just return true
+            false // For now, we just return false
         }
         CssSelector::Combinator {
             combinator,
@@ -165,7 +196,7 @@ pub fn element_matches_selector(
             let (ancestor_selectors, element_selector) = selectors.split_at(selectors.len() - 1);
 
             // First check if element matches the rightmost selector
-            if !element_matches_selector(element, &element_selector[0], parents) {
+            if !element_matches_selector_with_siblings(element, &element_selector[0], parents, siblings) {
                 return false;
             }
 
@@ -174,16 +205,17 @@ pub fn element_matches_selector(
                 return true;
             }
 
-            // Check ancestors based on combinator type
+            // Check ancestors/siblings based on combinator type
             match combinator.as_str() {
                 ">" => {
                     // Direct parent must match all ancestor selectors
                     parents.last().map_or(false, |parent| {
                         ancestor_selectors.iter().all(|selector| {
-                            element_matches_selector(
+                            element_matches_selector_with_siblings(
                                 unsafe { &**parent },
                                 selector,
                                 &parents[..parents.len() - 1],
+                                None,
                             )
                         })
                     })
@@ -192,10 +224,11 @@ pub fn element_matches_selector(
                     // Some ancestor must match all ancestor selectors
                     for (i, parent) in parents.iter().enumerate().rev() {
                         let all_match = ancestor_selectors.iter().all(|selector| {
-                            element_matches_selector(
+                            element_matches_selector_with_siblings(
                                 unsafe { &**parent },
                                 selector,
                                 &parents[..i],
+                                None,
                             )
                         });
                         if all_match {
@@ -204,6 +237,43 @@ pub fn element_matches_selector(
                     }
                     false
                 }
+                "+" => {
+                    // Adjacent sibling: previous sibling must match
+                    siblings.map_or(false, |ctx| {
+                        if ctx.index == 0 {
+                            return false;
+                        }
+                        let prev = ctx.siblings[ctx.index - 1];
+                        ancestor_selectors.iter().all(|sel| {
+                            element_matches_selector_with_siblings(
+                                unsafe { &*prev },
+                                sel,
+                                parents,
+                                None,
+                            )
+                        })
+                    })
+                }
+                "~" => {
+                    // General sibling: any preceding sibling must match
+                    siblings.map_or(false, |ctx| {
+                        for i in 0..ctx.index {
+                            let sib = ctx.siblings[i];
+                            let all_match = ancestor_selectors.iter().all(|sel| {
+                                element_matches_selector_with_siblings(
+                                    unsafe { &*sib },
+                                    sel,
+                                    parents,
+                                    None,
+                                )
+                            });
+                            if all_match {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                }
                 _ => false,
             }
         }
@@ -211,16 +281,103 @@ pub fn element_matches_selector(
             selectors.len() > 0
                 && selectors
                     .iter()
-                    .any(|s| element_matches_selector(element, s, parents))
+                    .any(|s| element_matches_selector_with_siblings(element, s, parents, siblings))
         }
         CssSelector::AndGroup { selectors } => {
             selectors.len() > 0
                 && selectors
                     .iter()
-                    .all(|s| element_matches_selector(element, s, parents))
+                    .all(|s| element_matches_selector_with_siblings(element, s, parents, siblings))
         }
         _ => false,
     }
+}
+
+/// Parse an+b formula from :nth-child() expression
+/// Returns (a, b) where the formula is an+b
+fn parse_nth_child(expr: &str) -> Option<(i32, i32)> {
+    let expr = expr.trim().to_lowercase();
+
+    match expr.as_str() {
+        "odd" => return Some((2, 1)),
+        "even" => return Some((2, 0)),
+        _ => {}
+    }
+
+    // Handle simple number case: "3" means (0, 3)
+    if let Ok(b) = expr.parse::<i32>() {
+        return Some((0, b));
+    }
+
+    // Handle an+b or an-b patterns
+    if expr.contains('n') {
+        let expr = expr.replace(" ", "");
+
+        // Split on 'n'
+        let parts: Vec<&str> = expr.split('n').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        // Parse 'a' coefficient
+        let a: i32 = match parts[0] {
+            "" | "+" => 1,
+            "-" => -1,
+            s => s.parse().ok()?,
+        };
+
+        // Parse 'b' offset
+        let b: i32 = if parts[1].is_empty() {
+            0
+        } else {
+            parts[1].parse().ok()?
+        };
+
+        Some((a, b))
+    } else {
+        None
+    }
+}
+
+/// Check if 1-indexed position n matches the formula an+b
+fn matches_nth(index: usize, a: i32, b: i32) -> bool {
+    let n = (index + 1) as i32; // Convert to 1-indexed
+    if a == 0 {
+        return n == b;
+    }
+    let diff = n - b;
+    // n = ak + b for some non-negative integer k
+    // k = (n - b) / a, and k must be >= 0
+    if a > 0 {
+        diff >= 0 && diff % a == 0
+    } else {
+        diff <= 0 && diff % a == 0
+    }
+}
+
+fn parse_and_match_nth_child(expr: &str, siblings: Option<&SiblingContext>) -> bool {
+    let siblings = match siblings {
+        Some(ctx) => ctx,
+        None => return false,
+    };
+
+    match parse_nth_child(expr) {
+        Some((a, b)) => matches_nth(siblings.index, a, b),
+        None => false,
+    }
+}
+
+fn parse_and_match_not(
+    pseudo: &str,
+    element: &DomElement,
+    parents: &[*mut DomElement],
+    siblings: Option<&SiblingContext>,
+) -> bool {
+    // Extract selector from "not(...)"
+    let inner = &pseudo[4..pseudo.len() - 1];
+    let tokens = tokenize_css_selector(inner);
+    let selector = parse_css_selector(&tokens);
+    !element_matches_selector_with_siblings(element, &selector, parents, siblings)
 }
 
 #[derive(Clone, Debug)]
@@ -429,8 +586,21 @@ fn compute_styles_with_index(
         }
     }
 
+    // Build sibling context for this level
+    let siblings_vec: Vec<*mut DomElement> = tree
+        .iter()
+        .map(|el| el.as_ptr() as *mut DomElement)
+        .collect();
+    let total_siblings = tree.len();
+
     for i in 0..tree.len() {
         let mut element = tree[i].borrow_mut();
+
+        let sibling_ctx = SiblingContext {
+            index: i,
+            total: total_siblings,
+            siblings: siblings_vec.clone(),
+        };
 
         // Use index to get candidate rules, or fall back to all rules
         let candidates: Vec<usize> = match index {
@@ -440,7 +610,7 @@ fn compute_styles_with_index(
 
         for rule_idx in candidates {
             let style_rule = &style[rule_idx];
-            if element_matches_selector(&element, &style_rule.selector, parents) {
+            if element_matches_selector_with_siblings(&element, &style_rule.selector, parents, Some(&sibling_ctx)) {
                 element.style.insert_declarations(&style_rule.declarations, var_ctx.as_ref().unwrap());
                 element.matched_styles.push(style_rule.clone());
             }

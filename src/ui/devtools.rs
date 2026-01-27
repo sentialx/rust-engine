@@ -84,12 +84,12 @@ impl DevtoolsOverlay {
                 }
 
                 // Add info popup (position will be adjusted after layout)
-                let popup_x = border_box.x.min(viewport.width - 220.0).max(8.0);
+                let popup_x = border_box.x.min(viewport.width - 300.0).max(8.0);
                 let popup = add_info_popup(
                     &body,
                     popup_x,
                     0.0, // temporary y position
-                    &element.tag_name,
+                    &element,
                     flow.width,
                     flow.height,
                     style,
@@ -270,39 +270,67 @@ fn add_info_popup(
     parent: &Rc<RefCell<DomElement>>,
     left: f32,
     top: f32,
-    tag_name: &str,
+    element: &DomElement,
     width: f32,
     height: f32,
     style: &ComputedStyle,
 ) -> Rc<RefCell<DomElement>> {
+    let tag_name = &element.tag_name;
     let popup = DomElement::create("div");
     let popup_style = format!(
-        "display:block; position:absolute; left:{}px; top:{}px; width:200px; \
+        "display:block; position:absolute; left:{}px; top:{}px; width:280px; \
          background:rgba(255,255,255,0.97); padding:10px; \
          box-shadow: 0 2px 4px rgba(0,0,0,0.08);",
         left, top
     );
     popup.borrow_mut().set_attribute("style", &popup_style);
 
-    // Header: tag name and dimensions
+    // Header: selector + dimensions (Chrome DevTools style)
     let header = DomElement::create("div");
-    header.borrow_mut().set_attribute("style", "display:block; margin-bottom:6px;");
+    header.borrow_mut().set_attribute("style", "display:block; margin-bottom:8px;");
 
+    // Tag name in purple/magenta
     let tag_span = DomElement::create("span");
-    let tag_color = get_tag_color(tag_name);
     tag_span.borrow_mut().set_attribute(
         "style",
-        &format!("color:{}; font-weight:700; font-size:13px;", tag_color),
+        "color:#881280; font-weight:700; font-size:13px;",
     );
     tag_span.borrow_mut().set_text_content(&tag_name.to_lowercase());
     header.borrow_mut().append_child(tag_span);
 
+    // ID in blue (if present)
+    if let Some(id) = element.attributes.get("id") {
+        if !id.is_empty() {
+            let id_span = DomElement::create("span");
+            id_span.borrow_mut().set_attribute(
+                "style",
+                "color:#1a1aa6; font-weight:700; font-size:13px;",
+            );
+            id_span.borrow_mut().set_text_content(&format!("#{}", id));
+            header.borrow_mut().append_child(id_span);
+        }
+    }
+
+    // Classes in dark gray
+    for class in &element.class_list {
+        if !class.is_empty() {
+            let class_span = DomElement::create("span");
+            class_span.borrow_mut().set_attribute(
+                "style",
+                "color:#1a1a1a; font-weight:700; font-size:13px;",
+            );
+            class_span.borrow_mut().set_text_content(&format!(".{}", class));
+            header.borrow_mut().append_child(class_span);
+        }
+    }
+
+    // Dimensions
     let dims_span = DomElement::create("span");
     dims_span.borrow_mut().set_attribute(
         "style",
         "color:#666; font-size:12px; margin-left:8px;",
     );
-    dims_span.borrow_mut().set_text_content(&format!("{:.0} x {:.0}", width, height));
+    dims_span.borrow_mut().set_text_content(&format!("{:.0} \u{00D7} {:.0}", width, height));
     header.borrow_mut().append_child(dims_span);
 
     popup.borrow_mut().append_child(header);
@@ -440,3 +468,4 @@ fn get_tag_color(tag_name: &str) -> &'static str {
         _ => "#881280",
     }
 }
+
