@@ -1,617 +1,129 @@
-use crate::colors::ColorTupleA;
-use crate::css::parse_css;
-use crate::layout::*;
-use crate::styles::{ComputedStyle, Declaration, Style, StyleRule};
-use crate::utils::*;
+// HTML parsing - converts HTML string to intermediate representation
+
+use std::collections::HashMap;
+
 use html5ever::{parse_document, tendril::TendrilSink, ParseOpts, tree_builder::TreeBuilderOpts};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fmt::format;
-use std::hash::Hash;
-use std::rc::Rc;
 
+/// Node type in the parsed HTML tree
 #[derive(Clone, Debug, PartialEq)]
-pub enum NodeType {
-  Element,
-  Text,
-  DocumentType,
-  Comment,
+pub enum HtmlNodeType {
+    Element,
+    Text,
+    DocumentType,
+    Comment,
 }
 
+/// Intermediate representation of a parsed HTML node.
+/// This is a simple data structure with no references to Frame.
 #[derive(Clone, Debug)]
-pub enum TagType {
-  None,
-  Opening,
-  Closing,
-  SelfClosing,
+pub struct HtmlNode {
+    pub node_type: HtmlNodeType,
+    pub tag_name: String,
+    pub attributes: HashMap<String, String>,
+    pub children: Vec<HtmlNode>,
+    pub text_content: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct ComputedFlow {
-  pub x: f32,
-  pub y: f32,
-  pub width: f32,
-  pub height: f32,
-  pub adjacent_margin_bottom: f32,
-  pub hover_rect: Rect,
-  pub continue_x: f32,
-  pub continue_y: f32,
-  // pub text_lines: Vec<TextLine>,
-}
-
-/// A preprocessed text segment (word) with measured dimensions and position
-#[derive(Clone, Debug)]
-pub struct TextSegment {
-  pub text: String,
-  pub width: f32,
-  pub height: f32,
-  /// Distance from top of text box to baseline
-  pub ascent: f32,
-  // Position set during layout:
-  pub x: f32,
-  pub y: f32,
-}
-
-pub struct DomEvent {
-  default_prevented: bool,
-}
-
-impl DomEvent {
-  pub fn new() -> Self {
-    Self { default_prevented: false }
-  }
-
-  pub fn prevent_default(&mut self) {
-    self.default_prevented = true;
-  }
-
-  pub fn default_prevented(&self) -> bool {
-    self.default_prevented
-  }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct EventContext {
-  pub needs_restyle: bool,
-  pub needs_reflow: bool,
-}
-
-impl EventContext {
-  pub fn new() -> Self {
-    Self {
-      needs_restyle: false,
-      needs_reflow: false,
-    }
-  }
-
-  pub fn request_restyle(&mut self) {
-    self.needs_restyle = true;
-  }
-
-  pub fn request_reflow(&mut self) {
-    self.needs_reflow = true;
-    self.needs_restyle = true; // reflow implies restyle
-  }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PseudoClassState {
-  pub hover: bool,
-  pub focus: bool,
-  pub active: bool,
-}
-
-pub trait HTMLElement {
-  fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent, ctx: &mut EventContext);
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct HTMLInputElement {
-  pub clicks: u32,
-}
-
-impl HTMLElement for HTMLInputElement {
-  fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent, _ctx: &mut EventContext) {
-    self.clicks += 1;
-  }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct HTMLCustomRenderElement;
-
-impl HTMLElement for HTMLCustomRenderElement {
-  fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent, _ctx: &mut EventContext) {}
-}
-
-#[derive(Clone, Debug)]
-pub enum ElementKind {
-  Generic,
-  Input(HTMLInputElement),
-  CustomRender(HTMLCustomRenderElement),
-}
-
-impl ElementKind {
-  pub fn for_tag(tag_name: &str) -> Self {
-    match tag_name {
-      "INPUT" => ElementKind::Input(HTMLInputElement::default()),
-      "CUSTOM-RENDER" => ElementKind::CustomRender(HTMLCustomRenderElement::default()),
-      _ => ElementKind::Generic,
-    }
-  }
-
-  pub fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent, ctx: &mut EventContext) -> bool {
-    match self {
-      ElementKind::Input(input) => {
-        input.on_click(element, event, ctx);
-        true
-      }
-      ElementKind::CustomRender(custom) => {
-        custom.on_click(element, event, ctx);
-        true
-      }
-      ElementKind::Generic => false,
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct DomElement {
-  pub children: Vec<Rc<RefCell<DomElement>>>,
-  pub attributes: HashMap<String, String>,
-  pub parent_node: Option<Rc<RefCell<DomElement>>>,
-  pub node_value: String,
-  pub node_type: NodeType,
-  pub inner_html: String,
-  pub outer_html: String,
-  pub tag_name: String,
-  pub element_kind: ElementKind,
-  pub style: Style,
-  pub inherited_style: Option<Style>,
-  pub pseudo_classes: PseudoClassState,
-  pub computed_flow: Option<ComputedFlow>,
-  pub computed_style: Option<ComputedStyle>,
-  pub text_segments: Vec<TextSegment>,  // Preprocessed words with positions
-  pub space_width: f32,                  // Width of space character
-  pub cached_font_size: Option<f32>,     // For text measurement caching
-  pub cached_font_path: Option<String>,  // For text measurement caching
-  pub class_list: Vec<String>,
-  pub matched_styles: Vec<StyleRule>,
-  pub var_contexts: Vec<CssVariablesContext>,
-  pub inline_declarations: Vec<Declaration>,  // Pre-parsed inline style declarations
-}
-
-impl DomElement {
-  pub fn new(node_type: NodeType) -> DomElement {
-    DomElement {
-      children: vec![],
-      attributes: HashMap::new(),
-      parent_node: None,
-      node_type,
-      inner_html: "".to_string(),
-      outer_html: "".to_string(),
-      node_value: "".to_string(),
-      tag_name: "".to_string(),
-      element_kind: ElementKind::Generic,
-      style: Style::new(),
-      inherited_style: None,
-      computed_flow: None,
-      computed_style: None,
-      pseudo_classes: PseudoClassState::default(),
-      text_segments: vec![],
-      space_width: 0.0,
-      cached_font_size: None,
-      cached_font_path: None,
-      class_list: vec![],
-      matched_styles: vec![],
-      var_contexts: vec![],
-      inline_declarations: vec![],
-    }
-  }
-
-  pub fn create(tag_name: &str) -> Rc<RefCell<DomElement>> {
-    let mut el = DomElement::new(NodeType::Element);
-    el.set_tag_name(tag_name);
-    Rc::new(RefCell::new(el))
-  }
-
-  pub fn on_mouse_enter(&mut self) {
-    self.pseudo_classes.hover = true;
-    // Bubble to parent
-    if let Some(ref parent) = self.parent_node {
-      parent.borrow_mut().on_mouse_enter();
-    }
-  }
-
-  pub fn on_mouse_leave(&mut self) {
-    self.pseudo_classes.hover = false;
-    // Bubble to parent
-    if let Some(ref parent) = self.parent_node {
-      parent.borrow_mut().on_mouse_leave();
-    }
-  }
-
-  pub fn set_tag_name(&mut self, tag_name: &str) {
-    self.tag_name = tag_name.to_uppercase();
-    self.element_kind = ElementKind::for_tag(&self.tag_name);
-  }
-
-  pub fn set_text_content(&mut self, text: &str) {
-    self.children.clear();
-    let mut text_node = DomElement::new(NodeType::Text);
-    text_node.node_value = text.to_string();
-    self.children.push(Rc::new(RefCell::new(text_node)));
-  }
-
-  pub fn set_attribute(&mut self, key: &str, value: &str) {
-    let empty_ctx = CssVariablesContext::new();
-    if key == "style" {
-      // Parse and store inline declarations (marked as important for specificity)
-      let val = format!("{{{}}}", value);
-      let rules = parse_css(&val);
-      self.inline_declarations.clear();
-      for rule in rules {
-        for mut decl in rule.declarations {
-          decl.important = true;
-          self.inline_declarations.push(decl);
+impl HtmlNode {
+    pub fn element(tag_name: &str) -> Self {
+        Self {
+            node_type: HtmlNodeType::Element,
+            tag_name: tag_name.to_uppercase(),
+            attributes: HashMap::new(),
+            children: Vec::new(),
+            text_content: String::new(),
         }
-      }
-      // Also apply immediately to style
-      self.style.insert_declarations(&self.inline_declarations, &empty_ctx);
     }
 
-    if key == "class" {
-      let classes = value.split(" ").collect::<Vec<&str>>();
-      self.class_list = classes.iter().map(|x| x.to_string()).collect();
-    }
-
-    self.attributes.insert(key.to_string(), value.to_string());
-  }
-
-  pub fn append_child(&mut self, child: Rc<RefCell<DomElement>>) {
-    self.children.push(child);
-  }
-
-  pub fn remove_child(&mut self, child: &Rc<RefCell<DomElement>>) {
-    self.children.retain(|existing| !Rc::ptr_eq(existing, child));
-  }
-}
-
-const SELF_CLOSING_TAGS: &[&str] = &[
-  "AREA", "BASE", "BR", "COL", "COMMAND", "EMBED", "HR", "IMG", "INPUT", "KEYGEN", "LINK",
-  "MENUITEM", "META", "PARAM", "SOURCE", "TRACK", "WBR",
-];
-
-fn get_tag_name(source: &str) -> String {
-  return source
-    .replace("<", "")
-    .replace("/", "")
-    .replace(">", "")
-    .split(" ")
-    .collect::<Vec<&str>>()[0]
-    .to_uppercase()
-    .trim()
-    .to_string();
-}
-
-fn get_tag_type(token: &str, tag_name: &str) -> TagType {
-  if token.starts_with("<") && token.ends_with(">") {
-    if token.starts_with("</") {
-      return TagType::Closing;
-    } else if SELF_CLOSING_TAGS.contains(&tag_name) {
-      return TagType::SelfClosing;
-    } else {
-      return TagType::Opening;
-    }
-  }
-
-  return TagType::None;
-}
-
-fn get_node_type(token: &str) -> NodeType {
-  if token.starts_with("<") && token.ends_with(">") {
-    if token.starts_with("<!--") {
-      return NodeType::Comment;
-    } else if token.starts_with("<!") {
-      return NodeType::DocumentType;
-    } else {
-      return NodeType::Element;
-    }
-  }
-
-  return NodeType::Text;
-}
-
-pub fn tokenize(html: String) -> Vec<String> {
-  let mut tokens: Vec<String> = vec![];
-
-  let mut capturing = false;
-  let mut captured_text = String::from("");
-
-  let len = html.len();
-  let chars = html.chars().enumerate();
-
-  let mut ignore = false;
-  let mut code_block = false;
-
-  for (i, c) in chars {
-    if (!code_block && c == '\n') || c == '\r' || c == '\t' {
-      continue;
-    }
-    if (c == '<' || (code_block && c == '\n' && c != '<')) && !ignore {
-      if capturing {
-        captured_text = captured_text.to_string();
-        if captured_text != "" {
-          tokens.push(captured_text.clone().trim().to_string());
-          if code_block && c == '\n' {
-            tokens.push("<br/>".to_string());
-          }
+    pub fn text(content: &str) -> Self {
+        Self {
+            node_type: HtmlNodeType::Text,
+            tag_name: String::new(),
+            attributes: HashMap::new(),
+            children: Vec::new(),
+            text_content: content.to_string(),
         }
-      } else {
-        capturing = true;
-      }
+    }
 
-      captured_text = String::from("");
-    } else if c == '>' || i == len - 1 {
-      if ignore
-        && (captured_text.ends_with("--"))
-        {
-          ignore = false;
+    pub fn comment(content: &str) -> Self {
+        Self {
+            node_type: HtmlNodeType::Comment,
+            tag_name: String::new(),
+            attributes: HashMap::new(),
+            children: Vec::new(),
+            text_content: content.to_string(),
         }
-        
-        if ignore && (captured_text.ends_with("</script") || captured_text.ends_with("</style")) {
-        ignore = false;
-      }
+    }
 
-      if code_block && captured_text == "</code" {
-        code_block = false;
-      }
+    pub fn doctype(name: &str) -> Self {
+        Self {
+            node_type: HtmlNodeType::DocumentType,
+            tag_name: String::new(),
+            attributes: HashMap::new(),
+            children: Vec::new(),
+            text_content: name.to_string(),
+        }
+    }
+}
 
-      if !ignore {
-        capturing = false;
-        captured_text.push(c);
-        captured_text = captured_text.to_string();
-      }
+/// Parse HTML string into an intermediate representation.
+/// Returns a tree of HtmlNodes that can be converted to DomElements by Frame.
+pub fn parse_html(html: &str) -> Vec<HtmlNode> {
+    let opts = ParseOpts {
+        tree_builder: TreeBuilderOpts {
+            scripting_enabled: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dom = parse_document(RcDom::default(), opts).one(html);
 
-      if captured_text.starts_with("<code") {
-        code_block = true;
-      }
+    let mut nodes = Vec::new();
+    for child in dom.document.children.borrow().iter() {
+        if let Some(node) = build_node_from_handle(child) {
+            nodes.push(node);
+        }
+    }
+    nodes
+}
 
-      if !ignore && captured_text != "" {
-        let mut add_suffix = "";
-        
-        if captured_text.ends_with("</script>") {
-          add_suffix = "</script>";
-          captured_text = captured_text.replace("</script>", "");
+fn build_node_from_handle(handle: &Handle) -> Option<HtmlNode> {
+    let node = match &handle.data {
+        NodeData::Document => return None,
+
+        NodeData::Doctype { name, .. } => {
+            HtmlNode::doctype(&name.to_string())
         }
 
-        if captured_text.ends_with("</style>") {
-          add_suffix = "</style>";
-          captured_text = captured_text.replace("</style>", "");
+        NodeData::Text { contents } => {
+            HtmlNode::text(&contents.borrow().to_string())
         }
 
-        tokens.push(captured_text.clone());
-
-        if add_suffix != "" {
-          tokens.push(add_suffix.to_string());
+        NodeData::Comment { contents } => {
+            HtmlNode::comment(&contents.to_string())
         }
 
-        if captured_text.starts_with("<script") || captured_text.starts_with("<style") {
-          ignore = true;
-        }
-
- 
-
-        captured_text = String::from("");
-      }
-    } else if !capturing {
-      captured_text = String::from("");
-      capturing = true;
-    }
-    if capturing && (c != ' ' || (c == ' ' && captured_text != "")) {
-      captured_text.push(c);
-
-      if captured_text == "<!--" {
-        ignore = true;
-      }
-    }
-  }
-
-  return tokens;
-}
-
-fn get_opening_tag(tag_name: &str, element: Option<Rc<RefCell<DomElement>>>) -> Option<Rc<RefCell<DomElement>>> {
-  if element.is_none() {
-    return None;
-  }
-
-
-  let el = element.clone();
-  if el.unwrap().borrow().tag_name == tag_name {
-    return Some(element.clone().unwrap().clone());
-  } else {
-    return get_opening_tag(tag_name, element.unwrap().borrow().parent_node.clone());
-  }
-}
-
-fn set_attributes(el: &mut DomElement, source: String, tag_name: String) {
-  let mut attr = KeyValue::new();
-
-  let mut capturing_value = false;
-  let mut inside_quotes = false;
-
-  let sliced = unsafe { source.get_unchecked(tag_name.len() + 1..source.len()) };
-  let len = sliced.len();
-  let chars = sliced.chars().enumerate();
-
-  for (i, c) in chars {
-    if c == '=' {
-      capturing_value = true;
-    } else if c == '"' {
-      inside_quotes = !inside_quotes;
-    } else if capturing_value {
-      attr.1.push(c);
-    } else if i != len - 1 && c != ' ' {
-      attr.0.push(c);
-    }
-
-    if (c == '"' || c == ' ' || c == '>') && !inside_quotes {
-      if attr.0.len() > 0 {
-        if attr.1.len() == 0 {
-          attr.1 = "true".to_string();
-        }
-
-        if attr.1.starts_with(" ") || attr.1.ends_with(" ") {
-          attr.1 = attr.1.trim().to_string();
-        }
-
-        el.set_attribute(&attr.0, &attr.1);
-      }
-
-      attr = KeyValue::new();
-
-      capturing_value = false;
-      inside_quotes = false;
-    }
-  }
-}
-
-fn build_tree(tokens: Vec<String>) -> Vec<Rc<RefCell<DomElement>>> {
-  let mut elements: Vec<Rc<RefCell<DomElement>>> = vec![];
-
-  let mut parent: Option<Rc<RefCell<DomElement>>> = None;
-
-  for token in tokens {
-    let tag_name = get_tag_name(&token);
-    let tag_type = get_tag_type(&token, &tag_name);
-    let node_type = get_node_type(&token);
-
-    match tag_type {
-      TagType::Closing => {
-        if parent.is_some() {
-          if parent.clone().unwrap().borrow().tag_name == tag_name {
-            parent = parent.unwrap().borrow().parent_node.clone();
-          } else {
-            let opening_element = get_opening_tag(&tag_name, parent.clone());
-            match opening_element {
-              Some(el) => parent = el.borrow().parent_node.clone(),
-              None => {}
+        NodeData::Element { name, attrs, .. } => {
+            let mut node = HtmlNode::element(&name.local.to_string());
+            for attr in attrs.borrow().iter() {
+                node.attributes.insert(
+                    attr.name.local.to_string(),
+                    attr.value.to_string(),
+                );
             }
-          }
-        }
-      }
-      _ => {
-        let mut element = DomElement::new(node_type.clone());
-        let mut el_new_ptr: Option<Rc<RefCell<DomElement>>> = None;
-
-        match node_type {
-          NodeType::Element => {
-            element.set_tag_name(&tag_name);
-            set_attributes(&mut element, token.clone(), tag_name.clone());
-          }
-          NodeType::Text => {
-            element.node_value = token;
-          }
-          NodeType::Comment => {
-            element.node_value =
-              unsafe { token.get_unchecked(4..token.len() - 3).to_string() };
-          }
-          _ => {}
+            node
         }
 
-        if parent.is_some() {
-          element.parent_node = Some(parent.clone().unwrap());
-          parent.clone().unwrap().borrow_mut().children.push(Rc::new(RefCell::new(element)));
-          el_new_ptr = Some(parent.clone().unwrap().borrow().children.last().unwrap().clone());
-        } else {
-          elements.push(Rc::new(RefCell::new(element.clone())));
-          el_new_ptr = Some(elements.last().unwrap().clone());
+        _ => return None,
+    };
+
+    let mut result = node;
+    for child in handle.children.borrow().iter() {
+        if let Some(child_node) = build_node_from_handle(child) {
+            result.children.push(child_node);
         }
-
-        match node_type {
-          NodeType::Element => match tag_type {
-            TagType::Opening => {
-              parent = el_new_ptr;
-            }
-            _ => {}
-          },
-          _ => {}
-        }
-      }
     }
-  }
 
-  return elements;
-}
-
-pub fn parse_html(html: &str) -> Vec<Rc<RefCell<DomElement>>> {
-  // Disable scripting so <noscript> content is parsed as HTML
-  let opts = ParseOpts {
-    tree_builder: TreeBuilderOpts {
-      scripting_enabled: false,
-      ..Default::default()
-    },
-    ..Default::default()
-  };
-  let dom = parse_document(RcDom::default(), opts).one(html);
-  let mut elements: Vec<Rc<RefCell<DomElement>>> = vec![];
-
-  for child in dom.document.children.borrow().iter() {
-    if let Some(el) = build_dom_from_handle(child, None) {
-      elements.push(el);
-    }
-  }
-
-  return elements;
-}
-
-fn build_dom_from_handle(
-  handle: &Handle,
-  parent: Option<Rc<RefCell<DomElement>>>,
-) -> Option<Rc<RefCell<DomElement>>> {
-  let node = match &handle.data {
-    NodeData::Document => {
-      return None;
-    }
-    NodeData::Doctype { name, .. } => {
-      let mut el = DomElement::new(NodeType::DocumentType);
-      el.node_value = name.to_string();
-      Rc::new(RefCell::new(el))
-    }
-    NodeData::Text { contents } => {
-      let mut el = DomElement::new(NodeType::Text);
-      el.node_value = contents.borrow().to_string();
-      Rc::new(RefCell::new(el))
-    }
-    NodeData::Comment { contents } => {
-      let mut el = DomElement::new(NodeType::Comment);
-      el.node_value = contents.to_string();
-      Rc::new(RefCell::new(el))
-    }
-    NodeData::Element { name, attrs, .. } => {
-      let mut el = DomElement::new(NodeType::Element);
-      el.set_tag_name(&name.local.to_string());
-      for attr in attrs.borrow().iter() {
-        let name = attr.name.local.to_string();
-        let value = attr.value.to_string();
-        el.set_attribute(&name, &value);
-      }
-      Rc::new(RefCell::new(el))
-    }
-    _ => {
-      return None;
-    }
-  };
-
-  if let Some(parent_node) = parent.clone() {
-    node.borrow_mut().parent_node = Some(parent_node);
-  }
-
-  for child in handle.children.borrow().iter() {
-    if let Some(child_el) = build_dom_from_handle(child, Some(node.clone())) {
-      node.borrow_mut().children.push(child_el);
-    }
-  }
-
-  Some(node)
+    Some(result)
 }

@@ -1,10 +1,13 @@
 // Input domain handlers
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use serde_json::{json, Value};
 
 use crate::devtools_protocol::{DevtoolsServer, types::*};
 use crate::frame::Frame;
-use crate::html::DomElement;
+use crate::dom::DomElement;
 
 /// Handle Input domain commands
 pub fn handle(
@@ -53,12 +56,20 @@ pub fn handle(
                     }
                 }
                 "mouseMoved" => {
-                    // Update hover state using frame.set_hover which triggers restyle
+                    // Update hover state directly on elements
                     let element = frame.hit_test(x, y);
-                    frame.set_hover(element.clone());
 
-                    // Return the hovered element's nodeId so caller can use Overlay.highlightNode
+                    // Set hover on the element (and ancestors)
                     if let Some(ref el) = element {
+                        fn set_hover_recursive(element: &Rc<RefCell<DomElement>>, hover: bool) {
+                            element.borrow_mut().pseudo_classes.hover = hover;
+                            if let Some(ref parent) = element.borrow().parent_node.clone() {
+                                set_hover_recursive(&parent, hover);
+                            }
+                        }
+                        set_hover_recursive(el, true);
+                        frame.restyle();
+
                         let node_id = server.get_or_create_node_id(el);
                         return Response::success(id, json!({ "nodeId": node_id }));
                     }

@@ -34,14 +34,14 @@ fn main() {
         height,
     };
 
-    let mut frame = Frame::new(viewport);
-    frame.load_url(input);
+    let frame = Frame::new(viewport);
+    frame.borrow_mut().load_url(input);
 
     if env::var("OFFSCREEN_DEBUG").is_ok() {
-        dump_layout(&frame.dom_tree, 0);
+        dump_layout(&frame.borrow().dom_tree, 0);
     }
 
-    let svg = render_to_svg(&frame);
+    let svg = render_to_svg(&frame.borrow());
     fs::write(output, svg).expect("failed to write SVG");
     println!("Wrote SVG to {}", output);
 }
@@ -153,11 +153,11 @@ fn render_to_svg(frame: &Frame) -> String {
     svg
 }
 
-fn dump_layout(tree: &Vec<Rc<RefCell<graviton::html::DomElement>>>, depth: usize) {
+fn dump_layout(tree: &Vec<Rc<RefCell<graviton::dom::DomElement>>>, depth: usize) {
     for node in tree {
         let el = node.borrow();
         let class_name = el.attributes.get("class").cloned().unwrap_or_default();
-        let is_text = el.node_type == graviton::html::NodeType::Text;
+        let is_text = el.node_type == graviton::dom::NodeType::Text;
         if !class_name.is_empty() || el.tag_name == "BODY" || el.tag_name == "DIV" {
             if let Some(flow) = &el.computed_flow {
                 let width_auto = el

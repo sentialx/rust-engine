@@ -3,7 +3,7 @@
 // All inline content (text segments, inline elements, inline-block) flows through
 // the same algorithm. Text nodes are treated as sequences of inline items (words).
 
-use crate::html::{DomElement, NodeType, TextSegment};
+use crate::dom::{DomElement, NodeType, TextSegment};
 use crate::layout::flow::{FormattingContext, InlineContext, ReflowContext, uses_absolute_positioning};
 use crate::layout::boxes::LayoutNode;
 use crate::layout::block::compute_block_height_from_children;

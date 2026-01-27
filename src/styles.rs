@@ -1,7 +1,7 @@
 use crate::colors::ColorTupleA;
 use crate::css::*;
 use crate::css_value::{CssSizeUnit, CssValue};
-use crate::html::{DomElement, NodeType};
+use crate::dom::{DomElement, NodeType};
 use crate::layout::CssVariablesContext;
 use crate::properties::border::{Border, BorderSide, ComputedBorder};
 use crate::properties::box_shadow::{BoxShadow, ComputedBoxShadow};
@@ -153,6 +153,37 @@ pub struct ComputedStyle {
   pub height: f32,
   pub white_space: String,
   pub visibility: String,
+}
+
+impl ComputedStyle {
+  /// Check if layout-affecting properties differ between two computed styles.
+  /// Returns true if reflow is needed, false if only repaint is needed.
+  pub fn layout_differs(&self, other: &ComputedStyle) -> bool {
+    // Box model
+    self.margin != other.margin
+      || self.padding != other.padding
+      || self.border_widths_differ(&other.border)
+      // Layout mode
+      || self.display != other.display
+      || self.position != other.position
+      || self.float != other.float
+      // Sizing
+      || self.width != other.width
+      || self.height != other.height
+      || self.inset != other.inset
+      // Text layout
+      || self.white_space != other.white_space
+      || self.font_size != other.font_size
+      || self.font_family != other.font_family
+      || self.font_weight != other.font_weight
+  }
+
+  fn border_widths_differ(&self, other: &ComputedBorder) -> bool {
+    self.border.top.width != other.top.width
+      || self.border.right.width != other.right.width
+      || self.border.bottom.width != other.bottom.width
+      || self.border.left.width != other.left.width
+  }
 }
 
 #[derive(Clone, Debug)]

@@ -1,4 +1,4 @@
-use crate::html::*;
+use crate::dom::*;
 
 pub fn print_dom(tree: Vec<DomElement>, level: Option<i32>) -> String {
   let mut result: String = "".to_string();

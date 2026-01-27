@@ -1,6 +1,6 @@
 // Formatting context and flow types
 
-use crate::html::{DomElement, NodeType};
+use crate::dom::{DomElement, NodeType};
 use crate::styles::ComputedStyle;
 
 /// FormattingContext classifies elements to determine layout behavior.

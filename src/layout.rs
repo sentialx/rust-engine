@@ -1,7 +1,7 @@
 use crate::colors::*;
 use crate::css::*;
 use crate::css_value::CssValue;
-use crate::html::{DomElement, NodeType, TextSegment};
+use crate::dom::{DomElement, NodeType, TextSegment};
 use crate::text::TextMeasurer;
 use crate::styles::*;
 use crate::utils::*;
@@ -624,6 +624,14 @@ fn compute_styles_with_index(
         for rule_idx in candidates {
             let style_rule = &style[rule_idx];
             if element_matches_selector_with_siblings(&element, &style_rule.selector, parents, Some(&sibling_ctx)) {
+                let selector_str = style_rule.selector.to_string();
+                if selector_str.contains("hover") {
+                    eprintln!("APPLYING hover rule '{}' to <{}> with {} declarations",
+                        selector_str, element.tag_name, style_rule.declarations.len());
+                    for decl in &style_rule.declarations {
+                        eprintln!("  {} = {:?}", decl.key, decl.value);
+                    }
+                }
                 element.style.insert_declarations(&style_rule.declarations, var_ctx.as_ref().unwrap());
                 element.matched_styles.push(style_rule.clone());
             }

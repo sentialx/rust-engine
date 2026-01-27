@@ -1,5 +1,7 @@
-use crate::html::{parse_html, DomElement, NodeType};
+use crate::dom::{DomElement, NodeType};
+use crate::html::parse_html;
 use crate::layout::Rect;
+use crate::frame::Frame;
 use crate::renderer::{RenderedBuffer, SkiaRenderer};
 use crate::styles::ComputedStyle;
 use crate::ui::browser_window::RenderFrameState;
@@ -7,6 +9,7 @@ use crate::ui::browser_window::RenderFrameState;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Overlay for highlighting elements - render only, no event handling
 pub struct DevtoolsOverlay {
     render: RenderFrameState,
     has_content: bool,
@@ -15,7 +18,7 @@ pub struct DevtoolsOverlay {
 impl DevtoolsOverlay {
     pub fn new(viewport: Rect) -> Self {
         Self {
-            render: RenderFrameState::new(viewport),
+            render: RenderFrameState::new_render_only(viewport),
             has_content: false,
         }
     }
@@ -37,15 +40,16 @@ impl DevtoolsOverlay {
     }
 
     pub fn rebuild(&mut self, hover_info: Option<&Rc<RefCell<DomElement>>>, viewport: Rect, page_height: f32) {
-        let overlay_frame = self.render.frame_mut();
-        overlay_frame.set_viewport(viewport.width, viewport.height);
+        self.render.set_viewport(viewport.width, viewport.height);
 
         if hover_info.is_none() {
             if self.has_content {
-                overlay_frame.dom_tree.clear();
-                overlay_frame.render_array.clear();
-                overlay_frame.page_height = 0.0;
-                overlay_frame.cached_layout_tree = None;
+                let mut frame = self.render.frame_mut();
+                frame.dom_tree.clear();
+                frame.render_array.clear();
+                frame.page_height = 0.0;
+                frame.cached_layout_tree = None;
+                drop(frame);
                 self.render.invalidate();
                 self.has_content = false;
             }
@@ -53,55 +57,69 @@ impl DevtoolsOverlay {
         }
 
         self.has_content = true;
-        overlay_frame.dom_tree = parse_html("<html><body></body></html>");
-        overlay_frame.default_styles = vec![];
-        overlay_frame.parsed_css = vec![];
-        overlay_frame.styles = vec![];
+        {
+            let mut frame = self.render.frame_mut();
+            let ir_nodes = parse_html("<html><body></body></html>");
+            frame.dom_tree = frame.build_dom_from_ir(&ir_nodes, None);
+            frame.default_styles = vec![];
+            frame.parsed_css = vec![];
+            frame.styles = vec![];
+        }
 
-        if let Some(body) = find_first_tag(&overlay_frame.dom_tree, "BODY") {
-            let body_style = format!(
-                "display:block; margin:0px; position:relative; width:{}px; height:{}px; background: rgba(0,0,0,0);",
-                viewport.width, page_height
-            );
-            body.borrow_mut().set_attribute("style", &body_style);
+        // Find body element
+        let dom_tree = self.render.frame().dom_tree.clone();
+        let Some(body) = find_first_tag(&dom_tree, "BODY") else {
+            return;
+        };
 
-            if let Some(info) = hover_info {
-                let element = info.borrow();
-                let Some(flow) = element.computed_flow.as_ref() else {
-                    return;
-                };
-                let Some(style) = element.computed_style.as_ref() else {
-                    return;
-                };
+        let body_style = format!(
+            "display:block; margin:0px; position:relative; width:{}px; height:{}px; background: rgba(0,0,0,0);",
+            viewport.width, page_height
+        );
+        body.borrow_mut().set_attribute("style", &body_style);
 
-                let margin_box = clamp_rect(flow.hover_rect.clone());
-                let border_box = clamp_rect(Rect {
-                    x: flow.x,
-                    y: flow.y,
-                    width: flow.width,
-                    height: flow.height,
-                });
-                let content_box = clamp_rect(Rect {
-                    x: flow.x + style.padding.left,
-                    y: flow.y + style.padding.top,
-                    width: flow.width - style.padding.left - style.padding.right,
-                    height: flow.height - style.padding.top - style.padding.bottom,
-                });
+        if let Some(info) = hover_info {
+            let element = info.borrow();
+            let Some(flow) = element.computed_flow.as_ref() else {
+                return;
+            };
+            let Some(style) = element.computed_style.as_ref() else {
+                return;
+            };
+
+            let margin_box = clamp_rect(flow.hover_rect.clone());
+            let border_box = clamp_rect(Rect {
+                x: flow.x,
+                y: flow.y,
+                width: flow.width,
+                height: flow.height,
+            });
+            let content_box = clamp_rect(Rect {
+                x: flow.x + style.padding.left,
+                y: flow.y + style.padding.top,
+                width: flow.width - style.padding.left - style.padding.right,
+                height: flow.height - style.padding.top - style.padding.bottom,
+            });
+
+            // Build overlay DOM elements (borrow frame for create_element calls)
+            let popup = {
+                let frame = self.render.frame();
 
                 // Chromium-style overlay: margin (orange), padding (green), content (blue)
-                add_inset_overlay(&body, margin_box, border_box.clone(), "rgba(255, 200, 0, 0.35)");
-                add_inset_overlay(&body, border_box.clone(), content_box.clone(), "rgba(77, 200, 0, 0.35)");
-                add_overlay_box(&body, content_box.x, content_box.y, content_box.width, content_box.height, "rgba(0, 128, 255, 0.35)");
+                add_inset_overlay(&frame, &body, margin_box, border_box.clone(), "rgba(255, 200, 0, 0.35)");
+                add_inset_overlay(&frame, &body, border_box.clone(), content_box.clone(), "rgba(77, 200, 0, 0.35)");
+                add_overlay_box(&frame, &body, content_box.x, content_box.y, content_box.width, content_box.height, "rgba(0, 128, 255, 0.35)");
 
                 let mut text_segments = Vec::new();
                 collect_text_segments(&element, &mut text_segments);
                 for seg in &text_segments {
-                    add_border_box(&body, seg.x, seg.y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
+                    add_border_box(&frame, &body, seg.x, seg.y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
                 }
 
                 // Add info popup (position will be adjusted after layout)
                 let popup_x = border_box.x.min(viewport.width - 300.0).max(8.0);
-                let popup = add_info_popup(
+                add_info_popup(
+                    &frame,
                     &body,
                     popup_x,
                     0.0, // temporary y position
@@ -109,41 +127,44 @@ impl DevtoolsOverlay {
                     flow.width,
                     flow.height,
                     style,
-                );
+                )
+            };
 
-                // Do layout to get actual popup height
-                overlay_frame.full_layout();
+            // Drop borrow of element before mutably borrowing frame
+            drop(element);
 
-                // Get computed popup height and reposition
-                let popup_height = popup
-                    .borrow()
-                    .computed_flow
-                    .as_ref()
-                    .map(|f| f.height)
-                    .unwrap_or(100.0);
+            // Do layout to get actual popup height
+            self.render.frame_mut().full_layout();
 
-                let above_y = border_box.y - popup_height - 8.0;
-                let below_y = border_box.y + border_box.height + 8.0;
+            // Get computed popup height and reposition
+            let popup_height = popup
+                .borrow()
+                .computed_flow
+                .as_ref()
+                .map(|f| f.height)
+                .unwrap_or(100.0);
 
-                let popup_y = if above_y >= 8.0 {
-                    above_y
-                } else if below_y + popup_height < page_height {
-                    below_y
-                } else {
-                    8.0_f32.max(above_y)
-                };
+            let above_y = border_box.y - popup_height - 8.0;
+            let below_y = border_box.y + border_box.height + 8.0;
 
-                // Update popup position
-                {
-                    let mut popup_ref = popup.borrow_mut();
-                    let current_style = popup_ref.attributes.get("style").cloned().unwrap_or_default();
-                    let new_style = current_style.replace("top:0px;", &format!("top:{}px;", popup_y));
-                    popup_ref.set_attribute("style", &new_style);
-                }
+            let popup_y = if above_y >= 8.0 {
+                above_y
+            } else if below_y + popup_height < page_height {
+                below_y
+            } else {
+                8.0_f32.max(above_y)
+            };
+
+            // Update popup position
+            {
+                let mut popup_ref = popup.borrow_mut();
+                let current_style = popup_ref.attributes.get("style").cloned().unwrap_or_default();
+                let new_style = current_style.replace("top:0px;", &format!("top:{}px;", popup_y));
+                popup_ref.set_attribute("style", &new_style);
             }
         }
 
-        overlay_frame.full_layout();
+        self.render.frame_mut().full_layout();
         self.render.invalidate();
     }
 }
@@ -167,6 +188,7 @@ fn find_first_tag(
 }
 
 fn add_overlay_box(
+    frame: &Frame,
     parent: &Rc<RefCell<DomElement>>,
     left: f32,
     top: f32,
@@ -177,7 +199,7 @@ fn add_overlay_box(
     if width <= 0.0 || height <= 0.0 {
         return;
     }
-    let div = DomElement::create("div");
+    let div = frame.create_element("div");
     let style = format!(
         "display:block; position:absolute; left:{}px; top:{}px; width:{}px; height:{}px; background:{};",
         left, top, width, height, color
@@ -187,6 +209,7 @@ fn add_overlay_box(
 }
 
 fn add_border_box(
+    frame: &Frame,
     parent: &Rc<RefCell<DomElement>>,
     left: f32,
     top: f32,
@@ -200,7 +223,7 @@ fn add_border_box(
         return;
     }
     let bw = border_width.max(1.0);
-    let div = DomElement::create("div");
+    let div = frame.create_element("div");
     let style = format!(
         "display:block; position:absolute; left:{}px; top:{}px; width:{}px; height:{}px; \
          border: {}px {} {};",
@@ -211,6 +234,7 @@ fn add_border_box(
 }
 
 fn add_inset_overlay(
+    frame: &Frame,
     parent: &Rc<RefCell<DomElement>>,
     outer: Rect,
     inner: Rect,
@@ -223,11 +247,12 @@ fn add_inset_overlay(
 
     // Top band
     if inner.y > outer.y {
-        add_overlay_box(parent, outer.x, outer.y, outer.width, inner.y - outer.y, color);
+        add_overlay_box(frame, parent, outer.x, outer.y, outer.width, inner.y - outer.y, color);
     }
     // Bottom band
     if inner_bottom < outer_bottom {
         add_overlay_box(
+            frame,
             parent,
             outer.x,
             inner_bottom,
@@ -238,11 +263,12 @@ fn add_inset_overlay(
     }
     // Left band
     if inner.x > outer.x {
-        add_overlay_box(parent, outer.x, inner.y, inner.x - outer.x, inner.height, color);
+        add_overlay_box(frame, parent, outer.x, inner.y, inner.x - outer.x, inner.height, color);
     }
     // Right band
     if inner_right < outer_right {
         add_overlay_box(
+            frame,
             parent,
             inner_right,
             inner.y,
@@ -283,6 +309,7 @@ fn collect_text_segments(element: &DomElement, out: &mut Vec<Rect>) {
 }
 
 fn add_info_popup(
+    frame: &Frame,
     parent: &Rc<RefCell<DomElement>>,
     left: f32,
     top: f32,
@@ -292,7 +319,7 @@ fn add_info_popup(
     style: &ComputedStyle,
 ) -> Rc<RefCell<DomElement>> {
     let tag_name = &element.tag_name;
-    let popup = DomElement::create("div");
+    let popup = frame.create_element("div");
     let popup_style = format!(
         "display:block; position:absolute; left:{}px; top:{}px; width:280px; \
          background:rgba(255,255,255,0.97); padding:10px; \
@@ -302,11 +329,11 @@ fn add_info_popup(
     popup.borrow_mut().set_attribute("style", &popup_style);
 
     // Header: selector + dimensions (Chrome DevTools style)
-    let header = DomElement::create("div");
+    let header = frame.create_element("div");
     header.borrow_mut().set_attribute("style", "display:block; margin-bottom:8px;");
 
     // Tag name in purple/magenta
-    let tag_span = DomElement::create("span");
+    let tag_span = frame.create_element("span");
     tag_span.borrow_mut().set_attribute(
         "style",
         "color:#881280; font-weight:700; font-size:13px;",
@@ -317,7 +344,7 @@ fn add_info_popup(
     // ID in blue (if present)
     if let Some(id) = element.attributes.get("id") {
         if !id.is_empty() {
-            let id_span = DomElement::create("span");
+            let id_span = frame.create_element("span");
             id_span.borrow_mut().set_attribute(
                 "style",
                 "color:#1a1aa6; font-weight:700; font-size:13px;",
@@ -330,7 +357,7 @@ fn add_info_popup(
     // Classes in dark gray
     for class in &element.class_list {
         if !class.is_empty() {
-            let class_span = DomElement::create("span");
+            let class_span = frame.create_element("span");
             class_span.borrow_mut().set_attribute(
                 "style",
                 "color:#1a1a1a; font-weight:700; font-size:13px;",
@@ -341,7 +368,7 @@ fn add_info_popup(
     }
 
     // Dimensions
-    let dims_span = DomElement::create("span");
+    let dims_span = frame.create_element("span");
     dims_span.borrow_mut().set_attribute(
         "style",
         "color:#666; font-size:12px; margin-left:8px;",
@@ -354,13 +381,13 @@ fn add_info_popup(
     // Color row
     let (r, g, b, _a) = style.color;
     let color_hex = format!("#{:02x}{:02x}{:02x}", r as u8, g as u8, b as u8);
-    add_property_row(&popup, "Color", &color_hex, Some(style.color));
+    add_property_row(frame, &popup, "Color", &color_hex, Some(style.color));
 
     // Background color row (if not transparent)
     let (bg_r, bg_g, bg_b, bg_a) = style.background_color;
     if bg_a > 0.0 {
         let bg_hex = format!("#{:02x}{:02x}{:02x}", bg_r as u8, bg_g as u8, bg_b as u8);
-        add_property_row(&popup, "Background", &bg_hex, Some(style.background_color));
+        add_property_row(frame, &popup, "Background", &bg_hex, Some(style.background_color));
     }
 
     // Font row
@@ -369,7 +396,7 @@ fn add_info_popup(
         style.font_size as i32,
         style.font_family
     );
-    add_property_row(&popup, "Font", &font_info, None);
+    add_property_row(frame, &popup, "Font", &font_info, None);
 
     // Margin row
     let margin = &style.margin;
@@ -386,7 +413,7 @@ fn add_info_popup(
             margin.left as i32
         )
     };
-    add_property_row(&popup, "Margin", &margin_str, None);
+    add_property_row(frame, &popup, "Margin", &margin_str, None);
 
     // Padding row (if non-zero)
     let padding = &style.padding;
@@ -404,7 +431,7 @@ fn add_info_popup(
                 padding.left as i32
             )
         };
-        add_property_row(&popup, "Padding", &padding_str, None);
+        add_property_row(frame, &popup, "Padding", &padding_str, None);
     }
 
     // Border row (if visible)
@@ -424,7 +451,7 @@ fn add_info_popup(
                 border.left.width as i32
             )
         };
-        add_property_row(&popup, "Border", &border_str, Some(border.top.color));
+        add_property_row(frame, &popup, "Border", &border_str, Some(border.top.color));
     }
 
     parent.borrow_mut().append_child(popup.clone());
@@ -432,18 +459,19 @@ fn add_info_popup(
 }
 
 fn add_property_row(
+    frame: &Frame,
     parent: &Rc<RefCell<DomElement>>,
     label: &str,
     value: &str,
     color_swatch: Option<(f32, f32, f32, f32)>,
 ) {
-    let row = DomElement::create("div");
+    let row = frame.create_element("div");
     row.borrow_mut().set_attribute(
         "style",
         "display:block; margin-bottom:4px; font-size:11px;",
     );
 
-    let label_span = DomElement::create("span");
+    let label_span = frame.create_element("span");
     label_span.borrow_mut().set_attribute(
         "style",
         "color:#888; width:60px; display:inline-block;",
@@ -452,7 +480,7 @@ fn add_property_row(
     row.borrow_mut().append_child(label_span);
 
     if let Some((r, g, b, _a)) = color_swatch {
-        let swatch = DomElement::create("span");
+        let swatch = frame.create_element("span");
         swatch.borrow_mut().set_attribute(
             "style",
             &format!(
@@ -464,23 +492,10 @@ fn add_property_row(
         row.borrow_mut().append_child(swatch);
     }
 
-    let value_span = DomElement::create("span");
+    let value_span = frame.create_element("span");
     value_span.borrow_mut().set_attribute("style", "color:#333;");
     value_span.borrow_mut().set_text_content(value);
     row.borrow_mut().append_child(value_span);
 
     parent.borrow_mut().append_child(row);
-}
-
-fn get_tag_color(tag_name: &str) -> &'static str {
-    match tag_name.to_uppercase().as_str() {
-        "DIV" | "SPAN" | "SECTION" | "ARTICLE" | "HEADER" | "FOOTER" | "NAV" | "MAIN" | "ASIDE" => "#881280",
-        "P" | "H1" | "H2" | "H3" | "H4" | "H5" | "H6" => "#881280",
-        "A" => "#1a0dab",
-        "IMG" | "VIDEO" | "AUDIO" | "CANVAS" | "SVG" => "#994500",
-        "INPUT" | "BUTTON" | "SELECT" | "TEXTAREA" | "FORM" => "#994500",
-        "UL" | "OL" | "LI" => "#881280",
-        "TABLE" | "TR" | "TD" | "TH" | "THEAD" | "TBODY" => "#881280",
-        _ => "#881280",
-    }
 }
