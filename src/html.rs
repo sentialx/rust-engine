@@ -1,7 +1,7 @@
 use crate::colors::ColorTupleA;
 use crate::css::parse_css;
 use crate::layout::*;
-use crate::styles::{ComputedStyle, Style, StyleRule};
+use crate::styles::{ComputedStyle, Declaration, Style, StyleRule};
 use crate::utils::*;
 use html5ever::{parse_document, tendril::TendrilSink, ParseOpts, tree_builder::TreeBuilderOpts};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
@@ -53,6 +53,108 @@ pub struct TextSegment {
   pub y: f32,
 }
 
+pub struct DomEvent {
+  default_prevented: bool,
+}
+
+impl DomEvent {
+  pub fn new() -> Self {
+    Self { default_prevented: false }
+  }
+
+  pub fn prevent_default(&mut self) {
+    self.default_prevented = true;
+  }
+
+  pub fn default_prevented(&self) -> bool {
+    self.default_prevented
+  }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EventContext {
+  pub needs_restyle: bool,
+  pub needs_reflow: bool,
+}
+
+impl EventContext {
+  pub fn new() -> Self {
+    Self {
+      needs_restyle: false,
+      needs_reflow: false,
+    }
+  }
+
+  pub fn request_restyle(&mut self) {
+    self.needs_restyle = true;
+  }
+
+  pub fn request_reflow(&mut self) {
+    self.needs_reflow = true;
+    self.needs_restyle = true; // reflow implies restyle
+  }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PseudoClassState {
+  pub hover: bool,
+  pub focus: bool,
+  pub active: bool,
+}
+
+pub trait HTMLElement {
+  fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent, ctx: &mut EventContext);
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HTMLInputElement {
+  pub clicks: u32,
+}
+
+impl HTMLElement for HTMLInputElement {
+  fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent, _ctx: &mut EventContext) {
+    self.clicks += 1;
+  }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HTMLCustomRenderElement;
+
+impl HTMLElement for HTMLCustomRenderElement {
+  fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent, _ctx: &mut EventContext) {}
+}
+
+#[derive(Clone, Debug)]
+pub enum ElementKind {
+  Generic,
+  Input(HTMLInputElement),
+  CustomRender(HTMLCustomRenderElement),
+}
+
+impl ElementKind {
+  pub fn for_tag(tag_name: &str) -> Self {
+    match tag_name {
+      "INPUT" => ElementKind::Input(HTMLInputElement::default()),
+      "CUSTOM-RENDER" => ElementKind::CustomRender(HTMLCustomRenderElement::default()),
+      _ => ElementKind::Generic,
+    }
+  }
+
+  pub fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent, ctx: &mut EventContext) -> bool {
+    match self {
+      ElementKind::Input(input) => {
+        input.on_click(element, event, ctx);
+        true
+      }
+      ElementKind::CustomRender(custom) => {
+        custom.on_click(element, event, ctx);
+        true
+      }
+      ElementKind::Generic => false,
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct DomElement {
   pub children: Vec<Rc<RefCell<DomElement>>>,
@@ -63,9 +165,10 @@ pub struct DomElement {
   pub inner_html: String,
   pub outer_html: String,
   pub tag_name: String,
+  pub element_kind: ElementKind,
   pub style: Style,
   pub inherited_style: Option<Style>,
-  pub is_hovered: bool,
+  pub pseudo_classes: PseudoClassState,
   pub computed_flow: Option<ComputedFlow>,
   pub computed_style: Option<ComputedStyle>,
   pub text_segments: Vec<TextSegment>,  // Preprocessed words with positions
@@ -75,6 +178,7 @@ pub struct DomElement {
   pub class_list: Vec<String>,
   pub matched_styles: Vec<StyleRule>,
   pub var_contexts: Vec<CssVariablesContext>,
+  pub inline_declarations: Vec<Declaration>,  // Pre-parsed inline style declarations
 }
 
 impl DomElement {
@@ -88,11 +192,12 @@ impl DomElement {
       outer_html: "".to_string(),
       node_value: "".to_string(),
       tag_name: "".to_string(),
+      element_kind: ElementKind::Generic,
       style: Style::new(),
       inherited_style: None,
       computed_flow: None,
       computed_style: None,
-      is_hovered: false,
+      pseudo_classes: PseudoClassState::default(),
       text_segments: vec![],
       space_width: 0.0,
       cached_font_size: None,
@@ -100,13 +205,35 @@ impl DomElement {
       class_list: vec![],
       matched_styles: vec![],
       var_contexts: vec![],
+      inline_declarations: vec![],
     }
   }
 
   pub fn create(tag_name: &str) -> Rc<RefCell<DomElement>> {
     let mut el = DomElement::new(NodeType::Element);
-    el.tag_name = tag_name.to_uppercase();
+    el.set_tag_name(tag_name);
     Rc::new(RefCell::new(el))
+  }
+
+  pub fn on_mouse_enter(&mut self) {
+    self.pseudo_classes.hover = true;
+    // Bubble to parent
+    if let Some(ref parent) = self.parent_node {
+      parent.borrow_mut().on_mouse_enter();
+    }
+  }
+
+  pub fn on_mouse_leave(&mut self) {
+    self.pseudo_classes.hover = false;
+    // Bubble to parent
+    if let Some(ref parent) = self.parent_node {
+      parent.borrow_mut().on_mouse_leave();
+    }
+  }
+
+  pub fn set_tag_name(&mut self, tag_name: &str) {
+    self.tag_name = tag_name.to_uppercase();
+    self.element_kind = ElementKind::for_tag(&self.tag_name);
   }
 
   pub fn set_text_content(&mut self, text: &str) {
@@ -119,14 +246,18 @@ impl DomElement {
   pub fn set_attribute(&mut self, key: &str, value: &str) {
     let empty_ctx = CssVariablesContext::new();
     if key == "style" {
+      // Parse and store inline declarations (marked as important for specificity)
       let val = format!("{{{}}}", value);
-      let mut rules = parse_css(&val);
-      for rule in rules.iter_mut() {
-        for decl in rule.declarations.iter_mut() {
+      let rules = parse_css(&val);
+      self.inline_declarations.clear();
+      for rule in rules {
+        for mut decl in rule.declarations {
           decl.important = true;
+          self.inline_declarations.push(decl);
         }
-        self.style.insert_declarations(&rule.declarations, &empty_ctx);
       }
+      // Also apply immediately to style
+      self.style.insert_declarations(&self.inline_declarations, &empty_ctx);
     }
 
     if key == "class" {
@@ -375,7 +506,7 @@ fn build_tree(tokens: Vec<String>) -> Vec<Rc<RefCell<DomElement>>> {
 
         match node_type {
           NodeType::Element => {
-            element.tag_name = tag_name.clone();
+            element.set_tag_name(&tag_name);
             set_attributes(&mut element, token.clone(), tag_name.clone());
           }
           NodeType::Text => {
@@ -459,7 +590,7 @@ fn build_dom_from_handle(
     }
     NodeData::Element { name, attrs, .. } => {
       let mut el = DomElement::new(NodeType::Element);
-      el.tag_name = name.local.to_string().to_uppercase();
+      el.set_tag_name(&name.local.to_string());
       for attr in attrs.borrow().iter() {
         let name = attr.name.local.to_string();
         let value = attr.value.to_string();

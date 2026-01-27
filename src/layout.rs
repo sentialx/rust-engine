@@ -159,7 +159,10 @@ pub fn element_matches_selector_with_siblings(
             None => element.attributes.contains_key(name),
         },
         CssSelector::PseudoClass(pseudo) => {
-            match pseudo.as_str() {
+            match pseudo.to_lowercase().as_str() {
+                "hover" => element.pseudo_classes.hover,
+                "focus" => element.pseudo_classes.focus,
+                "active" => element.pseudo_classes.active,
                 "first-child" => siblings.map_or(false, |ctx| ctx.index == 0),
                 "last-child" => siblings.map_or(false, |ctx| ctx.index == ctx.total - 1),
                 "only-child" => siblings.map_or(false, |ctx| ctx.total == 1),
@@ -601,6 +604,16 @@ fn compute_styles_with_index(
             total: total_siblings,
             siblings: siblings_vec.clone(),
         };
+
+        // Clear previous matched styles for re-computation
+        element.matched_styles.clear();
+        element.style = Style::new();
+
+        // Apply pre-parsed inline style declarations (already marked important)
+        let inline_decls = element.inline_declarations.clone();
+        if !inline_decls.is_empty() {
+            element.style.insert_declarations(&inline_decls, var_ctx.as_ref().unwrap());
+        }
 
         // Use index to get candidate rules, or fall back to all rules
         let candidates: Vec<usize> = match index {
