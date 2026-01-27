@@ -6,7 +6,8 @@
 // - Attribute selectors with various operators (=, ~=, ^=, $=, *=, |=)
 // - AndGroup selectors (e.g., div.class#id)
 // - OrGroup selectors (e.g., div, span)
-// - Combinator selectors: descendant (space), child (>)
+// - Combinator selectors: descendant (space), child (>), adjacent sibling (+), general sibling (~)
+// - Pseudo-classes: :first-child, :last-child, :nth-child(), :only-child, :empty, :not()
 // - Deeply nested structures (Wikipedia-style DOM trees)
 //
 // NOTE: Some tests using the CSS parser are ignored because the parser produces
@@ -16,7 +17,7 @@
 
 use graviton::css::{CssSelector, tokenize_css_selector, parse_css_selector};
 use graviton::html::{DomElement, NodeType};
-use graviton::layout::element_matches_selector;
+use graviton::layout::{element_matches_selector, element_matches_selector_with_siblings, SiblingContext};
 
 /// Helper to parse a CSS selector string
 fn parse_selector(input: &str) -> CssSelector {
@@ -567,7 +568,6 @@ fn test_parsed_child_selector() {
 }
 
 #[test]
-#[ignore = "Parser has bug with attribute value parsing - value is None and creates extra Tag"]
 fn test_parsed_attribute_selector() {
     let mut el = create_element("input");
     el.set_attribute("type", "text");
@@ -752,4 +752,737 @@ fn test_multiple_class_descendant_parsed() {
     let content_ptr = &mut content as *mut DomElement;
 
     assert!(element_matches_selector(&h2, &selector, &[body_ptr, content_ptr]));
+}
+
+// ============================================================================
+// Sibling Combinator Tests - Adjacent Sibling (+)
+// ============================================================================
+
+/// Helper to create a sibling context for testing
+fn create_sibling_context(elements: &mut [DomElement], current_index: usize) -> SiblingContext {
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    SiblingContext {
+        index: current_index,
+        total: elements.len(),
+        siblings,
+    }
+}
+
+#[test]
+fn test_adjacent_sibling_matches() {
+    // Structure: h1, p (testing h1 + p on the p element)
+    let mut h1 = create_element("h1");
+    let p = create_element("p");
+    let mut elements = vec![h1, p];
+
+    // Build selector: h1 + p
+    let selector = CssSelector::Combinator {
+        combinator: "+".to_string(),
+        selectors: vec![
+            CssSelector::Tag("h1".to_string()),
+            CssSelector::Tag("p".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 1, // p is at index 1
+        total: 2,
+        siblings,
+    };
+
+    assert!(element_matches_selector_with_siblings(
+        &elements[1],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_adjacent_sibling_no_match_not_adjacent() {
+    // Structure: h1, div, p (h1 + p should NOT match because div is between)
+    let mut h1 = create_element("h1");
+    let mut div = create_element("div");
+    let p = create_element("p");
+    let mut elements = vec![h1, div, p];
+
+    let selector = CssSelector::Combinator {
+        combinator: "+".to_string(),
+        selectors: vec![
+            CssSelector::Tag("h1".to_string()),
+            CssSelector::Tag("p".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 2, // p is at index 2
+        total: 3,
+        siblings,
+    };
+
+    assert!(!element_matches_selector_with_siblings(
+        &elements[2],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_adjacent_sibling_first_element() {
+    // First element can't have a previous sibling
+    let mut p = create_element("p");
+    let mut elements = vec![p];
+
+    let selector = CssSelector::Combinator {
+        combinator: "+".to_string(),
+        selectors: vec![
+            CssSelector::Tag("h1".to_string()),
+            CssSelector::Tag("p".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 0,
+        total: 1,
+        siblings,
+    };
+
+    assert!(!element_matches_selector_with_siblings(
+        &elements[0],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+// ============================================================================
+// Sibling Combinator Tests - General Sibling (~)
+// ============================================================================
+
+#[test]
+fn test_general_sibling_matches_immediate() {
+    // Structure: h1, p (h1 ~ p should match)
+    let mut h1 = create_element("h1");
+    let p = create_element("p");
+    let mut elements = vec![h1, p];
+
+    let selector = CssSelector::Combinator {
+        combinator: "~".to_string(),
+        selectors: vec![
+            CssSelector::Tag("h1".to_string()),
+            CssSelector::Tag("p".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 1,
+        total: 2,
+        siblings,
+    };
+
+    assert!(element_matches_selector_with_siblings(
+        &elements[1],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_general_sibling_matches_with_gap() {
+    // Structure: h1, div, span, p (h1 ~ p should match even with elements in between)
+    let mut h1 = create_element("h1");
+    let mut div = create_element("div");
+    let mut span = create_element("span");
+    let p = create_element("p");
+    let mut elements = vec![h1, div, span, p];
+
+    let selector = CssSelector::Combinator {
+        combinator: "~".to_string(),
+        selectors: vec![
+            CssSelector::Tag("h1".to_string()),
+            CssSelector::Tag("p".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 3,
+        total: 4,
+        siblings,
+    };
+
+    assert!(element_matches_selector_with_siblings(
+        &elements[3],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_general_sibling_no_match_wrong_order() {
+    // Structure: p, h1 (h1 ~ p should NOT match because h1 comes AFTER p)
+    let mut p = create_element("p");
+    let mut h1 = create_element("h1");
+    let mut elements = vec![p, h1];
+
+    let selector = CssSelector::Combinator {
+        combinator: "~".to_string(),
+        selectors: vec![
+            CssSelector::Tag("h1".to_string()),
+            CssSelector::Tag("p".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 0, // testing the p element
+        total: 2,
+        siblings,
+    };
+
+    assert!(!element_matches_selector_with_siblings(
+        &elements[0],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+// ============================================================================
+// Pseudo-class Tests - :first-child, :last-child, :only-child
+// ============================================================================
+
+#[test]
+fn test_first_child_matches() {
+    let mut first = create_element("p");
+    let mut second = create_element("p");
+    let mut elements = vec![first, second];
+
+    let selector = CssSelector::PseudoClass("first-child".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 0,
+        total: 2,
+        siblings,
+    };
+
+    assert!(element_matches_selector_with_siblings(
+        &elements[0],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_first_child_no_match() {
+    let mut first = create_element("p");
+    let mut second = create_element("p");
+    let mut elements = vec![first, second];
+
+    let selector = CssSelector::PseudoClass("first-child".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 1,
+        total: 2,
+        siblings,
+    };
+
+    assert!(!element_matches_selector_with_siblings(
+        &elements[1],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_last_child_matches() {
+    let mut first = create_element("p");
+    let mut second = create_element("p");
+    let mut elements = vec![first, second];
+
+    let selector = CssSelector::PseudoClass("last-child".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 1,
+        total: 2,
+        siblings,
+    };
+
+    assert!(element_matches_selector_with_siblings(
+        &elements[1],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_last_child_no_match() {
+    let mut first = create_element("p");
+    let mut second = create_element("p");
+    let mut elements = vec![first, second];
+
+    let selector = CssSelector::PseudoClass("last-child".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 0,
+        total: 2,
+        siblings,
+    };
+
+    assert!(!element_matches_selector_with_siblings(
+        &elements[0],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_only_child_matches() {
+    let mut only = create_element("p");
+    let mut elements = vec![only];
+
+    let selector = CssSelector::PseudoClass("only-child".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 0,
+        total: 1,
+        siblings,
+    };
+
+    assert!(element_matches_selector_with_siblings(
+        &elements[0],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+#[test]
+fn test_only_child_no_match() {
+    let mut first = create_element("p");
+    let mut second = create_element("p");
+    let mut elements = vec![first, second];
+
+    let selector = CssSelector::PseudoClass("only-child".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+    let sibling_ctx = SiblingContext {
+        index: 0,
+        total: 2,
+        siblings,
+    };
+
+    assert!(!element_matches_selector_with_siblings(
+        &elements[0],
+        &selector,
+        &[],
+        Some(&sibling_ctx)
+    ));
+}
+
+// ============================================================================
+// Pseudo-class Tests - :empty
+// ============================================================================
+
+#[test]
+fn test_empty_matches() {
+    let el = create_element("div"); // No children
+
+    let selector = CssSelector::PseudoClass("empty".to_string());
+
+    assert!(element_matches_selector(&el, &selector, &[]));
+}
+
+#[test]
+fn test_empty_no_match() {
+    use std::rc::Rc;
+    use std::cell::RefCell;
+
+    let mut el = create_element("div");
+    let child = create_element("span");
+    el.children.push(Rc::new(RefCell::new(child)));
+
+    let selector = CssSelector::PseudoClass("empty".to_string());
+
+    assert!(!element_matches_selector(&el, &selector, &[]));
+}
+
+// ============================================================================
+// Pseudo-class Tests - :nth-child()
+// ============================================================================
+
+#[test]
+fn test_nth_child_number() {
+    let mut p1 = create_element("p");
+    let mut p2 = create_element("p");
+    let mut p3 = create_element("p");
+    let mut elements = vec![p1, p2, p3];
+
+    // :nth-child(2) matches the second child
+    let selector = CssSelector::PseudoClass("nth-child(2)".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    // First child (index 0) should not match
+    let ctx0 = SiblingContext { index: 0, total: 3, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    // Second child (index 1) should match
+    let ctx1 = SiblingContext { index: 1, total: 3, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+
+    // Third child (index 2) should not match
+    let ctx2 = SiblingContext { index: 2, total: 3, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[2], &selector, &[], Some(&ctx2)));
+}
+
+#[test]
+fn test_nth_child_odd() {
+    let mut p1 = create_element("p");
+    let mut p2 = create_element("p");
+    let mut p3 = create_element("p");
+    let mut p4 = create_element("p");
+    let mut elements = vec![p1, p2, p3, p4];
+
+    let selector = CssSelector::PseudoClass("nth-child(odd)".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    // 1st (index 0) - matches odd
+    let ctx0 = SiblingContext { index: 0, total: 4, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    // 2nd (index 1) - doesn't match odd
+    let ctx1 = SiblingContext { index: 1, total: 4, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+
+    // 3rd (index 2) - matches odd
+    let ctx2 = SiblingContext { index: 2, total: 4, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[2], &selector, &[], Some(&ctx2)));
+
+    // 4th (index 3) - doesn't match odd
+    let ctx3 = SiblingContext { index: 3, total: 4, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[3], &selector, &[], Some(&ctx3)));
+}
+
+#[test]
+fn test_nth_child_even() {
+    let mut p1 = create_element("p");
+    let mut p2 = create_element("p");
+    let mut p3 = create_element("p");
+    let mut p4 = create_element("p");
+    let mut elements = vec![p1, p2, p3, p4];
+
+    let selector = CssSelector::PseudoClass("nth-child(even)".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    // 1st (index 0) - doesn't match even
+    let ctx0 = SiblingContext { index: 0, total: 4, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    // 2nd (index 1) - matches even
+    let ctx1 = SiblingContext { index: 1, total: 4, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+
+    // 3rd (index 2) - doesn't match even
+    let ctx2 = SiblingContext { index: 2, total: 4, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[2], &selector, &[], Some(&ctx2)));
+
+    // 4th (index 3) - matches even
+    let ctx3 = SiblingContext { index: 3, total: 4, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[3], &selector, &[], Some(&ctx3)));
+}
+
+#[test]
+fn test_nth_child_2n() {
+    // 2n is equivalent to even
+    let mut p1 = create_element("p");
+    let mut p2 = create_element("p");
+    let mut elements = vec![p1, p2];
+
+    let selector = CssSelector::PseudoClass("nth-child(2n)".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    let ctx0 = SiblingContext { index: 0, total: 2, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    let ctx1 = SiblingContext { index: 1, total: 2, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+}
+
+#[test]
+fn test_nth_child_2n_plus_1() {
+    // 2n+1 is equivalent to odd
+    let mut p1 = create_element("p");
+    let mut p2 = create_element("p");
+    let mut elements = vec![p1, p2];
+
+    let selector = CssSelector::PseudoClass("nth-child(2n+1)".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    let ctx0 = SiblingContext { index: 0, total: 2, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    let ctx1 = SiblingContext { index: 1, total: 2, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+}
+
+#[test]
+fn test_nth_child_3n() {
+    // 3n matches 3rd, 6th, 9th, etc.
+    let mut elements: Vec<DomElement> = (0..6).map(|_| create_element("p")).collect();
+
+    let selector = CssSelector::PseudoClass("nth-child(3n)".to_string());
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    // Should match at indices 2 (3rd) and 5 (6th)
+    for i in 0..6 {
+        let ctx = SiblingContext { index: i, total: 6, siblings: siblings.clone() };
+        let expected = (i + 1) % 3 == 0;
+        assert_eq!(
+            element_matches_selector_with_siblings(&elements[i], &selector, &[], Some(&ctx)),
+            expected,
+            "nth-child(3n) at index {} (child {}) should be {}",
+            i, i + 1, expected
+        );
+    }
+}
+
+// ============================================================================
+// Pseudo-class Tests - :not()
+// ============================================================================
+
+#[test]
+fn test_not_class() {
+    let el_with_class = create_element_with_class("div", "highlight");
+    let el_without_class = create_element("div");
+
+    let selector = CssSelector::PseudoClass("not(.highlight)".to_string());
+
+    assert!(!element_matches_selector(&el_with_class, &selector, &[]));
+    assert!(element_matches_selector(&el_without_class, &selector, &[]));
+}
+
+#[test]
+fn test_not_tag() {
+    let div = create_element("div");
+    let span = create_element("span");
+
+    let selector = CssSelector::PseudoClass("not(span)".to_string());
+
+    assert!(element_matches_selector(&div, &selector, &[]));
+    assert!(!element_matches_selector(&span, &selector, &[]));
+}
+
+#[test]
+fn test_not_id() {
+    let el_with_id = create_element_with_id("div", "main");
+    let el_without_id = create_element("div");
+
+    let selector = CssSelector::PseudoClass("not(#main)".to_string());
+
+    assert!(!element_matches_selector(&el_with_id, &selector, &[]));
+    assert!(element_matches_selector(&el_without_id, &selector, &[]));
+}
+
+// ============================================================================
+// Combined Tests - Pseudo-classes with other selectors
+// ============================================================================
+
+#[test]
+fn test_tag_with_first_child() {
+    let mut p1 = create_element("p");
+    let mut p2 = create_element("p");
+    let mut elements = vec![p1, p2];
+
+    // p:first-child
+    let selector = CssSelector::AndGroup {
+        selectors: vec![
+            CssSelector::Tag("p".to_string()),
+            CssSelector::PseudoClass("first-child".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    let ctx0 = SiblingContext { index: 0, total: 2, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    let ctx1 = SiblingContext { index: 1, total: 2, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+}
+
+#[test]
+fn test_class_with_nth_child() {
+    let mut item1 = create_element_with_class("li", "item");
+    let mut item2 = create_element_with_class("li", "item");
+    let mut item3 = create_element_with_class("li", "item");
+    let mut elements = vec![item1, item2, item3];
+
+    // li.item:nth-child(2)
+    let selector = CssSelector::AndGroup {
+        selectors: vec![
+            CssSelector::Tag("li".to_string()),
+            CssSelector::Class("item".to_string()),
+            CssSelector::PseudoClass("nth-child(2)".to_string()),
+        ],
+    };
+
+    let siblings: Vec<*mut DomElement> = elements
+        .iter_mut()
+        .map(|el| el as *mut DomElement)
+        .collect();
+
+    let ctx0 = SiblingContext { index: 0, total: 3, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[0], &selector, &[], Some(&ctx0)));
+
+    let ctx1 = SiblingContext { index: 1, total: 3, siblings: siblings.clone() };
+    assert!(element_matches_selector_with_siblings(&elements[1], &selector, &[], Some(&ctx1)));
+
+    let ctx2 = SiblingContext { index: 2, total: 3, siblings: siblings.clone() };
+    assert!(!element_matches_selector_with_siblings(&elements[2], &selector, &[], Some(&ctx2)));
+}
+
+// ============================================================================
+// Parser Tests for New Selectors
+// ============================================================================
+
+#[test]
+fn test_parse_first_child() {
+    let selector = parse_selector("p:first-child");
+    // Should be AndGroup([Tag("p"), PseudoClass("first-child")])
+    match selector {
+        CssSelector::AndGroup { selectors } => {
+            assert_eq!(selectors.len(), 2);
+            assert!(matches!(&selectors[0], CssSelector::Tag(t) if t == "p"));
+            assert!(matches!(&selectors[1], CssSelector::PseudoClass(p) if p == "first-child"));
+        }
+        _ => panic!("Expected AndGroup, got {:?}", selector),
+    }
+}
+
+#[test]
+fn test_parse_nth_child() {
+    let selector = parse_selector("li:nth-child(2n+1)");
+    match selector {
+        CssSelector::AndGroup { selectors } => {
+            assert_eq!(selectors.len(), 2);
+            assert!(matches!(&selectors[0], CssSelector::Tag(t) if t == "li"));
+            assert!(matches!(&selectors[1], CssSelector::PseudoClass(p) if p == "nth-child(2n+1)"));
+        }
+        _ => panic!("Expected AndGroup, got {:?}", selector),
+    }
+}
+
+#[test]
+fn test_parse_not() {
+    let selector = parse_selector("div:not(.hidden)");
+    match selector {
+        CssSelector::AndGroup { selectors } => {
+            assert_eq!(selectors.len(), 2);
+            assert!(matches!(&selectors[0], CssSelector::Tag(t) if t == "div"));
+            assert!(matches!(&selectors[1], CssSelector::PseudoClass(p) if p == "not(.hidden)"));
+        }
+        _ => panic!("Expected AndGroup, got {:?}", selector),
+    }
+}
+
+#[test]
+fn test_parse_attribute_exact_match() {
+    // This was previously broken - verify it now works
+    let selector = parse_selector("[type=\"text\"]");
+    match selector {
+        CssSelector::AndGroup { selectors } => {
+            assert_eq!(selectors.len(), 1);
+            match &selectors[0] {
+                CssSelector::Attribute { name, operator, value } => {
+                    assert_eq!(name, "type");
+                    assert_eq!(operator.as_deref(), Some("="));
+                    assert_eq!(value.as_deref(), Some("text"));
+                }
+                _ => panic!("Expected Attribute, got {:?}", selectors[0]),
+            }
+        }
+        _ => panic!("Expected AndGroup, got {:?}", selector),
+    }
 }
