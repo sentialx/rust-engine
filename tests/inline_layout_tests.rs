@@ -193,3 +193,83 @@ fn test_inline_wrap_advances_y_for_wrapped_inline() {
     assert!(c.2 > a.2, "Wrapped inline should advance y: a.y={:.2}, c.y={:.2}", a.2, c.2);
     assert!(c.2 >= b.2, "Wrapped inline should not be above previous inline: b.y={:.2}, c.y={:.2}", b.2, c.2);
 }
+
+#[test]
+fn test_inline_transparent_with_block_child_layouts_block() {
+    let html = r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { margin: 0; padding: 8px; }
+    .container { width: 200px; }
+    .wrap { display: inline; }
+    .block { display: block; width: 40px; height: 20px; background: red; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="wrap"><div class="block"></div></span>
+  </div>
+</body>
+</html>
+"#;
+
+    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 240.0, height: 200.0 });
+    frame.load_html(html);
+
+    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let block = boxes.iter().find(|(c, _, _, _, _)| c == "block");
+    assert!(block.is_some(), "Block child should be laid out for transparent inline wrapper");
+
+    let (_, _, _, _, h) = block.unwrap();
+    assert!(*h >= 18.0, "Block child height should be preserved (got {:.2})", h);
+}
+
+#[test]
+fn test_inline_block_wraps_as_unit() {
+    let html = r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { margin: 0; padding: 8px; }
+    .container { width: 80px; }
+    .ib1, .ib2 { display: inline-block; width: 60px; height: 12px; background: red; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="ib1"></span><span class="ib2"></span>
+  </div>
+</body>
+</html>
+"#;
+
+    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 200.0, height: 200.0 });
+    frame.load_html(html);
+
+    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let ib1 = boxes.iter().find(|(c, _, _, _, _)| c == "ib1").unwrap();
+    let ib2 = boxes.iter().find(|(c, _, _, _, _)| c == "ib2").unwrap();
+    let container_left = find_container_left(&frame, "container");
+
+    assert!(
+        (ib1.1 - container_left).abs() < 2.0,
+        "First inline-block should start at container left: {:.2} vs {:.2}",
+        ib1.1,
+        container_left
+    );
+    assert!(
+        (ib2.1 - container_left).abs() < 2.0,
+        "Wrapped inline-block should reset x: {:.2} vs {:.2}",
+        ib2.1,
+        container_left
+    );
+    assert!(
+        ib2.2 > ib1.2,
+        "Wrapped inline-block should advance y: ib1.y={:.2}, ib2.y={:.2}",
+        ib1.2,
+        ib2.2
+    );
+}

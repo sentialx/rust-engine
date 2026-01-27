@@ -473,6 +473,30 @@ pub fn layout_inline_children(
     }
 }
 
+/// Decide whether to lay out children during the block pass.
+/// Transparent inline elements with only inline/text children already lay out their
+/// children during inline flow, so a second pass would overwrite positions.
+pub fn should_layout_inline_children_in_block_pass(node: &LayoutNode) -> bool {
+    if node.box_data.formatting_context != FormattingContext::InlineContainer {
+        return true;
+    }
+
+    let display = node.box_data.computed_style.display.as_str();
+    if is_atomic_inline_display(display) {
+        return false;
+    }
+
+    let is_transparent_inline = display == "inline";
+
+    if !is_transparent_inline {
+        return true;
+    }
+
+    node.children.iter().any(|child| {
+        child.box_data.formatting_context == FormattingContext::BlockContainer
+    })
+}
+
 /// Unified inline formatting context layout
 ///
 /// This is the single entry point for laying out inline content.
@@ -481,6 +505,8 @@ pub fn layout_inline_children(
 pub fn layout_inline_content(
     children: &mut [LayoutNode],
     ctx: &mut InlineContext,
+    parent_ctx: &ReflowContext,
+    layout_fn: &mut dyn FnMut(&mut Vec<LayoutNode>, &ReflowContext),
 ) {
     for child in children.iter_mut() {
         match child.box_data.formatting_context {
@@ -497,10 +523,10 @@ pub fn layout_inline_content(
 
                 if is_atomic {
                     // Atomic inline box (inline-block etc) - wraps as a unit
-                    layout_atomic_inline(child, ctx);
+                    layout_atomic_inline(child, ctx, parent_ctx, layout_fn);
                 } else {
                     // display: inline - transparent wrapper, children flow directly
-                    layout_transparent_inline(child, ctx);
+                    layout_transparent_inline(child, ctx, parent_ctx, layout_fn);
                 }
             }
             FormattingContext::BlockContainer => {
@@ -568,7 +594,12 @@ fn layout_text_node(node: &mut LayoutNode, ctx: &mut InlineContext) {
 /// 2. Position the box
 /// 3. Layout children to determine actual size
 /// 4. Advance context by actual size
-fn layout_atomic_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
+fn layout_atomic_inline(
+    node: &mut LayoutNode,
+    ctx: &mut InlineContext,
+    parent_ctx: &ReflowContext,
+    layout_fn: &mut dyn FnMut(&mut Vec<LayoutNode>, &ReflowContext),
+) {
     // Use the best available width estimate for wrap decision
     // Priority: explicit content_width > intrinsic_width > intrinsic_min_width > 0
     let base_width = if node.box_data.content_width > 0.0 {
@@ -594,39 +625,30 @@ fn layout_atomic_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
     node.box_data.x = ctx.x;
     node.box_data.y = ctx.y;
 
-    // Note: Children will be laid out by the caller (layout_tree in pipeline.rs)
-    // The caller must call `advance_past_atomic_inline` after laying out children
-    // to properly advance the inline context.
-    //
-    // For now, we advance by estimated width. This will be corrected by the caller
-    // if the actual width differs.
-    ctx.x += estimated_width;
+    // Layout children now so we can advance by the actual size.
+    layout_inline_children(node, parent_ctx, layout_fn);
 
+    let actual_width = node.box_data.margin_box_width();
     let height = node.box_data.margin_box_height();
+    ctx.x = node.box_data.x + actual_width;
     if height > 0.0 {
         ctx.line_height = ctx.line_height.max(height);
     }
 }
 
-/// Advance inline context past an atomic inline box after its children have been laid out
-/// This should be called after laying out children of an inline-block
-pub fn advance_past_atomic_inline(node: &LayoutNode, ctx: &mut InlineContext) {
-    let actual_width = node.box_data.margin_box_width();
-    let height = node.box_data.margin_box_height();
-
-    // Update x to be after this element (node.box_data.x + actual_width)
-    ctx.x = node.box_data.x + actual_width;
-    ctx.line_height = ctx.line_height.max(height);
-}
-
 /// Layout a transparent inline wrapper (display: inline)
 /// Children participate directly in the inline flow
-fn layout_transparent_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
+fn layout_transparent_inline(
+    node: &mut LayoutNode,
+    ctx: &mut InlineContext,
+    parent_ctx: &ReflowContext,
+    layout_fn: &mut dyn FnMut(&mut Vec<LayoutNode>, &ReflowContext),
+) {
     let start_x = ctx.x;
     let start_y = ctx.y;
 
     // Recurse into children - they flow as part of this inline context
-    layout_inline_content(&mut node.children, ctx);
+    layout_inline_content(&mut node.children, ctx, parent_ctx, layout_fn);
 
     // Calculate position and dimensions from actual child positions
     // x: use min of children (accounts for wrap resetting x to line start)
