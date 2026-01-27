@@ -264,20 +264,6 @@ impl DomElement {
         self.mark_dirty();
     }
 
-    /// Get computed flow, forcing layout if dirty.
-    /// Returns None if element hasn't been laid out or layout can't run (frame borrowed).
-    pub fn get_computed_flow(&self) -> Option<ComputedFlow> {
-        // Force layout if needed
-        if let Some(ref weak_frame) = self.frame {
-            if let Some(frame) = weak_frame.upgrade() {
-                if let Ok(mut borrowed) = frame.try_borrow_mut() {
-                    borrowed.update_styles_if_needed();
-                }
-            }
-        }
-        self.computed_flow.clone()
-    }
-
     pub fn set_attribute(&mut self, key: &str, value: &str) {
         if key == "style" {
             let val = format!("{{{}}}", value);
@@ -326,5 +312,30 @@ impl DomElement {
     pub fn remove_child(&mut self, child: &Rc<RefCell<DomElement>>) {
         self.children.retain(|existing| !Rc::ptr_eq(existing, child));
         self.mark_dirty();
+    }
+}
+
+/// Extension trait for DomElement wrapped in Rc<RefCell<>>
+pub trait DomElementExt {
+    /// Get computed flow, forcing layout if dirty.
+    fn get_computed_flow(&self) -> Option<ComputedFlow>;
+}
+
+impl DomElementExt for Rc<RefCell<DomElement>> {
+    fn get_computed_flow(&self) -> Option<ComputedFlow> {
+        // Force layout if needed (before borrowing element)
+        {
+            let el = self.borrow();
+            if let Some(ref weak_frame) = el.frame {
+                if let Some(frame) = weak_frame.upgrade() {
+                    drop(el); // Release element borrow before layout
+                    if let Ok(mut frame_ref) = frame.try_borrow_mut() {
+                        frame_ref.update_styles_if_needed();
+                    }
+                }
+            }
+        }
+        // Now read computed_flow
+        self.borrow().computed_flow.clone()
     }
 }

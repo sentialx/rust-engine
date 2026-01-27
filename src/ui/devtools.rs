@@ -1,4 +1,4 @@
-use crate::dom::{DomElement, NodeType};
+use crate::dom::{DomElement, DomElementExt, NodeType};
 use crate::html::parse_html;
 use crate::layout::Rect;
 use crate::frame::Frame;
@@ -161,9 +161,7 @@ impl DevtoolsOverlay {
             drop(element);
 
             // Get popup height (forces layout if needed)
-            let popup_height = popup
-                .borrow()
-                .get_computed_flow()
+            let popup_height = popup.get_computed_flow()
                 .map(|f| f.height)
                 .unwrap_or(100.0);
 
