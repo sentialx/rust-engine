@@ -1,16 +1,15 @@
 // Frame - manages DOM, styles, layout, and fonts
 
-use std::{cell::RefCell, collections::HashMap, fs, rc::Rc, time::Instant};
+use std::{cell::{Cell, RefCell}, fs, rc::{Rc, Weak}, time::Instant};
 
 use crate::{
     css::parse_css,
-    html::{parse_html, DomElement, DomEvent, ElementKind, EventContext, NodeType},
+    dom::{DomElement, ElementKind, NodeType},
+    html::{parse_html, HtmlNode, HtmlNodeType},
     layout::{compute_styles, get_render_array, propagate_styles, reflow_and_cache, reflow_with_cache, Rect, RenderItem, boxes::LayoutNode},
-    styles::StyleRule,
+    styles::{ComputedStyle, StyleRule},
     text::FontManager,
 };
-
-/// Information about a hovered element is represented by its DOM node
 
 /// Recursively extract CSS content from <style> tags in the DOM tree
 fn extract_style_tags(tree: &Vec<Rc<RefCell<DomElement>>>, css: &mut String) {
@@ -46,17 +45,19 @@ pub struct Frame {
     pub font_manager: FontManager,
     pub default_styles: Vec<StyleRule>,
     pub cached_layout_tree: Option<Vec<LayoutNode>>,
-    click_handlers: HashMap<usize, Vec<Box<dyn FnMut(&mut Frame, Rc<RefCell<DomElement>>, &mut DomEvent)>>>,
-    hovered_element: Option<Rc<RefCell<DomElement>>>,
+    /// Dirty flag for style recomputation
+    styles_dirty: Cell<bool>,
+    /// Weak self-reference for passing to DomElements
+    self_ref: Option<Weak<RefCell<Frame>>>,
 }
 
 impl Frame {
-    pub fn new(viewport: Rect) -> Frame {
+    pub fn new(viewport: Rect) -> Rc<RefCell<Frame>> {
         let default_css =
             fs::read_to_string("default_styles.css").expect("error while reading default_styles.css");
         let default_styles = parse_css(&default_css);
 
-        let mut frame = Frame {
+        let frame = Rc::new(RefCell::new(Frame {
             viewport,
             render_array: vec![],
             page_height: 0.0,
@@ -67,12 +68,38 @@ impl Frame {
             font_manager: FontManager::new(),
             default_styles,
             cached_layout_tree: None,
-            click_handlers: HashMap::new(),
-            hovered_element: None,
-        };
+            styles_dirty: Cell::new(false),
+            self_ref: None,
+        }));
 
-        frame.load_default_fonts();
+        // Set up weak self-reference
+        frame.borrow_mut().self_ref = Some(Rc::downgrade(&frame));
+        frame.borrow_mut().load_default_fonts();
         frame
+    }
+
+    /// Called by DomElements when they change.
+    /// This method takes &self (not &mut self) so it can be called while Frame is borrowed.
+    pub fn mark_styles_dirty(&self) {
+        eprintln!("Frame::mark_styles_dirty() called");
+        self.styles_dirty.set(true);
+    }
+
+    /// Create a new element with a reference to this frame
+    pub fn create_element(&self, tag_name: &str) -> Rc<RefCell<DomElement>> {
+        let frame_ref = self.self_ref.clone().expect("Frame self_ref not set");
+        let mut el = DomElement::new(NodeType::Element, frame_ref);
+        el.tag_name = tag_name.to_uppercase();
+        el.element_kind = ElementKind::for_tag(&el.tag_name);
+        Rc::new(RefCell::new(el))
+    }
+
+    /// Create a text node with a reference to this frame
+    pub fn create_text_node(&self, text: &str) -> Rc<RefCell<DomElement>> {
+        let frame_ref = self.self_ref.clone().expect("Frame self_ref not set");
+        let mut el = DomElement::new(NodeType::Text, frame_ref);
+        el.node_value = text.to_string();
+        Rc::new(RefCell::new(el))
     }
 
     /// Load default fonts from assets folder
@@ -110,7 +137,8 @@ impl Frame {
     }
 
     fn load_html_internal(&mut self, html: &str, load_external_css: bool) {
-        self.dom_tree = parse_html(html);
+        let ir_nodes = parse_html(html);
+        self.dom_tree = self.build_dom_from_ir(&ir_nodes, None);
 
         let mut embedded_css = String::new();
         extract_style_tags(&self.dom_tree, &mut embedded_css);
@@ -134,6 +162,71 @@ impl Frame {
 
         self.cached_layout_tree = None;
         self.full_layout();
+    }
+
+    /// Build DomElements from the HtmlNode intermediate representation
+    pub fn build_dom_from_ir(
+        &self,
+        ir_nodes: &[HtmlNode],
+        parent: Option<Rc<RefCell<DomElement>>>,
+    ) -> Vec<Rc<RefCell<DomElement>>> {
+        let frame_ref = self.self_ref.clone().expect("Frame self_ref not set - call set_self_ref first");
+
+        let mut result = Vec::new();
+        for ir_node in ir_nodes {
+            let node_type = match ir_node.node_type {
+                HtmlNodeType::Element => NodeType::Element,
+                HtmlNodeType::Text => NodeType::Text,
+                HtmlNodeType::DocumentType => NodeType::DocumentType,
+                HtmlNodeType::Comment => NodeType::Comment,
+            };
+
+            let mut element = DomElement::new(node_type.clone(), frame_ref.clone());
+
+            match node_type {
+                NodeType::Element => {
+                    element.tag_name = ir_node.tag_name.clone();
+                    element.element_kind = ElementKind::for_tag(&element.tag_name);
+
+                    for (key, value) in &ir_node.attributes {
+                        element.attributes.insert(key.clone(), value.clone());
+
+                        if key == "class" {
+                            element.class_list = value.split_whitespace().map(|s| s.to_string()).collect();
+                        } else if key == "style" {
+                            let val = format!("{{{}}}", value);
+                            let rules = parse_css(&val);
+                            for rule in rules {
+                                for mut decl in rule.declarations {
+                                    decl.important = true;
+                                    element.inline_declarations.push(decl);
+                                }
+                            }
+                        }
+                    }
+                }
+                NodeType::Text => {
+                    element.node_value = ir_node.text_content.clone();
+                }
+                NodeType::Comment => {
+                    element.node_value = ir_node.text_content.clone();
+                }
+                NodeType::DocumentType => {
+                    element.node_value = ir_node.text_content.clone();
+                }
+            }
+
+            element.parent_node = parent.clone();
+            let element_rc = Rc::new(RefCell::new(element));
+
+            if !ir_node.children.is_empty() {
+                let children = self.build_dom_from_ir(&ir_node.children, Some(element_rc.clone()));
+                element_rc.borrow_mut().children = children;
+            }
+
+            result.push(element_rc);
+        }
+        result
     }
 
     pub fn refresh(&mut self) {
@@ -272,90 +365,67 @@ impl Frame {
         hit_test_tree(&self.dom_tree, x, y)
     }
 
-    /// Register a click handler for a specific element handle
-    pub fn on_click<F>(&mut self, node: &Rc<RefCell<DomElement>>, handler: F)
-    where
-        F: FnMut(&mut Frame, Rc<RefCell<DomElement>>, &mut DomEvent) + 'static,
-    {
-        let key = Rc::as_ptr(node) as usize;
-        self.click_handlers.entry(key).or_default().push(Box::new(handler));
-    }
-
-    /// Dispatch a click at a page coordinate, returning true if any handler ran
-    pub fn dispatch_click_at(&mut self, x: f32, y: f32) -> bool {
-        let Some(target) = self.hit_test(x, y) else {
-            return false;
-        };
-        self.dispatch_click(&target)
-    }
-
-    /// Dispatch a click to a specific element handle
-    pub fn dispatch_click(&mut self, node: &Rc<RefCell<DomElement>>) -> bool {
-        let key = Rc::as_ptr(node) as usize;
-        let mut handled = false;
-        let mut event = DomEvent::new();
-        let mut ctx = EventContext::new();
-
-        if let Some(mut handlers) = self.click_handlers.remove(&key) {
-            for handler in handlers.iter_mut() {
-                handler(self, node.clone(), &mut event);
-                handled = true;
-            }
-            if let Some(mut newly_added) = self.click_handlers.remove(&key) {
-                handlers.append(&mut newly_added);
-            }
-            self.click_handlers.insert(key, handlers);
-        }
-
-        if !event.default_prevented() {
-            let mut node_ref = node.borrow_mut();
-            let mut element_kind = std::mem::replace(&mut node_ref.element_kind, ElementKind::Generic);
-            let default_ran = element_kind.on_click(&mut node_ref, &mut event, &mut ctx);
-            node_ref.element_kind = element_kind;
-            if default_ran {
-                handled = true;
-            }
-        }
-
-        if ctx.needs_reflow {
-            self.full_layout();
-        } else if ctx.needs_restyle {
-            self.restyle();
-        }
-        handled
-    }
-
-    /// Update hover state and restyle if changed
-    pub fn set_hover(&mut self, node: Option<Rc<RefCell<DomElement>>>) {
-        let same = match (&self.hovered_element, &node) {
-            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        };
-
-        if same {
-            return;
-        }
-
-        // Leave old element
-        if let Some(old) = self.hovered_element.take() {
-            old.borrow_mut().on_mouse_leave();
-        }
-
-        // Enter new element
-        if let Some(ref new) = node {
-            new.borrow_mut().on_mouse_enter();
-        }
-
-        self.hovered_element = node;
-        self.restyle();
-    }
-
     /// Recompute styles and rebuild render array
     /// Does a full layout since hover can change any property including layout-affecting ones
     pub fn restyle(&mut self) {
         self.cached_layout_tree = None;
         self.full_layout();
+    }
+
+    /// Collect old computed styles for all elements
+    fn collect_old_styles(tree: &[Rc<RefCell<DomElement>>], old_styles: &mut Vec<Option<ComputedStyle>>) {
+        for elem in tree {
+            let elem_ref = elem.borrow();
+            old_styles.push(elem_ref.computed_style.clone());
+            Self::collect_old_styles(&elem_ref.children, old_styles);
+        }
+    }
+
+    /// Check if any element's computed style differs in layout-affecting properties
+    fn check_layout_changes(tree: &[Rc<RefCell<DomElement>>], old_styles: &mut std::slice::Iter<Option<ComputedStyle>>) -> bool {
+        for elem in tree {
+            let elem_ref = elem.borrow();
+            let old = old_styles.next().unwrap();
+
+            if let (Some(old_style), Some(new_style)) = (old, &elem_ref.computed_style) {
+                if old_style.layout_differs(new_style) {
+                    return true;
+                }
+            } else if old.is_none() != elem_ref.computed_style.is_none() {
+                return true;
+            }
+
+            if Self::check_layout_changes(&elem_ref.children, old_styles) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Update styles if marked dirty. Called before rendering.
+    /// Returns true if the frame was updated.
+    pub fn update_styles_if_needed(&mut self) -> bool {
+        eprintln!("update_styles_if_needed: dirty={}", self.styles_dirty.get());
+        if !self.styles_dirty.get() {
+            return false;
+        }
+        eprintln!("update_styles_if_needed: PROCESSING");
+        self.styles_dirty.set(false);
+
+        // Save old computed styles
+        let mut old_styles = Vec::new();
+        Self::collect_old_styles(&self.dom_tree, &mut old_styles);
+
+        // Recompute styles for the whole tree
+        self.compute_styles();
+
+        // Always clear cached layout tree when styles change - the build phase
+        // needs to re-run to update computed_style (for non-layout properties like background-color)
+        self.cached_layout_tree = None;
+        self.reflow();
+
+        self.build_render_array();
+        true
     }
 
     /// Mutate a DOM node and trigger full layout

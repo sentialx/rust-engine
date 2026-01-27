@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use graviton::frame::Frame;
-use graviton::html::{DomElement, NodeType};
+use graviton::dom::{DomElement, NodeType};
 use graviton::layout::Rect;
 
 /// Collect inline element boxes by class name
@@ -70,10 +70,10 @@ fn test_inline_horizontal_flow() {
 </html>
 "#;
 
-    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 600.0, height: 200.0 });
-    frame.load_html(html);
+    let frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 600.0, height: 200.0 });
+    frame.borrow_mut().load_html(html);
 
-    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let boxes = collect_inline_boxes(&frame.borrow().dom_tree);
     let spans: Vec<_> = boxes.iter().filter(|(c, _, _, _, _)| c == "a" || c == "b" || c == "c").collect();
 
     println!("Inline boxes: {:?}", spans);
@@ -106,11 +106,11 @@ fn test_inline_wrap_resets_x() {
 </html>
 "#;
 
-    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
-    frame.load_html(html);
+    let frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
+    frame.borrow_mut().load_html(html);
 
-    let boxes = collect_inline_boxes(&frame.dom_tree);
-    let container_left = find_container_left(&frame, "container");
+    let boxes = collect_inline_boxes(&frame.borrow().dom_tree);
+    let container_left = find_container_left(&frame.borrow(), "container");
 
     println!("Container left: {:.2}", container_left);
     println!("Inline boxes:");
@@ -180,19 +180,19 @@ fn test_fast_reflow_reuses_cached_layout_tree() {
 </html>
 "#;
 
-    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
-    frame.load_html(html);
+    let frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
+    frame.borrow_mut().load_html(html);
 
-    let initial_ptr = frame
+    let initial_ptr = frame.borrow()
         .cached_layout_tree
         .as_ref()
         .map(|tree| tree.as_ptr())
         .expect("cached layout tree should be built after full layout");
 
-    frame.set_viewport(280.0, 200.0);
-    frame.fast_reflow();
+    frame.borrow_mut().set_viewport(280.0, 200.0);
+    frame.borrow_mut().fast_reflow();
 
-    let after_ptr = frame
+    let after_ptr = frame.borrow()
         .cached_layout_tree
         .as_ref()
         .map(|tree| tree.as_ptr())
@@ -221,10 +221,10 @@ fn test_inline_wrap_advances_y_for_wrapped_inline() {
 </html>
 "#;
 
-    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
-    frame.load_html(html);
+    let frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
+    frame.borrow_mut().load_html(html);
 
-    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let boxes = collect_inline_boxes(&frame.borrow().dom_tree);
     let a = boxes.iter().find(|(c, _, _, _, _)| c == "a").unwrap();
     let b = boxes.iter().find(|(c, _, _, _, _)| c == "b").unwrap();
     let c = boxes.iter().find(|(c, _, _, _, _)| c == "c").unwrap();
@@ -257,10 +257,10 @@ fn test_inline_transparent_with_block_child_layouts_block() {
 </html>
 "#;
 
-    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 240.0, height: 200.0 });
-    frame.load_html(html);
+    let frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 240.0, height: 200.0 });
+    frame.borrow_mut().load_html(html);
 
-    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let boxes = collect_inline_boxes(&frame.borrow().dom_tree);
     let block = boxes.iter().find(|(c, _, _, _, _)| c == "block");
     assert!(block.is_some(), "Block child should be laid out for transparent inline wrapper");
 
@@ -288,13 +288,13 @@ fn test_inline_block_wraps_as_unit() {
 </html>
 "#;
 
-    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 200.0, height: 200.0 });
-    frame.load_html(html);
+    let frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 200.0, height: 200.0 });
+    frame.borrow_mut().load_html(html);
 
-    let boxes = collect_inline_boxes(&frame.dom_tree);
+    let boxes = collect_inline_boxes(&frame.borrow().dom_tree);
     let ib1 = boxes.iter().find(|(c, _, _, _, _)| c == "ib1").unwrap();
     let ib2 = boxes.iter().find(|(c, _, _, _, _)| c == "ib2").unwrap();
-    let container_left = find_container_left(&frame, "container");
+    let container_left = find_container_left(&frame.borrow(), "container");
 
     assert!(
         (ib1.1 - container_left).abs() < 2.0,

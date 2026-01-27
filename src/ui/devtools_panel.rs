@@ -1,4 +1,7 @@
-use crate::html::{parse_html, DomElement, NodeType};
+use crate::events::EventSink;
+use crate::dom::{DomElement, NodeType};
+use crate::frame::Frame;
+use crate::html::parse_html;
 use crate::layout::Rect;
 use crate::renderer::{RenderedBuffer, SkiaRenderer};
 use crate::ui::browser_window::RenderFrameState;
@@ -45,26 +48,16 @@ impl DevtoolsPanel {
         self.loaded
     }
 
-    pub fn viewport(&self) -> &Rect {
-        &self.render.frame().viewport
+    pub fn viewport(&self) -> Rect {
+        self.render.frame().viewport.clone()
     }
 
-    /// Access the underlying render frame state for generic frame operations
-    pub(crate) fn render_state(&self) -> &RenderFrameState {
-        &self.render
+    pub fn sink_rc(&self) -> Rc<RefCell<EventSink>> {
+        self.render.sink_rc()
     }
 
-    /// Access the underlying render frame state mutably for generic frame operations
-    pub(crate) fn render_state_mut(&mut self) -> &mut RenderFrameState {
-        &mut self.render
-    }
-
-    pub fn dispatch_click_at(&mut self, x: f32, y: f32) -> bool {
-        let handled = self.render.frame_mut().dispatch_click_at(x, y);
-        if handled {
-            self.render.invalidate();
-        }
-        handled
+    pub fn scroll_y(&self) -> f32 {
+        self.render.scroll_y()
     }
 
     pub fn update(
@@ -117,19 +110,29 @@ impl DevtoolsPanel {
         };
 
         // Update DOM elements
-        if let Some(el) = self.render.frame_mut().get_element_by_id("breadcrumb") {
-            set_inner_html(&el, &breadcrumb_html);
+        // Collect elements first to avoid borrow issues
+        let breadcrumb_el = self.render.frame_mut().get_element_by_id("breadcrumb");
+        let tree_el = self.render.frame_mut().get_element_by_id("elements-tree");
+        let styles_el = self.render.frame_mut().get_element_by_id("matched-styles");
+        let computed_el = self.render.frame_mut().get_element_by_id("computed-styles");
+        let dims_el = self.render.frame_mut().get_element_by_id("box-dimensions");
+
+        {
+            let frame = self.render.frame();
+            if let Some(el) = breadcrumb_el {
+                set_inner_html(&el, &breadcrumb_html, &frame);
+            }
+            if let Some(el) = tree_el {
+                set_inner_html(&el, &tree_html, &frame);
+            }
+            if let Some(el) = styles_el {
+                set_inner_html(&el, &styles_html, &frame);
+            }
+            if let Some(el) = computed_el {
+                set_inner_html(&el, &computed_html, &frame);
+            }
         }
-        if let Some(el) = self.render.frame_mut().get_element_by_id("elements-tree") {
-            set_inner_html(&el, &tree_html);
-        }
-        if let Some(el) = self.render.frame_mut().get_element_by_id("matched-styles") {
-            set_inner_html(&el, &styles_html);
-        }
-        if let Some(el) = self.render.frame_mut().get_element_by_id("computed-styles") {
-            set_inner_html(&el, &computed_html);
-        }
-        if let Some(el) = self.render.frame_mut().get_element_by_id("box-dimensions") {
+        if let Some(el) = dims_el {
             el.borrow_mut().set_text_content(&box_dims);
         }
 
@@ -139,12 +142,13 @@ impl DevtoolsPanel {
 }
 
 // Helper: Set innerHTML by clearing children and parsing new HTML
-fn set_inner_html(element: &Rc<RefCell<DomElement>>, html: &str) {
+fn set_inner_html(element: &Rc<RefCell<DomElement>>, html: &str, frame: &Frame) {
     let mut el = element.borrow_mut();
     el.children.clear();
 
-    // Parse the HTML fragment
-    let parsed = parse_html(&format!("<div>{}</div>", html));
+    // Parse the HTML fragment using the IR
+    let ir_nodes = parse_html(&format!("<div>{}</div>", html));
+    let parsed = frame.build_dom_from_ir(&ir_nodes, None);
     if let Some(wrapper) = parsed.first() {
         let wrapper_ref = wrapper.borrow();
         for child in &wrapper_ref.children {

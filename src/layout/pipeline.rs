@@ -10,7 +10,7 @@
 // - block.rs: Block formatting context
 // - inline.rs: Inline formatting context
 
-use crate::html::{DomElement, NodeType, ComputedFlow};
+use crate::dom::{DomElement, NodeType, ComputedFlow};
 use crate::text::TextMeasurer;
 use crate::styles::ScalarEvaluationContext;
 use crate::layout::{Rect, boxes::{LayoutBox, LayoutNode}};

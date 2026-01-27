@@ -13,7 +13,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use graviton::html::{parse_html, DomElement, NodeType};
+use graviton::dom::{DomElement, NodeType};
+use graviton::frame::Frame;
+use graviton::html::parse_html;
 use graviton::layout::{compute_styles, propagate_styles, reflow, Rect};
 use graviton::text::{BoxTextMeasurer, TextMeasurer};
 use graviton::css::parse_css;
@@ -37,7 +39,10 @@ impl TextMeasurer for MockTextMeasurer {
 
 /// Helper to set up a DOM tree with styles
 fn setup_dom(html: &str, css: &str) -> (Vec<Rc<RefCell<DomElement>>>, Vec<StyleRule>) {
-    let mut tree = parse_html(html);
+    let ir_nodes = parse_html(html);
+    let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
+    let frame = Frame::new(viewport);
+    let mut tree = frame.borrow().build_dom_from_ir(&ir_nodes, None);
     let default_css = r#"
         body { display: block; margin: 0; }
         div { display: block; }
@@ -69,7 +74,7 @@ fn run_reflow(tree: &mut Vec<Rc<RefCell<DomElement>>>, width: f32, height: f32) 
 fn find_text_node(tree: &Vec<Rc<RefCell<DomElement>>>) -> Option<Rc<RefCell<DomElement>>> {
     for el in tree {
         let borrowed = el.borrow();
-        if borrowed.node_type == graviton::html::NodeType::Text {
+        if borrowed.node_type == graviton::dom::NodeType::Text {
             return Some(el.clone());
         }
         if !borrowed.children.is_empty() {
@@ -326,7 +331,10 @@ fn test_box_text_measurer_dimensions() {
 #[test]
 fn test_html5ever_parse_builds_dom_nodes() {
     let html = "<!doctype html><!-- comment --><div class=\"a b\" style=\"margin: 5px;\">Hi</div>";
-    let tree = parse_html(html);
+    let ir_nodes = parse_html(html);
+    let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
+    let frame = Frame::new(viewport);
+    let tree = frame.borrow().build_dom_from_ir(&ir_nodes, None);
 
     let doctype = find_by_node_type(&tree, NodeType::DocumentType).expect("Should find doctype node");
     assert_eq!(doctype.borrow().node_value.to_lowercase(), "html");
@@ -339,7 +347,7 @@ fn test_html5ever_parse_builds_dom_nodes() {
     assert!(div_borrowed.class_list.contains(&"a".to_string()));
     assert!(div_borrowed.class_list.contains(&"b".to_string()));
     assert_eq!(
-        div_borrowed.attributes.get("style").map(|v| v.as_str()),
+        div_borrowed.attributes.get("style").map(|v: &String| v.as_str()),
         Some("margin: 5px;")
     );
 }

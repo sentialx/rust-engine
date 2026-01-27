@@ -57,14 +57,17 @@ fn main() {
         height,
     };
 
-    let mut frame = Frame::new(viewport);
-    frame.load_url(html_file);
+    let frame = Frame::new(viewport);
+    frame.borrow_mut().load_url(html_file);
 
     // Create and run the devtools server
     let mut server = DevtoolsServer::new();
 
-    if let Err(e) = server.run_stdio(&mut frame) {
-        eprintln!("Error: {}", e);
-        process::exit(1);
+    {
+        let mut frame_ref = frame.borrow_mut();
+        if let Err(e) = server.run_stdio(&mut frame_ref) {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
     }
 }

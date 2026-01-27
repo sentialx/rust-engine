@@ -1,6 +1,7 @@
 mod render_frame_state;
 
 pub(crate) use render_frame_state::RenderFrameState;
+use crate::events::{EventRouter, FrameRegion, InputEventKind};
 use crate::layout::Rect;
 use crate::renderer::{CompositeRegion, Renderer, SkiaRenderer};
 use crate::ui::devtools_manager::DevtoolsManager;
@@ -30,11 +31,11 @@ struct BrowserApp {
     // Devtools (panel, overlay, selection state)
     devtools: DevtoolsManager,
 
+    // Event routing
+    router: EventRouter,
+
     // Rendering
     renderer: SkiaRenderer,
-
-    // Scroll state
-    scroll_y: f32,
 
     // Input state
     pressed_up: bool,
@@ -50,14 +51,20 @@ struct BrowserApp {
 
 impl BrowserApp {
     fn new(url: String) -> Self {
+        let empty_rect = Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+        let mut main = RenderFrameState::new(empty_rect);
+
+        // Create devtools and attach to main frame for inspection
+        let devtools = DevtoolsManager::create_for_frame(&mut main);
+
         Self {
             url,
             window: None,
             surface: None,
-            main: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
-            devtools: DevtoolsManager::new(),
+            main,
+            devtools,
+            router: EventRouter::new(),
             renderer: SkiaRenderer::new(),
-            scroll_y: 0.0,
             pressed_up: false,
             pressed_down: false,
             mouse_x: 0.0,
@@ -71,6 +78,7 @@ impl BrowserApp {
     fn load_url(&mut self) {
         self.main.frame_mut().load_url(&self.url);
         self.main.invalidate();
+        self.devtools.clear_selection();
     }
 
     fn update_devtools(&mut self) {
@@ -79,99 +87,73 @@ impl BrowserApp {
         self.devtools.update(&self.main.frame().dom_tree, viewport, page_height);
     }
 
-    /// Dispatch a click to the appropriate frame using generic hit testing
-    fn dispatch_click(&mut self, logical_x: f32, logical_y: f32) -> bool {
-        // Build frame regions: (x_offset, uses_scroll, is_main_frame)
+    fn setup_event_routing(&mut self) {
+        self.router.clear();
+
         let main_viewport = self.main.frame().viewport.clone();
 
-        struct FrameRegion {
-            x_offset: f32,
-            width: f32,
-            height: f32,
-            uses_scroll: bool,
-            is_main: bool,
-        }
-
-        let mut regions = vec![
-            FrameRegion {
-                x_offset: 0.0,
+        // Main frame region
+        self.router.add_region(FrameRegion::new(
+            Rect {
+                x: 0.0,
+                y: 0.0,
                 width: main_viewport.width,
                 height: main_viewport.height,
-                uses_scroll: true,
-                is_main: true,
             },
-        ];
+            self.main.sink_rc(),
+        ));
 
+        // Devtools panel region (if visible)
         if self.devtools.is_visible() {
-            let panel_viewport = self.devtools.panel_viewport();
-            regions.push(FrameRegion {
-                x_offset: main_viewport.width,
-                width: panel_viewport.width,
-                height: panel_viewport.height,
-                uses_scroll: false,
-                is_main: false,
-            });
+            let panel_viewport = self.devtools.panel_viewport().clone();
+            self.router.add_region(FrameRegion::new(
+                Rect {
+                    x: main_viewport.width,
+                    y: 0.0,
+                    width: panel_viewport.width,
+                    height: panel_viewport.height,
+                },
+                self.devtools.panel_sink_rc(),
+            ));
         }
+    }
 
-        // Find which frame was clicked
-        for region in &regions {
-            if logical_x >= region.x_offset
-                && logical_x < region.x_offset + region.width
-                && logical_y >= 0.0
-                && logical_y < region.height
-            {
-                let local_x = logical_x - region.x_offset;
-                let local_y = if region.uses_scroll {
-                    logical_y + self.scroll_y
-                } else {
-                    logical_y
-                };
+    /// Dispatch an input event through the router
+    fn dispatch_event(&mut self, kind: InputEventKind, logical_x: f32, logical_y: f32) -> bool {
+        let result = self.router.dispatch(kind, logical_x, logical_y);
 
-                if region.is_main {
-                    // Special handling for main frame when devtools visible (element pinning)
-                    if self.devtools.is_visible() {
-                        let clicked_element = self.main.frame().hit_test(local_x, local_y);
-                        self.devtools.handle_element_click(clicked_element);
-                        self.update_devtools();
-                        return true;
-                    } else {
-                        let handled = self.main.frame_mut().dispatch_click_at(local_x, local_y);
-                        if handled {
-                            self.main.invalidate();
-                        }
-                        return handled;
-                    }
-                } else {
-                    // Devtools panel - dispatch click to frame
-                    let handled = self.devtools.panel_frame_mut().frame_mut().dispatch_click_at(local_x, local_y);
-                    if handled {
-                        self.devtools.panel_frame_mut().invalidate();
-                    }
-                    return handled;
-                }
+        // Style processing happens automatically in render_if_needed
+        // Just update devtools if needed for non-scroll events
+        if result.handled && !matches!(kind, InputEventKind::Scroll { .. }) {
+            if self.devtools.is_visible() {
+                self.update_devtools();
             }
         }
 
-        false
+        result.handled
     }
 
     fn render_frame(&mut self) {
         self.main.render_if_needed(&mut self.renderer);
         self.devtools.render_if_needed(&mut self.renderer);
 
+        let main_scroll_y = self.main.scroll_y();
+        let devtools_scroll_y = self.devtools.panel_scroll_y();
+
         let mut regions = Vec::new();
         if let Some(main_buffer) = self.main.buffer() {
             regions.push(CompositeRegion {
                 buffer: main_buffer,
                 dest_x: 0.0,
-                scroll_y: self.scroll_y,
+                scroll_y: main_scroll_y,
             });
         }
 
         self.devtools.add_composite_regions(
             &mut regions,
             self.main.frame().viewport.width,
-            self.scroll_y,
+            main_scroll_y,
+            devtools_scroll_y,
         );
 
         self.renderer.composite(&regions);
@@ -217,6 +199,7 @@ impl BrowserApp {
 
         self.main.set_viewport(main_width, logical_height);
         self.devtools.set_viewport(devtools_width, logical_height, main_width);
+        self.setup_event_routing();
     }
 
     fn handle_scale_factor_changed(&mut self, new_scale_factor: f64) {
@@ -260,6 +243,9 @@ impl ApplicationHandler for BrowserApp {
 
         self.window = Some(window);
         self.surface = Some(surface);
+
+        // Set up event routing
+        self.setup_event_routing();
 
         // Load URL only once
         if !self.initialized {
@@ -351,6 +337,7 @@ impl ApplicationHandler for BrowserApp {
                             let main_width = logical_width - devtools_width;
                             self.main.set_viewport(main_width, logical_height);
                             self.devtools.set_viewport(devtools_width, logical_height, main_width);
+                            self.setup_event_routing();
                             if self.devtools.is_visible() {
                                 self.devtools.load();
                                 self.update_devtools();
@@ -365,18 +352,18 @@ impl ApplicationHandler for BrowserApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_amount = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y * 1.0,
+                let scroll_delta = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y * 20.0,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
                 };
 
-                self.scroll_y -= scroll_amount;
-                self.scroll_y = self.scroll_y.max(0.0);
-                let max_scroll = (self.main.frame().page_height - self.main.frame().viewport.height).max(0.0);
-                self.scroll_y = self.scroll_y.min(max_scroll);
+                let logical_x = self.mouse_x / self.scale_factor;
+                let logical_y = self.mouse_y / self.scale_factor;
 
-                if let Some(window) = &self.window {
-                    window.request_redraw();
+                if self.dispatch_event(InputEventKind::Scroll { delta: scroll_delta }, logical_x, logical_y) {
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
                 }
             }
 
@@ -385,9 +372,7 @@ impl ApplicationHandler for BrowserApp {
                     let logical_x = self.mouse_x / self.scale_factor;
                     let logical_y = self.mouse_y / self.scale_factor;
 
-                    let handled = self.dispatch_click(logical_x, logical_y);
-
-                    if handled {
+                    if self.dispatch_event(InputEventKind::Click, logical_x, logical_y) {
                         if let Some(window) = &self.window {
                             window.request_redraw();
                         }
@@ -399,36 +384,10 @@ impl ApplicationHandler for BrowserApp {
                 self.mouse_x = position.x as f32;
                 self.mouse_y = position.y as f32;
 
-                // Hit test to find hovered element
-                let page_x = self.mouse_x / self.scale_factor;
-                let page_y = self.mouse_y / self.scale_factor + self.scroll_y;
+                let logical_x = self.mouse_x / self.scale_factor;
+                let logical_y = self.mouse_y / self.scale_factor;
 
-                let new_hover = self.main.frame().hit_test(page_x, page_y);
-
-                // Check if hover changed by comparing with devtools tracked hover
-                let current_hover = if self.devtools.is_pinned() {
-                    None // Don't compare when pinned
-                } else {
-                    self.devtools.selected_element()
-                };
-
-                let hover_changed = match (&current_hover, &new_hover) {
-                    (Some(current), Some(next)) => !Rc::ptr_eq(current, next),
-                    (None, None) => false,
-                    _ => true,
-                };
-
-                if hover_changed || self.devtools.is_pinned() {
-                    // Update CSS :hover state (this triggers restyle)
-                    self.main.frame_mut().set_hover(new_hover.clone());
-                    self.main.invalidate();
-
-                    // Update devtools if visible and not pinned
-                    if self.devtools.is_visible() && !self.devtools.is_pinned() {
-                        self.devtools.set_hover(new_hover);
-                        self.update_devtools();
-                    }
-
+                if self.dispatch_event(InputEventKind::MouseMove, logical_x, logical_y) {
                     if let Some(window) = &self.window {
                         window.request_redraw();
                     }
@@ -436,17 +395,16 @@ impl ApplicationHandler for BrowserApp {
             }
 
             WindowEvent::RedrawRequested => {
-                // Handle continuous scroll
+                // Handle continuous keyboard scroll
                 if self.pressed_up || self.pressed_down {
-                    if self.pressed_up {
-                        self.scroll_y -= 4.0;
-                    }
-                    if self.pressed_down {
-                        self.scroll_y += 4.0;
-                    }
-                    self.scroll_y = self.scroll_y.max(0.0);
-                    let max_scroll = (self.main.frame().page_height - self.main.frame().viewport.height).max(0.0);
-                    self.scroll_y = self.scroll_y.min(max_scroll);
+                    let delta = if self.pressed_up { 4.0 } else { -4.0 };
+                    // Dispatch to main frame (use center of viewport)
+                    let main_viewport = self.main.frame().viewport.clone();
+                    self.dispatch_event(
+                        InputEventKind::Scroll { delta },
+                        main_viewport.width / 2.0,
+                        main_viewport.height / 2.0,
+                    );
                 }
 
                 // Handle debounced resize
@@ -456,6 +414,7 @@ impl ApplicationHandler for BrowserApp {
                     let viewport = self.main.frame().viewport.clone();
                     let page_height = self.main.frame().page_height.max(viewport.height);
                     self.devtools.rebuild_overlay(viewport, page_height);
+                    self.setup_event_routing();
                 }
 
                 // Render and present

@@ -1,6 +1,6 @@
 // Layout box model - Intermediate representation for layout computation
 
-use crate::html::DomElement;
+use crate::dom::DomElement;
 use crate::styles::{ComputedStyle, ComputedMargin};
 use crate::layout::flow::FormattingContext;
 use std::rc::Rc;

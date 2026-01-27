@@ -11,7 +11,7 @@ use std::rc::Rc;
 use serde_json;
 
 use crate::frame::Frame;
-use crate::html::DomElement;
+use crate::dom::DomElement;
 use types::{Request, Response, ERROR_INTERNAL};
 
 /// Node registry - maps stable u64 IDs to DOM elements

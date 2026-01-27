@@ -1,4 +1,5 @@
-use crate::html::DomElement;
+use crate::events::{DevtoolsOverlayHandler, DevtoolsSelection, EventSink};
+use crate::dom::DomElement;
 use crate::layout::Rect;
 use crate::renderer::{CompositeRegion, SkiaRenderer};
 use crate::ui::browser_window::RenderFrameState;
@@ -12,90 +13,81 @@ use std::rc::Rc;
 pub struct DevtoolsManager {
     panel: DevtoolsPanel,
     overlay: DevtoolsOverlay,
-    visible: bool,
     panel_width: f32,
-    hover_info: Option<Rc<RefCell<DomElement>>>,
-    pinned_element: Option<Rc<RefCell<DomElement>>>,
+    selection: Rc<RefCell<DevtoolsSelection>>,
 }
 
 impl DevtoolsManager {
-    pub fn new() -> Self {
+    /// Create devtools manager and attach it to the target frame for inspection
+    pub(crate) fn create_for_frame(target: &mut RenderFrameState) -> Self {
         let empty_rect = Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+
+        // Create shared selection state
+        let selection = Rc::new(RefCell::new(DevtoolsSelection {
+            visible: true,
+            hover: None,
+            pinned: None,
+        }));
+
+        // Add overlay handler to target frame (intercepts events when devtools visible)
+        target.prepend_handler(Box::new(
+            DevtoolsOverlayHandler::new(selection.clone())
+        ));
+
         Self {
             panel: DevtoolsPanel::new(empty_rect.clone()),
             overlay: DevtoolsOverlay::new(empty_rect),
-            visible: true,
             panel_width: 300.0,
-            hover_info: None,
-            pinned_element: None,
+            selection,
         }
     }
 
     pub fn is_visible(&self) -> bool {
-        self.visible
+        self.selection.borrow().visible
+    }
+
+    pub fn set_visible(&mut self, visible: bool) {
+        self.selection.borrow_mut().visible = visible;
     }
 
     pub fn toggle_visible(&mut self) {
-        self.visible = !self.visible;
+        let mut sel = self.selection.borrow_mut();
+        sel.visible = !sel.visible;
     }
 
     /// Returns the width to reserve for devtools (0 if hidden)
     pub fn reserved_width(&self) -> f32 {
-        if self.visible {
+        if self.is_visible() {
             self.panel_width
         } else {
             0.0
         }
     }
 
-    pub fn panel_viewport(&self) -> &Rect {
+    pub fn panel_viewport(&self) -> Rect {
         self.panel.viewport()
     }
 
-    /// Access the panel's render frame state for generic frame operations
-    pub(crate) fn panel_frame(&self) -> &RenderFrameState {
-        self.panel.render_state()
+    pub fn panel_sink_rc(&self) -> Rc<RefCell<EventSink>> {
+        self.panel.sink_rc()
     }
 
-    /// Access the panel's render frame state mutably for generic frame operations
-    pub(crate) fn panel_frame_mut(&mut self) -> &mut RenderFrameState {
-        self.panel.render_state_mut()
+    pub fn panel_scroll_y(&self) -> f32 {
+        self.panel.scroll_y()
     }
 
     /// Returns the element to display in devtools - pinned element takes priority over hover
     pub fn selected_element(&self) -> Option<Rc<RefCell<DomElement>>> {
-        self.pinned_element.clone().or_else(|| self.hover_info.clone())
+        self.selection.borrow().selected()
     }
 
     pub fn is_pinned(&self) -> bool {
-        self.pinned_element.is_some()
-    }
-
-    pub fn set_hover(&mut self, element: Option<Rc<RefCell<DomElement>>>) {
-        self.hover_info = element;
-    }
-
-    /// Handle a click on an element - pins/unpins the element
-    /// Returns true if the pin state changed
-    pub fn handle_element_click(&mut self, clicked_element: Option<Rc<RefCell<DomElement>>>) -> bool {
-        // Check if clicking the same element - toggle pin
-        let should_unpin = match (&self.pinned_element, &clicked_element) {
-            (Some(pinned), Some(clicked)) => Rc::ptr_eq(pinned, clicked),
-            _ => false,
-        };
-
-        if should_unpin {
-            self.pinned_element = None;
-        } else {
-            self.pinned_element = clicked_element;
-        }
-        true
+        self.selection.borrow().is_pinned()
     }
 
     /// Clear all selection state (e.g., on page refresh)
     pub fn clear_selection(&mut self) {
-        self.hover_info = None;
-        self.pinned_element = None;
+        self.selection.borrow_mut().clear();
     }
 
     pub fn load(&mut self) {
@@ -130,7 +122,7 @@ impl DevtoolsManager {
     }
 
     pub fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
-        if self.visible {
+        if self.is_visible() {
             self.panel.render_if_needed(renderer);
             self.overlay.render_if_needed(renderer);
         }
@@ -141,9 +133,10 @@ impl DevtoolsManager {
         &'a self,
         regions: &mut Vec<CompositeRegion<'a>>,
         main_viewport_width: f32,
-        scroll_y: f32,
+        main_scroll_y: f32,
+        panel_scroll_y: f32,
     ) {
-        if !self.visible {
+        if !self.is_visible() {
             return;
         }
 
@@ -151,7 +144,7 @@ impl DevtoolsManager {
             regions.push(CompositeRegion {
                 buffer: panel_buffer,
                 dest_x: main_viewport_width,
-                scroll_y: 0.0,
+                scroll_y: panel_scroll_y,
             });
         }
 
@@ -159,13 +152,8 @@ impl DevtoolsManager {
             regions.push(CompositeRegion {
                 buffer: overlay_buffer,
                 dest_x: 0.0,
-                scroll_y,
+                scroll_y: main_scroll_y,
             });
         }
-    }
-
-    /// Handle click in devtools panel area
-    pub fn dispatch_panel_click(&mut self, x: f32, y: f32) -> bool {
-        self.panel.dispatch_click_at(x, y)
     }
 }

@@ -167,14 +167,14 @@ fn extract_string_arg(expr: &str, prefix: &str) -> Option<String> {
 }
 
 /// Find the text content of a <title> element
-fn find_title_text(element: &std::rc::Rc<std::cell::RefCell<crate::html::DomElement>>) -> Option<String> {
+fn find_title_text(element: &std::rc::Rc<std::cell::RefCell<crate::dom::DomElement>>) -> Option<String> {
     let el = element.borrow();
 
     if el.tag_name == "TITLE" {
         // Get text content from children
         for child in &el.children {
             let child_el = child.borrow();
-            if child_el.node_type == crate::html::NodeType::Text {
+            if child_el.node_type == crate::dom::NodeType::Text {
                 return Some(child_el.node_value.clone());
             }
         }

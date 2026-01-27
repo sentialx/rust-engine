@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::devtools_protocol::{DevtoolsServer, types::*};
 use crate::frame::Frame;
-use crate::html::{DomElement, NodeType};
+use crate::dom::{DomElement, NodeType};
 
 /// Convert a DomElement to a CDP Node
 fn element_to_node(

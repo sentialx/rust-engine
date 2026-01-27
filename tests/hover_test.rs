@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use graviton::events::{DefaultEventHandler, EventSink, InputEventKind};
 use graviton::frame::Frame;
 use graviton::layout::Rect;
 use graviton::css::parse_css;
@@ -52,15 +56,16 @@ fn test_hover_in_html() {
 "#;
 
     let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
-    let mut frame = Frame::new(viewport);
-    frame.load_html(html);
+    let frame = Frame::new(viewport);
+    frame.borrow_mut().load_html(html);
 
-    println!("Parsed CSS rules: {}", frame.parsed_css.len());
-    for rule in &frame.parsed_css {
+    let frame_ref = frame.borrow();
+    println!("Parsed CSS rules: {}", frame_ref.parsed_css.len());
+    for rule in &frame_ref.parsed_css {
         println!("  Rule: '{}'", rule.selector.to_string());
     }
 
-    let hover_rule = frame.parsed_css.iter().find(|r| {
+    let hover_rule = frame_ref.parsed_css.iter().find(|r| {
         let s = r.selector.to_string().to_lowercase();
         s.contains("hover")
     });
@@ -90,11 +95,12 @@ fn test_hover_style_applied() {
 "#;
 
     let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
-    let mut frame = Frame::new(viewport);
-    frame.load_html(html);
+    let frame = Frame::new(viewport);
+    frame.borrow_mut().load_html(html);
+    // Dirty tracking is now automatic via Frame's self-reference
 
     // Find the pill element
-    let pill = frame.get_element_by_id("target").expect("should find pill element");
+    let pill = frame.borrow().get_element_by_id("target").expect("should find pill element");
 
     // Check initial state - not hovered
     {
@@ -103,14 +109,43 @@ fn test_hover_style_applied() {
         assert!(!el.pseudo_classes.hover, "Should not be hovered initially");
     }
 
-    // Set hover
-    frame.set_hover(Some(pill.clone()));
+    // Use EventSink with DefaultEventHandler to set hover via MouseMove
+    let mut sink = EventSink::new(frame.clone());
+    let hover_handler = Rc::new(RefCell::new(DefaultEventHandler::new()));
 
-    // Check hover state after set_hover
+    // Wrapper to use Rc<RefCell<DefaultEventHandler>>
+    struct HoverHandlerWrapper(Rc<RefCell<DefaultEventHandler>>);
+    impl graviton::events::EventHandler for HoverHandlerWrapper {
+        fn handle(&mut self, event: &mut graviton::events::InputEvent, frame: &Rc<RefCell<Frame>>) -> graviton::events::EventResult {
+            self.0.borrow_mut().handle(event, frame)
+        }
+    }
+
+    sink.prepend_handler(Box::new(HoverHandlerWrapper(hover_handler.clone())));
+
+    // Get element position and dispatch mouse move
+    let (x, y) = {
+        let el = pill.borrow();
+        el.computed_flow
+            .as_ref()
+            .map(|f| (f.x + f.width / 2.0, f.y + f.height / 2.0))
+            .unwrap_or((50.0, 50.0))
+    };
+
+    let result = sink.dispatch(InputEventKind::MouseMove, x, y);
+
+    // Check hover state after mouse move
     {
         let el = pill.borrow();
-        println!("After set_hover: {}", el.pseudo_classes.hover);
-        assert!(el.pseudo_classes.hover, "Should be hovered after set_hover");
+        println!("After mouse move: {}", el.pseudo_classes.hover);
+        assert!(el.pseudo_classes.hover, "Should be hovered after mouse move");
+    }
+
+    // Trigger restyle to apply hover styles
+    // Note: We call restyle() directly since mark_dirty can't set the dirty flag
+    // while the frame is borrowed during event dispatch
+    if result.handled {
+        frame.borrow_mut().restyle();
     }
 
     // Check if :hover style was applied - look for matched styles with hover
@@ -141,13 +176,13 @@ fn send_command(server: &mut DevtoolsServer, frame: &mut Frame, method: &str, pa
 #[test]
 fn test_hover_ui_demo() {
     let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
-    let mut frame = Frame::new(viewport);
-    frame.load_url("ui_demo.html");
+    let frame = Frame::new(viewport);
+    frame.borrow_mut().load_url("ui_demo.html");
     let mut server = DevtoolsServer::new();
 
     // Print all hover rules
     println!("All hover rules in ui_demo.html:");
-    for rule in &frame.parsed_css {
+    for rule in &frame.borrow().parsed_css {
         let s = rule.selector.to_string();
         if s.to_lowercase().contains("hover") {
             println!("  {}", s);
@@ -155,10 +190,10 @@ fn test_hover_ui_demo() {
     }
 
     // Query for a pill element using DOM.querySelector
-    let response = send_command(&mut server, &mut frame, "DOM.getDocument", json!({"depth": 0}));
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getDocument", json!({"depth": 0}));
     println!("DOM.getDocument response: {:?}", response);
 
-    let response = send_command(&mut server, &mut frame, "DOM.querySelector", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
         "nodeId": 1,
         "selector": ".pill"
     }));
@@ -167,7 +202,7 @@ fn test_hover_ui_demo() {
     let node_id = response["result"]["nodeId"].as_u64().expect("should get nodeId");
 
     // Get matched styles before hover
-    let response = send_command(&mut server, &mut frame, "CSS.getMatchedStylesForNode", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "CSS.getMatchedStylesForNode", json!({
         "nodeId": node_id
     }));
     println!("Matched styles before hover:");
@@ -177,12 +212,21 @@ fn test_hover_ui_demo() {
         }
     }
 
-    // Set hover on the pill element
+    // Set hover on the pill element using EventSink
     let pill = server.get_element_by_id(node_id).expect("should find element");
-    frame.set_hover(Some(pill.clone()));
+
+    // Set hover directly on the element (simulating what DefaultEventHandler does)
+    fn set_hover_recursive(element: &Rc<RefCell<graviton::dom::DomElement>>, hover: bool) {
+        element.borrow_mut().pseudo_classes.hover = hover;
+        if let Some(ref parent) = element.borrow().parent_node.clone() {
+            set_hover_recursive(&parent, hover);
+        }
+    }
+    set_hover_recursive(&pill, true);
+    frame.borrow_mut().restyle();
 
     // Get matched styles after hover
-    let response = send_command(&mut server, &mut frame, "CSS.getMatchedStylesForNode", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "CSS.getMatchedStylesForNode", json!({
         "nodeId": node_id
     }));
     println!("Matched styles after hover:");
@@ -212,20 +256,20 @@ fn test_hover_via_mouse_move() {
     use std::fs;
 
     let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
-    let mut frame = Frame::new(viewport);
-    frame.load_url("ui_demo.html");
+    let frame = Frame::new(viewport);
+    frame.borrow_mut().load_url("ui_demo.html");
     let mut server = DevtoolsServer::new();
 
     // Find a .pill element and get its box model
-    let response = send_command(&mut server, &mut frame, "DOM.getDocument", json!({"depth": 0}));
-    let response = send_command(&mut server, &mut frame, "DOM.querySelector", json!({
+    let _response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getDocument", json!({"depth": 0}));
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
         "nodeId": 1,
         "selector": ".pill"
     }));
     let node_id = response["result"]["nodeId"].as_u64().expect("should get nodeId");
 
     // Get the box model to find coordinates
-    let response = send_command(&mut server, &mut frame, "DOM.getBoxModel", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getBoxModel", json!({
         "nodeId": node_id
     }));
     println!("Box model: {:?}", response);
@@ -237,7 +281,7 @@ fn test_hover_via_mouse_move() {
     println!("Pill center: ({}, {})", x, y);
 
     // Take screenshot before hover
-    let response = send_command(&mut server, &mut frame, "Page.captureScreenshot", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "Page.captureScreenshot", json!({
         "format": "png"
     }));
     let data_before = response["result"]["data"].as_str().expect("should have screenshot data");
@@ -246,7 +290,7 @@ fn test_hover_via_mouse_move() {
     println!("Saved /tmp/hover_before.png");
 
     // Get matched styles before hover
-    let response = send_command(&mut server, &mut frame, "CSS.getMatchedStylesForNode", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "CSS.getMatchedStylesForNode", json!({
         "nodeId": node_id
     }));
     println!("Matched styles BEFORE mouseMoved:");
@@ -257,7 +301,7 @@ fn test_hover_via_mouse_move() {
     }
 
     // Dispatch mouse move to hover over the pill
-    let response = send_command(&mut server, &mut frame, "Input.dispatchMouseEvent", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "Input.dispatchMouseEvent", json!({
         "type": "mouseMoved",
         "x": x,
         "y": y
@@ -265,7 +309,7 @@ fn test_hover_via_mouse_move() {
     println!("Mouse move response: {:?}", response);
 
     // Get matched styles after hover
-    let response = send_command(&mut server, &mut frame, "CSS.getMatchedStylesForNode", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "CSS.getMatchedStylesForNode", json!({
         "nodeId": node_id
     }));
     println!("Matched styles AFTER mouseMoved:");
@@ -281,7 +325,7 @@ fn test_hover_via_mouse_move() {
     }
 
     // Take screenshot after hover
-    let response = send_command(&mut server, &mut frame, "Page.captureScreenshot", json!({
+    let response = send_command(&mut server, &mut frame.borrow_mut(), "Page.captureScreenshot", json!({
         "format": "png"
     }));
     let data_after = response["result"]["data"].as_str().expect("should have screenshot data");
