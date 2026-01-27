@@ -29,7 +29,7 @@ pub fn compute_block_auto_width(
         return None;
     }
 
-    if !is_block_level_display(&box_data.computed_style.display) {
+    if !is_block_level_display(&box_data.computed_style().display) {
         return None;
     }
 
@@ -105,6 +105,15 @@ pub fn build_block_child_context(
     available_content_width: f32,
     collapsible_margin: f32,
 ) -> ReflowContext {
+    let (position, is_absolute, font_size) = {
+        let style = node.box_data.computed_style();
+        (
+            style.position.clone(),
+            uses_absolute_positioning(&style),
+            style.font_size,
+        )
+    };
+
     let parent_content_width = if node.box_data.content_width > 0.0 {
         node.box_data.content_width
     } else {
@@ -113,25 +122,14 @@ pub fn build_block_child_context(
 
     let rel_x_base = node.box_data.x + node.box_data.margin.left;
     let rel_y_base = node.box_data.y;
+    let uses_own_position = position == "relative" || is_absolute;
 
     ReflowContext {
         x: content_x,
         y: content_y,
-        rel_x: if node.box_data.computed_style.position == "relative"
-            || uses_absolute_positioning(&node.box_data.computed_style)
-        {
-            rel_x_base
-        } else {
-            context.rel_x
-        },
-        rel_y: if node.box_data.computed_style.position == "relative"
-            || uses_absolute_positioning(&node.box_data.computed_style)
-        {
-            rel_y_base
-        } else {
-            context.rel_y
-        },
-        font_size: node.box_data.computed_style.font_size,
+        rel_x: if uses_own_position { rel_x_base } else { context.rel_x },
+        rel_y: if uses_own_position { rel_y_base } else { context.rel_y },
+        font_size,
         parent_width: node.box_data.content_width,
         parent_height: node.box_data.content_height,
         parent_max_width: parent_content_width,

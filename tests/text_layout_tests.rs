@@ -16,7 +16,7 @@ use std::rc::Rc;
 use graviton::dom::{DomElement, NodeType};
 use graviton::frame::Frame;
 use graviton::html::parse_html;
-use graviton::layout::{compute_styles, propagate_styles, reflow, Rect};
+use graviton::layout::{compute_styles, create_layout_tree, propagate_styles, reflow, Rect};
 use graviton::text::{BoxTextMeasurer, TextMeasurer};
 use graviton::css::parse_css;
 use graviton::styles::StyleRule;
@@ -67,7 +67,9 @@ fn run_reflow(tree: &mut Vec<Rc<RefCell<DomElement>>>, width: f32, height: f32) 
         height,
     };
     let mut measurer = MockTextMeasurer;
-    reflow(tree, &mut measurer, None, &viewport);
+    // create_layout_tree builds and measures, then we just need layout pass
+    let mut layout_tree = create_layout_tree(tree, &mut measurer, &viewport);
+    reflow(&mut layout_tree, &mut measurer, &viewport);
 }
 
 /// Helper to find an element by traversing the tree

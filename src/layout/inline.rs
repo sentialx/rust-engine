@@ -96,7 +96,7 @@ pub fn compute_container_intrinsics(node: &mut LayoutNode) {
         let child_non_content = child_padding + child_margin;
 
         let is_inline_level = matches!(
-            child.box_data.computed_style.display.as_str(),
+            child.box_data.computed_style().display.as_str(),
             "inline" | "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
         ) || child.box_data.formatting_context == FormattingContext::TextNode;
 
@@ -208,7 +208,7 @@ pub fn compute_shrink_to_fit_width(
     max_content_width: f32,
     context_shrink_to_fit: bool,
 ) -> f32 {
-    let display = node.box_data.computed_style.display.as_str();
+    let display = node.box_data.computed_style().display.clone();
     let mut content_width = 0.0_f32;
 
     for child in children {
@@ -216,7 +216,7 @@ pub fn compute_shrink_to_fit_width(
         let mut child_right = child_x + child.box_data.margin_box_width();
 
         // For atomic inline parents with text children, use intrinsic width
-        if is_atomic_inline_display(display)
+        if is_atomic_inline_display(&display)
             && child.box_data.formatting_context == FormattingContext::TextNode
         {
             if let Some(intrinsic_width) = child.box_data.intrinsic_width {
@@ -229,11 +229,11 @@ pub fn compute_shrink_to_fit_width(
         }
 
         // For block children with auto width, use max text width
-        if matches!(
-            child.box_data.computed_style.display.as_str(),
-            "block" | "list-item" | "table"
-        ) && child.box_data.computed_style.width <= 0.0
-        {
+        let (child_display, child_width) = {
+            let style = child.box_data.computed_style();
+            (style.display.clone(), style.width)
+        };
+        if matches!(child_display.as_str(), "block" | "list-item" | "table") && child_width <= 0.0 {
             let max_text_width = max_intrinsic_text_width(child);
             if max_text_width > 0.0 {
                 let non_content = child.box_data.padding.left
@@ -252,9 +252,9 @@ pub fn compute_shrink_to_fit_width(
     }
 
     // Apply width constraints based on display type
-    if context_shrink_to_fit && !is_atomic_inline_display(display) {
+    if context_shrink_to_fit && !is_atomic_inline_display(&display) {
         content_width = content_width.min(max_content_width);
-    } else if is_atomic_inline_display(display) {
+    } else if is_atomic_inline_display(&display) {
         let has_breaks = {
             let element = node.box_data.element.borrow();
             has_breakable_text(&element)
@@ -280,8 +280,16 @@ pub fn build_inline_child_context(
     content_y: f32,
     available_content_width: f32,
 ) -> ReflowContext {
-    let display = node.box_data.computed_style.display.as_str();
-    let node_is_shrink_to_fit = is_shrink_to_fit_display(display);
+    let (display, position, is_absolute, font_size) = {
+        let style = node.box_data.computed_style();
+        (
+            style.display.clone(),
+            style.position.clone(),
+            uses_absolute_positioning(&style),
+            style.font_size,
+        )
+    };
+    let node_is_shrink_to_fit = is_shrink_to_fit_display(&display);
 
     // Check if this node has explicit width
     let node_has_explicit_width = {
@@ -303,33 +311,18 @@ pub fn build_inline_child_context(
 
     let rel_x_base = node.box_data.x + node.box_data.margin.left;
     let rel_y_base = node.box_data.y + node.box_data.margin.top;
+    let uses_own_position = position == "relative" || is_absolute;
 
     ReflowContext {
         x: content_x,
         y: content_y,
-        rel_x: if node.box_data.computed_style.position == "relative"
-            || uses_absolute_positioning(&node.box_data.computed_style)
-        {
-            rel_x_base
-        } else {
-            context.rel_x
-        },
-        rel_y: if node.box_data.computed_style.position == "relative"
-            || uses_absolute_positioning(&node.box_data.computed_style)
-        {
-            rel_y_base
-        } else {
-            context.rel_y
-        },
-        font_size: node.box_data.computed_style.font_size,
+        rel_x: if uses_own_position { rel_x_base } else { context.rel_x },
+        rel_y: if uses_own_position { rel_y_base } else { context.rel_y },
+        font_size,
         parent_width: node.box_data.content_width,
         parent_height: node.box_data.content_height,
         parent_max_width: parent_content_width,
-        layout_x_start: if display == "inline" {
-            Some(node.box_data.x)
-        } else {
-            None
-        },
+        layout_x_start: if display == "inline" { Some(node.box_data.x) } else { None },
         adjacent_margin_bottom: 0.0,
         shrink_to_fit: parent_is_shrink_to_fit,
         collapsible_margin_top: 0.0,
@@ -343,7 +336,7 @@ pub fn finalize_inline_dimensions(
     max_content_width: f32,
     context_shrink_to_fit: bool,
 ) {
-    let display = node.box_data.computed_style.display.clone();
+    let display = node.box_data.computed_style().display.clone();
 
     let width_has_value = {
         let element = node.box_data.element.borrow();
@@ -384,8 +377,16 @@ pub fn build_relayout_context(
     content_y: f32,
     collapsible_margin: f32,
 ) -> Option<ReflowContext> {
-    let display = node.box_data.computed_style.display.as_str();
-    let node_is_shrink_to_fit = is_shrink_to_fit_display(display);
+    let (display, position, is_absolute, font_size) = {
+        let style = node.box_data.computed_style();
+        (
+            style.display.clone(),
+            style.position.clone(),
+            uses_absolute_positioning(&style),
+            style.font_size,
+        )
+    };
+    let node_is_shrink_to_fit = is_shrink_to_fit_display(&display);
 
     let width_has_value = {
         let element = node.box_data.element.borrow();
@@ -394,31 +395,20 @@ pub fn build_relayout_context(
     };
 
     // Only relayout atomic inlines without explicit width that use shrink-to-fit
-    if width_has_value || !is_atomic_inline_display(display) || !node_is_shrink_to_fit {
+    if width_has_value || !is_atomic_inline_display(&display) || !node_is_shrink_to_fit {
         return None;
     }
 
     let rel_x_base = node.box_data.x + node.box_data.margin.left;
     let rel_y_base = node.box_data.y + node.box_data.margin.top;
+    let uses_own_position = position == "relative" || is_absolute;
 
     Some(ReflowContext {
         x: content_x,
         y: content_y,
-        rel_x: if node.box_data.computed_style.position == "relative"
-            || uses_absolute_positioning(&node.box_data.computed_style)
-        {
-            rel_x_base
-        } else {
-            context.rel_x
-        },
-        rel_y: if node.box_data.computed_style.position == "relative"
-            || uses_absolute_positioning(&node.box_data.computed_style)
-        {
-            rel_y_base
-        } else {
-            context.rel_y
-        },
-        font_size: node.box_data.computed_style.font_size,
+        rel_x: if uses_own_position { rel_x_base } else { context.rel_x },
+        rel_y: if uses_own_position { rel_y_base } else { context.rel_y },
+        font_size,
         parent_width: node.box_data.content_width,
         parent_height: node.box_data.content_height,
         parent_max_width: node.box_data.content_width,
@@ -481,8 +471,8 @@ pub fn should_layout_inline_children_in_block_pass(node: &LayoutNode) -> bool {
         return true;
     }
 
-    let display = node.box_data.computed_style.display.as_str();
-    if is_atomic_inline_display(display) {
+    let display = node.box_data.computed_style().display.clone();
+    if is_atomic_inline_display(&display) {
         return false;
     }
 
@@ -515,9 +505,9 @@ pub fn layout_inline_content(
                 layout_text_node(child, ctx);
             }
             FormattingContext::InlineContainer => {
-                let display = child.box_data.computed_style.display.as_str();
+                let display = child.box_data.computed_style().display.clone();
                 let is_atomic = matches!(
-                    display,
+                    display.as_str(),
                     "inline-block" | "inline-table" | "inline-flex" | "inline-grid"
                 );
 

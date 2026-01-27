@@ -156,15 +156,20 @@ pub struct ComputedStyle {
 }
 
 impl ComputedStyle {
-  /// Check if layout-affecting properties differ between two computed styles.
-  /// Returns true if reflow is needed, false if only repaint is needed.
-  pub fn layout_differs(&self, other: &ComputedStyle) -> bool {
+  /// Check if display changed - requires layout tree rebuild.
+  /// Changes to display can add/remove nodes from the layout tree.
+  pub fn needs_rebuild(&self, other: &ComputedStyle) -> bool {
+    self.display != other.display
+  }
+
+  /// Check if layout values changed - requires reflow but not tree rebuild.
+  /// The layout tree structure stays the same, only positions/sizes change.
+  pub fn needs_reflow(&self, other: &ComputedStyle) -> bool {
     // Box model
     self.margin != other.margin
       || self.padding != other.padding
       || self.border_widths_differ(&other.border)
-      // Layout mode
-      || self.display != other.display
+      // Layout mode (excluding display which is handled by needs_rebuild)
       || self.position != other.position
       || self.float != other.float
       // Sizing
@@ -176,6 +181,12 @@ impl ComputedStyle {
       || self.font_size != other.font_size
       || self.font_family != other.font_family
       || self.font_weight != other.font_weight
+  }
+
+  /// Check if layout-affecting properties differ between two computed styles.
+  /// Returns true if reflow is needed, false if only repaint is needed.
+  pub fn layout_differs(&self, other: &ComputedStyle) -> bool {
+    self.needs_rebuild(other) || self.needs_reflow(other)
   }
 
   fn border_widths_differ(&self, other: &ComputedBorder) -> bool {

@@ -6,8 +6,8 @@ use crate::{
     css::parse_css,
     dom::{DomElement, ElementKind, NodeType},
     html::{parse_html, HtmlNode, HtmlNodeType},
-    layout::{compute_styles, get_render_array, propagate_styles, reflow_and_cache, reflow_with_cache, Rect, RenderItem, boxes::LayoutNode},
-    styles::{ComputedStyle, StyleRule},
+    layout::{compute_styles, create_layout_tree, get_render_array, propagate_styles, reflow, relayout, Rect, RenderItem, boxes::LayoutNode},
+    styles::StyleRule,
     text::FontManager,
 };
 
@@ -81,7 +81,6 @@ impl Frame {
     /// Called by DomElements when they change.
     /// This method takes &self (not &mut self) so it can be called while Frame is borrowed.
     pub fn mark_styles_dirty(&self) {
-        eprintln!("Frame::mark_styles_dirty() called");
         self.styles_dirty.set(true);
     }
 
@@ -237,6 +236,14 @@ impl Frame {
     pub fn set_viewport(&mut self, width: f32, height: f32) {
         self.viewport.width = width;
         self.viewport.height = height;
+
+        let s = Instant::now();
+        self.ensure_layout_tree();
+        if let Some(ref mut tree) = self.cached_layout_tree {
+            relayout(tree, &self.viewport);
+            println!("Resize took: {:?}", s.elapsed());
+        }
+        self.build_render_array();
     }
 
     /// Perform full layout and generate render array
@@ -245,29 +252,39 @@ impl Frame {
 
         self.compute_styles();
         self.cached_layout_tree = None;
-        self.reflow();
+        self.do_reflow();
         self.build_render_array();
 
         println!("Full layout took: {:?}", s.elapsed());
     }
 
-    /// Reflow using cached layout tree when available, without recomputing styles
-    pub fn fast_reflow(&mut self) {
-        self.reflow();
-        self.build_render_array();
+    /// Ensure layout tree exists, creating it if needed.
+    /// Returns true if tree was freshly created (already measured).
+    fn ensure_layout_tree(&mut self) -> bool {
+        if self.cached_layout_tree.is_none() {
+            let s = Instant::now();
+            let tree = create_layout_tree(&mut self.dom_tree, &mut self.font_manager, &self.viewport);
+            self.cached_layout_tree = Some(tree);
+            println!("Built layout tree: {:?}", s.elapsed());
+            true
+        } else {
+            false
+        }
     }
 
-    /// Reflow layout (e.g., after viewport resize)
-    pub fn reflow(&mut self) {
+    /// Reflow with remeasurement (when styles changed).
+    fn do_reflow(&mut self) {
         let s = Instant::now();
-
-        if let Some(ref mut cached_tree) = self.cached_layout_tree {
-            reflow_with_cache(&mut self.dom_tree, &mut self.font_manager, None, &self.viewport, Some(cached_tree));
-            println!("Reflow (cached) took: {:?}", s.elapsed());
-        } else {
-            let layout_tree = reflow_and_cache(&mut self.dom_tree, &mut self.font_manager, &self.viewport);
-            self.cached_layout_tree = Some(layout_tree);
-            println!("Reflow (full) took: {:?}", s.elapsed());
+        let freshly_built = self.ensure_layout_tree();
+        if let Some(ref mut tree) = self.cached_layout_tree {
+            if freshly_built {
+                // Tree was just built and measured, only need layout pass
+                relayout(tree, &self.viewport);
+            } else {
+                // Existing tree, need to remeasure
+                reflow(tree, &mut self.font_manager, &self.viewport);
+            }
+            println!("Reflow took: {:?}", s.elapsed());
         }
     }
 
@@ -297,13 +314,71 @@ impl Frame {
         );
     }
 
-    fn compute_styles(&mut self) {
+    /// Compute styles for all elements and return (needs_rebuild, needs_reflow).
+    /// - needs_rebuild: display changed, layout tree must be rebuilt
+    /// - needs_reflow: layout values changed, positions must be recalculated
+    fn compute_styles(&mut self) -> (bool, bool) {
+        use crate::layout::pipeline::evaluate_styles_recursive;
+
         let s = Instant::now();
         compute_styles(&mut self.dom_tree, &self.styles, &mut vec![], None);
         println!("Computing styles took: {:?}", s.elapsed());
         let s = Instant::now();
         propagate_styles(&mut self.dom_tree, None);
         println!("Propagating styles took: {:?}", s.elapsed());
+
+        // Evaluate all scalar values (margin: 1em, width: 50%, etc.)
+        // This must happen before to_computed_style() is called
+        evaluate_styles_recursive(
+            &mut self.dom_tree,
+            16.0,
+            self.viewport.width,
+            self.viewport.height,
+        );
+
+        // Update computed_style for all elements and check what kind of layout is needed
+        Self::update_computed_styles(&mut self.dom_tree)
+    }
+
+    /// Update computed_style from inherited_style for all elements.
+    /// Returns (needs_rebuild, needs_reflow).
+    fn update_computed_styles(tree: &mut [Rc<RefCell<DomElement>>]) -> (bool, bool) {
+        let mut needs_rebuild = false;
+        let mut needs_reflow = false;
+
+        for elem in tree {
+            let mut elem_ref = elem.borrow_mut();
+
+            if let Some(ref inherited) = elem_ref.inherited_style {
+                let new_computed = inherited.to_computed_style();
+
+                // Compare with old computed style to see what kind of layout is needed
+                if let Some(ref old_computed) = elem_ref.computed_style {
+                    if old_computed.needs_rebuild(&new_computed) {
+                        needs_rebuild = true;
+                    }
+                    if old_computed.needs_reflow(&new_computed) {
+                        needs_reflow = true;
+                    }
+                } else {
+                    // No previous computed style means this is new, needs full rebuild
+                    needs_rebuild = true;
+                }
+
+                elem_ref.computed_style = Some(new_computed);
+            }
+
+            // Recursively update children
+            let (child_rebuild, child_reflow) = Self::update_computed_styles(&mut elem_ref.children);
+            if child_rebuild {
+                needs_rebuild = true;
+            }
+            if child_reflow {
+                needs_reflow = true;
+            }
+        }
+
+        (needs_rebuild, needs_reflow)
     }
 
     /// Get the render items for rendering
@@ -372,57 +447,33 @@ impl Frame {
         self.full_layout();
     }
 
-    /// Collect old computed styles for all elements
-    fn collect_old_styles(tree: &[Rc<RefCell<DomElement>>], old_styles: &mut Vec<Option<ComputedStyle>>) {
-        for elem in tree {
-            let elem_ref = elem.borrow();
-            old_styles.push(elem_ref.computed_style.clone());
-            Self::collect_old_styles(&elem_ref.children, old_styles);
-        }
-    }
-
-    /// Check if any element's computed style differs in layout-affecting properties
-    fn check_layout_changes(tree: &[Rc<RefCell<DomElement>>], old_styles: &mut std::slice::Iter<Option<ComputedStyle>>) -> bool {
-        for elem in tree {
-            let elem_ref = elem.borrow();
-            let old = old_styles.next().unwrap();
-
-            if let (Some(old_style), Some(new_style)) = (old, &elem_ref.computed_style) {
-                if old_style.layout_differs(new_style) {
-                    return true;
-                }
-            } else if old.is_none() != elem_ref.computed_style.is_none() {
-                return true;
-            }
-
-            if Self::check_layout_changes(&elem_ref.children, old_styles) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Update styles if marked dirty. Called before rendering.
     /// Returns true if the frame was updated.
     pub fn update_styles_if_needed(&mut self) -> bool {
-        eprintln!("update_styles_if_needed: dirty={}", self.styles_dirty.get());
         if !self.styles_dirty.get() {
             return false;
         }
-        eprintln!("update_styles_if_needed: PROCESSING");
         self.styles_dirty.set(false);
 
-        // Save old computed styles
-        let mut old_styles = Vec::new();
-        Self::collect_old_styles(&self.dom_tree, &mut old_styles);
+        // Recompute styles for the whole tree and check what kind of layout is needed
+        let (needs_rebuild, needs_reflow) = self.compute_styles();
 
-        // Recompute styles for the whole tree
-        self.compute_styles();
-
-        // Always clear cached layout tree when styles change - the build phase
-        // needs to re-run to update computed_style (for non-layout properties like background-color)
-        self.cached_layout_tree = None;
-        self.reflow();
+        if needs_rebuild {
+            // Display changed - layout tree structure must be rebuilt
+            self.cached_layout_tree = None;
+            self.do_reflow();
+        } else if needs_reflow {
+            // Layout values changed - refresh styles in cached tree and reflow
+            if let Some(ref mut cached_tree) = self.cached_layout_tree {
+                // Refresh margin/padding from updated computed_style
+                for node in cached_tree.iter_mut() {
+                    node.refresh_styles();
+                }
+            }
+            self.do_reflow();
+        }
+        // If only visual properties changed, computed_style is already updated
+        // and we just need to rebuild the render array
 
         self.build_render_array();
         true

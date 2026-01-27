@@ -624,14 +624,6 @@ fn compute_styles_with_index(
         for rule_idx in candidates {
             let style_rule = &style[rule_idx];
             if element_matches_selector_with_siblings(&element, &style_rule.selector, parents, Some(&sibling_ctx)) {
-                let selector_str = style_rule.selector.to_string();
-                if selector_str.contains("hover") {
-                    eprintln!("APPLYING hover rule '{}' to <{}> with {} declarations",
-                        selector_str, element.tag_name, style_rule.declarations.len());
-                    for decl in &style_rule.declarations {
-                        eprintln!("  {} = {:?}", decl.key, decl.value);
-                    }
-                }
                 element.style.insert_declarations(&style_rule.declarations, var_ctx.as_ref().unwrap());
                 element.matched_styles.push(style_rule.clone());
             }
@@ -674,78 +666,17 @@ pub fn propagate_styles(tree: &mut Vec<Rc<RefCell<DomElement>>>, parent_style: O
 // Positioning Helpers
 // ============================================================================
 
-/// Computes element position using FormattingContext classification
-/// This is the core of the generalized layout algorithm
-/// Reflow using pipeline architecture - single pass with unified text/inline layout
-pub fn reflow(
-    tree: &mut Vec<Rc<RefCell<DomElement>>>,
-    text_measurer: &mut dyn TextMeasurer,
-    context: Option<&mut ReflowContext>,
-    viewport: &Rect,
-) {
-    reflow_with_cache(tree, text_measurer, context, viewport, None);
-}
-
-/// Reflow with optional cached layout tree for resize optimization
-/// If cached_tree is Some, skips build+measure and only runs layout+finalize
-pub fn reflow_with_cache(
-    tree: &mut Vec<Rc<RefCell<DomElement>>>,
-    text_measurer: &mut dyn TextMeasurer,
-    context: Option<&mut ReflowContext>,
-    viewport: &Rect,
-    cached_tree: Option<&mut Vec<boxes::LayoutNode>>,
-) {
-    use crate::layout::pipeline::{
-        build_layout_tree, finalize_layout_tree, layout_tree, measure_layout_tree,
-        reset_layout_positions,
-    };
-
-    let mut default_context = ReflowContext {
-        x: 0.0,
-        y: 0.0,
-        rel_x: 0.0,
-        rel_y: 0.0,
-        font_size: 16.0,
-        parent_width: viewport.width,
-        parent_height: viewport.height,
-        parent_max_width: viewport.width,
-        layout_x_start: None,
-        adjacent_margin_bottom: 0.0,
-        shrink_to_fit: false,
-        collapsible_margin_top: 0.0,
-    };
-
-    let sibling_context = context.unwrap_or(&mut default_context);
-
-    match cached_tree {
-        Some(layout_nodes) => {
-            // Fast path: reuse cached tree, only re-layout
-            reset_layout_positions(layout_nodes);
-            layout_tree(layout_nodes, sibling_context);
-            finalize_layout_tree(layout_nodes);
-        }
-        None => {
-            // Full path: build + measure + layout + finalize
-            let mut layout_nodes = build_layout_tree(tree, sibling_context);
-            let max_width = sibling_context.parent_max_width;
-            measure_layout_tree(&mut layout_nodes, text_measurer, max_width);
-            layout_tree(&mut layout_nodes, sibling_context);
-            finalize_layout_tree(&layout_nodes);
-        }
-    }
-}
-
-/// Full reflow that returns the layout tree for caching
-pub fn reflow_and_cache(
-    tree: &mut Vec<Rc<RefCell<DomElement>>>,
+/// Build a new layout tree from the DOM tree.
+/// This creates the tree structure and measures all nodes.
+/// Call reflow() afterwards to compute positions.
+pub fn create_layout_tree(
+    dom_tree: &mut Vec<Rc<RefCell<DomElement>>>,
     text_measurer: &mut dyn TextMeasurer,
     viewport: &Rect,
 ) -> Vec<boxes::LayoutNode> {
-    use crate::layout::pipeline::{
-        build_layout_tree, finalize_layout_tree, layout_tree, measure_layout_tree,
-    };
+    use crate::layout::pipeline::{build_layout_tree, measure_layout_tree};
 
-    let mut context = ReflowContext {
+    let context = ReflowContext {
         x: 0.0,
         y: 0.0,
         rel_x: 0.0,
@@ -760,13 +691,61 @@ pub fn reflow_and_cache(
         collapsible_margin_top: 0.0,
     };
 
-    let mut layout_nodes = build_layout_tree(tree, &context);
-    let max_width = context.parent_max_width;
-    measure_layout_tree(&mut layout_nodes, text_measurer, max_width);
-    layout_tree(&mut layout_nodes, &context);
-    finalize_layout_tree(&layout_nodes);
+    let mut layout_tree = build_layout_tree(dom_tree, &context);
+    measure_layout_tree(&mut layout_tree, text_measurer, viewport.width);
+    layout_tree
+}
 
-    layout_nodes
+/// Reflow: remeasure text and recalculate layout.
+/// Use when styles changed (font-size, etc.).
+pub fn reflow(
+    layout_tree: &mut Vec<boxes::LayoutNode>,
+    text_measurer: &mut dyn TextMeasurer,
+    viewport: &Rect,
+) {
+    use crate::layout::pipeline::{
+        finalize_layout_tree, layout_tree as layout_tree_pass, measure_layout_tree,
+        reset_layout_positions,
+    };
+
+    let context = make_reflow_context(viewport);
+    reset_layout_positions(layout_tree);
+    measure_layout_tree(layout_tree, text_measurer, viewport.width);
+    layout_tree_pass(layout_tree, &context);
+    finalize_layout_tree(layout_tree);
+}
+
+/// Relayout: recalculate positions without remeasuring text.
+/// Use for viewport resize when styles haven't changed.
+pub fn relayout(
+    layout_tree: &mut Vec<boxes::LayoutNode>,
+    viewport: &Rect,
+) {
+    use crate::layout::pipeline::{
+        finalize_layout_tree, layout_tree as layout_tree_pass, reset_layout_positions,
+    };
+
+    let context = make_reflow_context(viewport);
+    reset_layout_positions(layout_tree);
+    layout_tree_pass(layout_tree, &context);
+    finalize_layout_tree(layout_tree);
+}
+
+fn make_reflow_context(viewport: &Rect) -> ReflowContext {
+    ReflowContext {
+        x: 0.0,
+        y: 0.0,
+        rel_x: 0.0,
+        rel_y: 0.0,
+        font_size: 16.0,
+        parent_width: viewport.width,
+        parent_height: viewport.height,
+        parent_max_width: viewport.width,
+        layout_x_start: None,
+        adjacent_margin_bottom: 0.0,
+        shrink_to_fit: false,
+        collapsible_margin_top: 0.0,
+    }
 }
 
 pub fn get_render_array(
