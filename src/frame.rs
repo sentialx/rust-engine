@@ -154,6 +154,12 @@ impl Frame {
         println!("Full layout took: {:?}", s.elapsed());
     }
 
+    /// Reflow using cached layout tree when available, without recomputing styles
+    pub fn fast_reflow(&mut self) {
+        self.reflow();
+        self.build_render_array();
+    }
+
     /// Reflow layout (e.g., after viewport resize)
     pub fn reflow(&mut self) {
         let s = Instant::now();

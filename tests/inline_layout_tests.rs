@@ -160,6 +160,48 @@ fn test_inline_wrap_resets_x() {
 }
 
 #[test]
+fn test_fast_reflow_reuses_cached_layout_tree() {
+    let html = r#"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { margin: 0; padding: 8px; }
+    .container { width: 200px; }
+    .box { display: inline-block; width: 40px; height: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <span class="box"></span>
+    <span class="box"></span>
+  </div>
+</body>
+</html>
+"#;
+
+    let mut frame = Frame::new(Rect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 });
+    frame.load_html(html);
+
+    let initial_ptr = frame
+        .cached_layout_tree
+        .as_ref()
+        .map(|tree| tree.as_ptr())
+        .expect("cached layout tree should be built after full layout");
+
+    frame.set_viewport(280.0, 200.0);
+    frame.fast_reflow();
+
+    let after_ptr = frame
+        .cached_layout_tree
+        .as_ref()
+        .map(|tree| tree.as_ptr())
+        .expect("cached layout tree should remain after fast reflow");
+
+    assert_eq!(initial_ptr, after_ptr, "fast reflow should reuse cached layout tree");
+}
+
+#[test]
 fn test_inline_wrap_advances_y_for_wrapped_inline() {
     let html = r#"
 <!DOCTYPE html>
