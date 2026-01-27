@@ -15,6 +15,8 @@ pub struct CompositeRegion<'a> {
     pub buffer: &'a RenderedBuffer,
     pub dest_x: f32,
     pub scroll_y: f32,
+    /// If true, use fast copy. If false, use alpha blending.
+    pub opaque: bool,
 }
 
 /// Abstract renderer trait - implement for different backends

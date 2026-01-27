@@ -1,7 +1,7 @@
 // Skia (tiny-skia) renderer implementation
 
 use std::collections::HashMap;
-use tiny_skia::{Color, Paint, Pixmap, Rect as SkiaRect, Transform};
+use tiny_skia::{BlendMode, Color, FilterQuality, Paint, Pixmap, PixmapPaint, Rect as SkiaRect, Transform};
 
 use crate::colors::ColorTupleA;
 use crate::frame::Frame;
@@ -513,60 +513,96 @@ impl Renderer for SkiaRenderer {
     }
 
     fn composite(&mut self, regions: &[CompositeRegion]) {
+        use std::time::Instant;
+
         let Some(display_pm) = &mut self.display_pixmap else { return };
+
+        let t0 = Instant::now();
         display_pm.fill(Color::WHITE);
+        println!("    fill: {:?}", t0.elapsed());
 
-        let display_width = display_pm.width();
-        let display_height = display_pm.height();
-        let display_width_i = display_width as i32;
-        let display_height_i = display_height as i32;
+        let t1 = Instant::now();
+        let display_width = display_pm.width() as usize;
+        let display_height = display_pm.height() as usize;
 
-        for region in regions {
+        for (i, region) in regions.iter().enumerate() {
+            let rt = Instant::now();
             let buffer = &region.buffer.pixmap;
             let dest_x = (region.dest_x * self.scale_factor) as i32;
             let scroll_offset = (region.scroll_y * self.scale_factor) as i32;
 
-            let buffer_width = buffer.width() as i32;
-            let buffer_height = buffer.height() as i32;
+            if region.opaque {
+                // Fast path for opaque regions: direct row copy, skip transparent pixels
+                let src_pixels = buffer.pixels();
+                let dst_pixels = display_pm.pixels_mut();
+                let src_width = buffer.width() as usize;
+                let src_height = buffer.height() as usize;
+                let dest_x_usize = dest_x.max(0) as usize;
 
-            for y in 0..display_height_i {
-                let src_y = y + scroll_offset;
-                if src_y < 0 || src_y >= buffer_height {
-                    continue;
+                for y in 0..display_height {
+                    let src_y = y as i32 + scroll_offset;
+                    if src_y < 0 || src_y >= src_height as i32 {
+                        continue;
+                    }
+                    let src_row_start = src_y as usize * src_width;
+                    let dst_row_start = y * display_width + dest_x_usize;
+                    let copy_width = src_width.min(display_width.saturating_sub(dest_x_usize));
+
+                    for x in 0..copy_width {
+                        let src = src_pixels[src_row_start + x];
+                        if src.alpha() > 0 {
+                            dst_pixels[dst_row_start + x] = src;
+                        }
+                    }
                 }
+            } else {
+                // Alpha blending for transparent regions - skip fully transparent pixels
+                // Note: tiny-skia uses premultiplied alpha, so RGB are already multiplied by alpha
+                let src_pixels = buffer.pixels();
+                let dst_pixels = display_pm.pixels_mut();
+                let src_width = buffer.width() as usize;
+                let src_height = buffer.height() as usize;
+                let dest_x_usize = dest_x.max(0) as usize;
 
-                let src_row_start = (src_y as u32 * buffer.width()) as usize;
-                let dst_row_start = (y as u32 * display_width) as usize;
-
-                for x in 0..buffer_width {
-                    let dst_x = dest_x + x;
-                    if dst_x < 0 || dst_x >= display_width_i {
+                for y in 0..display_height {
+                    let src_y = y as i32 + scroll_offset;
+                    if src_y < 0 || src_y >= src_height as i32 {
                         continue;
                     }
+                    let src_row_start = src_y as usize * src_width;
+                    let dst_row_start = y * display_width + dest_x_usize;
+                    let row_width = src_width.min(display_width.saturating_sub(dest_x_usize));
 
-                    let src_idx = src_row_start + x as usize;
-                    let dst_idx = dst_row_start + dst_x as usize;
-                    let src = buffer.pixels()[src_idx];
-                    let alpha = src.alpha();
-                    if alpha == 0 {
-                        continue;
+                    for x in 0..row_width {
+                        let src = src_pixels[src_row_start + x];
+                        let alpha = src.alpha();
+                        if alpha == 0 {
+                            continue; // Skip fully transparent
+                        }
+                        let dst_idx = dst_row_start + x;
+                        if alpha == 255 {
+                            // Fully opaque - direct copy
+                            dst_pixels[dst_idx] = src;
+                        } else {
+                            // Premultiplied alpha blend: dst = src + dst * (1 - src_alpha)
+                            let dst = dst_pixels[dst_idx];
+                            let inv_a = 255 - alpha as u16;
+                            let r = src.red() as u16 + (dst.red() as u16 * inv_a) / 255;
+                            let g = src.green() as u16 + (dst.green() as u16 * inv_a) / 255;
+                            let b = src.blue() as u16 + (dst.blue() as u16 * inv_a) / 255;
+                            dst_pixels[dst_idx] = tiny_skia::PremultipliedColorU8::from_rgba(
+                                r.min(255) as u8, g.min(255) as u8, b.min(255) as u8, 255
+                            ).unwrap();
+                        }
                     }
-
-                    let dst = display_pm.pixels()[dst_idx];
-                    let a = alpha as f32 / 255.0;
-                    let inv = 1.0 - a;
-                    let blended = tiny_skia::ColorU8::from_rgba(
-                        (src.red() as f32 + dst.red() as f32 * inv) as u8,
-                        (src.green() as f32 + dst.green() as f32 * inv) as u8,
-                        (src.blue() as f32 + dst.blue() as f32 * inv) as u8,
-                        255,
-                    ).premultiply();
-                    display_pm.pixels_mut()[dst_idx] = blended;
                 }
             }
+            println!("      region {}: {:?} ({}x{})", i, rt.elapsed(), buffer.width(), buffer.height());
         }
+        println!("    draw_pixmaps: {:?}", t1.elapsed());
 
         // Convert to display buffer format
+        let t2 = Instant::now();
         let display_pm_ref = self.display_pixmap.as_ref().unwrap();
         for (i, pixel) in display_pm_ref.pixels().iter().enumerate() {
             let r = pixel.red() as u32;
@@ -574,6 +610,7 @@ impl Renderer for SkiaRenderer {
             let b = pixel.blue() as u32;
             self.display_buffer[i] = (r << 16) | (g << 8) | b;
         }
+        println!("    convert: {:?}", t2.elapsed());
     }
 
     fn get_display_buffer(&self) -> &[u32] {
