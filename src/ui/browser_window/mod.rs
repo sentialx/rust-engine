@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -367,31 +367,95 @@ impl ApplicationHandler for BrowserApp {
                 }
             }
 
+            WindowEvent::MouseInput { state, button, .. } => {
+                if state == ElementState::Pressed && button == MouseButton::Left {
+                    let logical_x = self.mouse_x / self.scale_factor;
+                    let logical_y = self.mouse_y / self.scale_factor;
+                    let mut handled = false;
+
+                    let main_width = self.main.frame().viewport.width;
+                    let main_height = self.main.frame().viewport.height;
+                    let devtools_width = self.devtools.frame().viewport.width;
+                    let devtools_height = self.devtools.frame().viewport.height;
+
+                    let mut frames: Vec<(Rect, &mut RenderFrameState, bool)> = Vec::new();
+                    let main_rect = Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: main_width,
+                        height: main_height,
+                    };
+                    frames.push((main_rect, &mut self.main, true));
+
+                    if self.devtools_visible {
+                        let devtools_rect = Rect {
+                            x: main_width,
+                            y: 0.0,
+                            width: devtools_width,
+                            height: devtools_height,
+                        };
+                        frames.push((devtools_rect, &mut self.devtools, false));
+                    }
+
+                    for (rect, frame, uses_scroll) in frames {
+                        if logical_x >= rect.x
+                            && logical_x < rect.x + rect.width
+                            && logical_y >= rect.y
+                            && logical_y < rect.y + rect.height
+                        {
+                            let local_x = logical_x - rect.x;
+                            let local_y = logical_y - rect.y;
+                            let click_y = if uses_scroll { local_y + self.scroll_y } else { local_y };
+                            handled = frame.frame_mut().dispatch_click_at(local_x, click_y);
+                            if handled {
+                                frame.invalidate();
+                            }
+                            break;
+                        }
+                    }
+
+                    if handled {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+            }
+
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_x = position.x as f32;
                 self.mouse_y = position.y as f32;
 
-                // Hit test to find hovered element (only when devtools visible)
-                if self.devtools_visible {
-                    // Convert screen coordinates to page coordinates
-                    let page_x = self.mouse_x / self.scale_factor;
-                    let page_y = self.mouse_y / self.scale_factor + self.scroll_y;
+                // Hit test to find hovered element
+                // Convert screen coordinates to page coordinates
+                let page_x = self.mouse_x / self.scale_factor;
+                let page_y = self.mouse_y / self.scale_factor + self.scroll_y;
 
-                    let new_hover = self.main.frame().hit_test(page_x, page_y);
-                    let hover_changed = match (&self.hover_info, &new_hover) {
-                        (Some(current), Some(next)) => !Rc::ptr_eq(current, next),
-                        (None, None) => false,
-                        _ => true,
-                    };
+                let new_hover = self.main.frame().hit_test(page_x, page_y);
 
-                    // Only redraw if hover changed
-                    if hover_changed {
+                // Check if hover changed
+                let hover_changed = match (&self.hover_info, &new_hover) {
+                    (Some(current), Some(next)) => !Rc::ptr_eq(current, next),
+                    (None, None) => false,
+                    _ => true,
+                };
+
+                if hover_changed {
+                    // Update CSS :hover state (this triggers restyle)
+                    self.main.frame_mut().set_hover(new_hover.clone());
+                    self.main.invalidate();
+
+                    // Update devtools overlay if visible
+                    if self.devtools_visible {
                         self.hover_info = new_hover;
                         self.update_devtools_content();
                         self.rebuild_overlay();
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
-                        }
+                    } else {
+                        self.hover_info = new_hover;
+                    }
+
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
                     }
                 }
             }

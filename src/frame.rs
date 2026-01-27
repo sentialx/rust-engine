@@ -1,10 +1,10 @@
 // Frame - manages DOM, styles, layout, and fonts
 
-use std::{cell::RefCell, fs, rc::Rc, time::Instant};
+use std::{cell::RefCell, collections::HashMap, fs, rc::Rc, time::Instant};
 
 use crate::{
     css::parse_css,
-    html::{parse_html, DomElement, NodeType},
+    html::{parse_html, DomElement, DomEvent, ElementKind, EventContext, NodeType},
     layout::{compute_styles, get_render_array, propagate_styles, reflow_and_cache, reflow_with_cache, Rect, RenderItem, boxes::LayoutNode},
     styles::StyleRule,
     text::FontManager,
@@ -46,6 +46,8 @@ pub struct Frame {
     pub font_manager: FontManager,
     pub default_styles: Vec<StyleRule>,
     pub cached_layout_tree: Option<Vec<LayoutNode>>,
+    click_handlers: HashMap<usize, Vec<Box<dyn FnMut(&mut Frame, Rc<RefCell<DomElement>>, &mut DomEvent)>>>,
+    hovered_element: Option<Rc<RefCell<DomElement>>>,
 }
 
 impl Frame {
@@ -65,6 +67,8 @@ impl Frame {
             font_manager: FontManager::new(),
             default_styles,
             cached_layout_tree: None,
+            click_handlers: HashMap::new(),
+            hovered_element: None,
         };
 
         frame.load_default_fonts();
@@ -266,6 +270,101 @@ impl Frame {
         }
 
         hit_test_tree(&self.dom_tree, x, y)
+    }
+
+    /// Register a click handler for a specific element handle
+    pub fn on_click<F>(&mut self, node: &Rc<RefCell<DomElement>>, handler: F)
+    where
+        F: FnMut(&mut Frame, Rc<RefCell<DomElement>>, &mut DomEvent) + 'static,
+    {
+        let key = Rc::as_ptr(node) as usize;
+        self.click_handlers.entry(key).or_default().push(Box::new(handler));
+    }
+
+    /// Dispatch a click at a page coordinate, returning true if any handler ran
+    pub fn dispatch_click_at(&mut self, x: f32, y: f32) -> bool {
+        let Some(target) = self.hit_test(x, y) else {
+            return false;
+        };
+        self.dispatch_click(&target)
+    }
+
+    /// Dispatch a click to a specific element handle
+    pub fn dispatch_click(&mut self, node: &Rc<RefCell<DomElement>>) -> bool {
+        let key = Rc::as_ptr(node) as usize;
+        let mut handled = false;
+        let mut event = DomEvent::new();
+        let mut ctx = EventContext::new();
+
+        if let Some(mut handlers) = self.click_handlers.remove(&key) {
+            for handler in handlers.iter_mut() {
+                handler(self, node.clone(), &mut event);
+                handled = true;
+            }
+            if let Some(mut newly_added) = self.click_handlers.remove(&key) {
+                handlers.append(&mut newly_added);
+            }
+            self.click_handlers.insert(key, handlers);
+        }
+
+        if !event.default_prevented() {
+            let mut node_ref = node.borrow_mut();
+            let mut element_kind = std::mem::replace(&mut node_ref.element_kind, ElementKind::Generic);
+            let default_ran = element_kind.on_click(&mut node_ref, &mut event, &mut ctx);
+            node_ref.element_kind = element_kind;
+            if default_ran {
+                handled = true;
+            }
+        }
+
+        if ctx.needs_reflow {
+            self.full_layout();
+        } else if ctx.needs_restyle {
+            self.restyle();
+        }
+        handled
+    }
+
+    /// Update hover state and restyle if changed
+    pub fn set_hover(&mut self, node: Option<Rc<RefCell<DomElement>>>) {
+        let same = match (&self.hovered_element, &node) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+
+        if same {
+            return;
+        }
+
+        // Leave old element
+        if let Some(old) = self.hovered_element.take() {
+            old.borrow_mut().on_mouse_leave();
+        }
+
+        // Enter new element
+        if let Some(ref new) = node {
+            new.borrow_mut().on_mouse_enter();
+        }
+
+        self.hovered_element = node;
+        self.restyle();
+    }
+
+    /// Recompute styles and rebuild render array
+    /// Does a full layout since hover can change any property including layout-affecting ones
+    pub fn restyle(&mut self) {
+        self.cached_layout_tree = None;
+        self.full_layout();
+    }
+
+    /// Mutate a DOM node and trigger full layout
+    pub fn mutate_dom<F>(&mut self, node: &Rc<RefCell<DomElement>>, f: F)
+    where
+        F: FnOnce(&mut DomElement),
+    {
+        f(&mut node.borrow_mut());
+        self.full_layout();
     }
 
     /// Find an element by id attribute
