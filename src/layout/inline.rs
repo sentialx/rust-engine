@@ -629,22 +629,21 @@ fn layout_transparent_inline(node: &mut LayoutNode, ctx: &mut InlineContext) {
     layout_inline_content(&mut node.children, ctx);
 
     // Calculate position and dimensions from actual child positions
-    // (children may have wrapped to new lines)
+    // x: use min of children (accounts for wrap resetting x to line start)
+    // y: use start_y (inline element starts on the line where it began)
     if !node.children.is_empty() {
         let mut min_x: f32 = f32::MAX;
-        let mut min_y: f32 = f32::MAX;
         let mut max_x: f32 = f32::MIN;
         let mut max_y: f32 = f32::MIN;
         for child in &node.children {
             min_x = min_x.min(child.box_data.x);
-            min_y = min_y.min(child.box_data.y);
             max_x = max_x.max(child.box_data.x + child.box_data.margin_box_width());
             max_y = max_y.max(child.box_data.y + child.box_data.margin_box_height());
         }
         node.box_data.x = min_x;
-        node.box_data.y = min_y;
+        node.box_data.y = start_y;
         node.box_data.content_width = max_x - min_x;
-        node.box_data.content_height = max_y - min_y;
+        node.box_data.content_height = max_y - start_y;
     } else {
         node.box_data.x = start_x;
         node.box_data.y = start_y;
@@ -664,4 +663,3 @@ fn should_wrap_with_tolerance(ctx: &InlineContext, item_width: f32, tolerance: f
     // Only wrap if we're not at the start of a line and item doesn't fit
     ctx.x > ctx.line_start_x && ctx.x + item_width > max_right + tolerance
 }
-
