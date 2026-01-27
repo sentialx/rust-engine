@@ -1,13 +1,11 @@
 mod render_frame_state;
 
 pub(crate) use render_frame_state::RenderFrameState;
-use crate::html::DomElement;
 use crate::layout::Rect;
 use crate::renderer::{CompositeRegion, Renderer, SkiaRenderer};
-use crate::ui::devtools::DevtoolsOverlay;
+use crate::ui::devtools_manager::DevtoolsManager;
 use crate::utils::Debouncer;
 
-use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::Duration;
@@ -26,10 +24,11 @@ struct BrowserApp {
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
 
-    // Document layout (owns text measurer and font loading)
+    // Document layout
     main: RenderFrameState,
-    devtools: RenderFrameState,
-    overlay: DevtoolsOverlay,
+
+    // Devtools (panel, overlay, selection state)
+    devtools: DevtoolsManager,
 
     // Rendering
     renderer: SkiaRenderer,
@@ -44,14 +43,9 @@ struct BrowserApp {
     mouse_y: f32,
 
     // UI state
-    devtools_visible: bool,
-    devtools_panel_width: f32,
     scale_factor: f32,
     resize_debouncer: Debouncer<(f32, f32)>,
     initialized: bool,
-
-    // Hover state
-    hover_info: Option<Rc<RefCell<DomElement>>>,
 }
 
 impl BrowserApp {
@@ -61,28 +55,16 @@ impl BrowserApp {
             window: None,
             surface: None,
             main: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
-            devtools: RenderFrameState::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
-            overlay: DevtoolsOverlay::new(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }),
+            devtools: DevtoolsManager::new(),
             renderer: SkiaRenderer::new(),
             scroll_y: 0.0,
             pressed_up: false,
             pressed_down: false,
             mouse_x: 0.0,
             mouse_y: 0.0,
-            devtools_visible: true,
-            devtools_panel_width: 300.0,
             scale_factor: 1.0,
             resize_debouncer: Debouncer::new(Duration::from_millis(1)),
             initialized: false,
-            hover_info: None,
-        }
-    }
-
-    fn devtools_width(&self) -> f32 {
-        if self.devtools_visible {
-            self.devtools_panel_width
-        } else {
-            0.0
         }
     }
 
@@ -91,48 +73,91 @@ impl BrowserApp {
         self.main.invalidate();
     }
 
-    fn load_devtools(&mut self) {
-        self.devtools.frame_mut().load_url("devtools.html");
-        self.devtools.invalidate();
-    }
-
-    fn rebuild_overlay(&mut self) {
+    fn update_devtools(&mut self) {
         let viewport = self.main.frame().viewport.clone();
         let page_height = self.main.frame().page_height.max(viewport.height);
-        self.overlay.rebuild(self.hover_info.as_ref(), viewport, page_height);
+        self.devtools.update(&self.main.frame().dom_tree, viewport, page_height);
     }
 
-    fn update_devtools_content(&mut self) {
-        let (tag_text, dimension_text) = if let Some(node) = &self.hover_info {
-            let element = node.borrow();
-            let tag = element.tag_name.to_lowercase();
-            let dims = element
-                .computed_flow
-                .as_ref()
-                .map(|flow| format!("{:.0}x{:.0}", flow.width, flow.height))
-                .unwrap_or_else(|| "--".to_string());
-            (format!("<{}>", tag), dims)
-        } else {
-            ("--".to_string(), "--".to_string())
-        };
+    /// Dispatch a click to the appropriate frame using generic hit testing
+    fn dispatch_click(&mut self, logical_x: f32, logical_y: f32) -> bool {
+        // Build frame regions: (x_offset, uses_scroll, is_main_frame)
+        let main_viewport = self.main.frame().viewport.clone();
 
-        if let Some(el) = self.devtools.frame_mut().get_element_by_id("tag-name") {
-            el.borrow_mut().set_text_content(&tag_text);
-        }
-        if let Some(el) = self.devtools.frame_mut().get_element_by_id("dimensions") {
-            el.borrow_mut().set_text_content(&dimension_text);
+        struct FrameRegion {
+            x_offset: f32,
+            width: f32,
+            height: f32,
+            uses_scroll: bool,
+            is_main: bool,
         }
 
-        self.devtools.frame_mut().full_layout();
-        self.devtools.invalidate();
+        let mut regions = vec![
+            FrameRegion {
+                x_offset: 0.0,
+                width: main_viewport.width,
+                height: main_viewport.height,
+                uses_scroll: true,
+                is_main: true,
+            },
+        ];
+
+        if self.devtools.is_visible() {
+            let panel_viewport = self.devtools.panel_viewport();
+            regions.push(FrameRegion {
+                x_offset: main_viewport.width,
+                width: panel_viewport.width,
+                height: panel_viewport.height,
+                uses_scroll: false,
+                is_main: false,
+            });
+        }
+
+        // Find which frame was clicked
+        for region in &regions {
+            if logical_x >= region.x_offset
+                && logical_x < region.x_offset + region.width
+                && logical_y >= 0.0
+                && logical_y < region.height
+            {
+                let local_x = logical_x - region.x_offset;
+                let local_y = if region.uses_scroll {
+                    logical_y + self.scroll_y
+                } else {
+                    logical_y
+                };
+
+                if region.is_main {
+                    // Special handling for main frame when devtools visible (element pinning)
+                    if self.devtools.is_visible() {
+                        let clicked_element = self.main.frame().hit_test(local_x, local_y);
+                        self.devtools.handle_element_click(clicked_element);
+                        self.update_devtools();
+                        return true;
+                    } else {
+                        let handled = self.main.frame_mut().dispatch_click_at(local_x, local_y);
+                        if handled {
+                            self.main.invalidate();
+                        }
+                        return handled;
+                    }
+                } else {
+                    // Devtools panel - dispatch click to frame
+                    let handled = self.devtools.panel_frame_mut().frame_mut().dispatch_click_at(local_x, local_y);
+                    if handled {
+                        self.devtools.panel_frame_mut().invalidate();
+                    }
+                    return handled;
+                }
+            }
+        }
+
+        false
     }
 
     fn render_frame(&mut self) {
         self.main.render_if_needed(&mut self.renderer);
-        if self.devtools_visible {
-            self.devtools.render_if_needed(&mut self.renderer);
-            self.overlay.render_if_needed(&mut self.renderer);
-        }
+        self.devtools.render_if_needed(&mut self.renderer);
 
         let mut regions = Vec::new();
         if let Some(main_buffer) = self.main.buffer() {
@@ -142,22 +167,12 @@ impl BrowserApp {
                 scroll_y: self.scroll_y,
             });
         }
-        if self.devtools_visible {
-            if let Some(devtools_buffer) = self.devtools.buffer() {
-                regions.push(CompositeRegion {
-                    buffer: devtools_buffer,
-                    dest_x: self.main.frame().viewport.width,
-                    scroll_y: 0.0,
-                });
-            }
-            if let Some(overlay_buffer) = self.overlay.buffer() {
-                regions.push(CompositeRegion {
-                    buffer: overlay_buffer,
-                    dest_x: 0.0,
-                    scroll_y: self.scroll_y,
-                });
-            }
-        }
+
+        self.devtools.add_composite_regions(
+            &mut regions,
+            self.main.frame().viewport.width,
+            self.scroll_y,
+        );
 
         self.renderer.composite(&regions);
     }
@@ -197,10 +212,11 @@ impl BrowserApp {
 
         let logical_width = new_size.width as f32 / self.scale_factor;
         let logical_height = new_size.height as f32 / self.scale_factor;
-        let devtools_width = self.devtools_width();
-        self.main.set_viewport(logical_width - devtools_width, logical_height);
-        self.devtools.set_viewport(devtools_width, logical_height);
-        self.overlay.set_viewport(logical_width - devtools_width, logical_height);
+        let devtools_width = self.devtools.reserved_width();
+        let main_width = logical_width - devtools_width;
+
+        self.main.set_viewport(main_width, logical_height);
+        self.devtools.set_viewport(devtools_width, logical_height, main_width);
     }
 
     fn handle_scale_factor_changed(&mut self, new_scale_factor: f64) {
@@ -210,7 +226,6 @@ impl BrowserApp {
             self.renderer.clear_caches();
             self.main.invalidate();
             self.devtools.invalidate();
-            self.overlay.invalidate();
         }
     }
 }
@@ -238,10 +253,10 @@ impl ApplicationHandler for BrowserApp {
         self.renderer.resize(physical_size.width, physical_size.height, scale_factor);
 
         // Set up viewport
-        let devtools_width = self.devtools_width();
-        self.main.set_viewport(logical_width - devtools_width, logical_height);
-        self.devtools.set_viewport(devtools_width, logical_height);
-        self.overlay.set_viewport(logical_width - devtools_width, logical_height);
+        let devtools_width = self.devtools.reserved_width();
+        let main_width = logical_width - devtools_width;
+        self.main.set_viewport(main_width, logical_height);
+        self.devtools.set_viewport(devtools_width, logical_height, main_width);
 
         self.window = Some(window);
         self.surface = Some(surface);
@@ -250,10 +265,9 @@ impl ApplicationHandler for BrowserApp {
         if !self.initialized {
             self.initialized = true;
             self.load_url();
-            if self.devtools_visible {
-                self.load_devtools();
-                self.update_devtools_content();
-                self.rebuild_overlay();
+            if self.devtools.is_visible() {
+                self.devtools.load();
+                self.update_devtools();
             }
         }
     }
@@ -272,7 +286,7 @@ impl ApplicationHandler for BrowserApp {
             WindowEvent::Resized(new_size) => {
                 let logical_width = new_size.width as f32 / self.scale_factor;
                 let logical_height = new_size.height as f32 / self.scale_factor;
-                let devtools_width = self.devtools_width();
+                let devtools_width = self.devtools.reserved_width();
                 self.resize_debouncer.push((logical_width - devtools_width, logical_height));
                 self.handle_resize(new_size);
                 if let Some(window) = &self.window {
@@ -303,10 +317,9 @@ impl ApplicationHandler for BrowserApp {
                     }
                     Key::Named(NamedKey::F5) if pressed => {
                         self.load_url();
-                        self.hover_info = None;
-                        if self.devtools_visible {
-                            self.update_devtools_content();
-                            self.rebuild_overlay();
+                        self.devtools.clear_selection();
+                        if self.devtools.is_visible() {
+                            self.update_devtools();
                         }
                         if let Some(window) = &self.window {
                             window.request_redraw();
@@ -329,19 +342,19 @@ impl ApplicationHandler for BrowserApp {
                         }
                     }
                     Key::Character(ref c) if c == "i" && pressed => {
-                        self.devtools_visible = !self.devtools_visible;
-                        let devtools_width = self.devtools_width();
+                        self.devtools.toggle_visible();
                         let size_opt = self.window.as_ref().map(|w| w.inner_size());
                         if let Some(size) = size_opt {
                             let logical_width = size.width as f32 / self.scale_factor;
                             let logical_height = size.height as f32 / self.scale_factor;
-                            self.main.set_viewport(logical_width - devtools_width, logical_height);
-                            self.devtools.set_viewport(devtools_width, logical_height);
-                            self.overlay.set_viewport(logical_width - devtools_width, logical_height);
-                            if self.devtools_visible {
-                                self.load_devtools();
+                            let devtools_width = self.devtools.reserved_width();
+                            let main_width = logical_width - devtools_width;
+                            self.main.set_viewport(main_width, logical_height);
+                            self.devtools.set_viewport(devtools_width, logical_height, main_width);
+                            if self.devtools.is_visible() {
+                                self.devtools.load();
+                                self.update_devtools();
                             }
-                            self.rebuild_overlay();
                         }
                         if let Some(window) = &self.window {
                             window.request_redraw();
@@ -371,48 +384,8 @@ impl ApplicationHandler for BrowserApp {
                 if state == ElementState::Pressed && button == MouseButton::Left {
                     let logical_x = self.mouse_x / self.scale_factor;
                     let logical_y = self.mouse_y / self.scale_factor;
-                    let mut handled = false;
 
-                    let main_width = self.main.frame().viewport.width;
-                    let main_height = self.main.frame().viewport.height;
-                    let devtools_width = self.devtools.frame().viewport.width;
-                    let devtools_height = self.devtools.frame().viewport.height;
-
-                    let mut frames: Vec<(Rect, &mut RenderFrameState, bool)> = Vec::new();
-                    let main_rect = Rect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: main_width,
-                        height: main_height,
-                    };
-                    frames.push((main_rect, &mut self.main, true));
-
-                    if self.devtools_visible {
-                        let devtools_rect = Rect {
-                            x: main_width,
-                            y: 0.0,
-                            width: devtools_width,
-                            height: devtools_height,
-                        };
-                        frames.push((devtools_rect, &mut self.devtools, false));
-                    }
-
-                    for (rect, frame, uses_scroll) in frames {
-                        if logical_x >= rect.x
-                            && logical_x < rect.x + rect.width
-                            && logical_y >= rect.y
-                            && logical_y < rect.y + rect.height
-                        {
-                            let local_x = logical_x - rect.x;
-                            let local_y = logical_y - rect.y;
-                            let click_y = if uses_scroll { local_y + self.scroll_y } else { local_y };
-                            handled = frame.frame_mut().dispatch_click_at(local_x, click_y);
-                            if handled {
-                                frame.invalidate();
-                            }
-                            break;
-                        }
-                    }
+                    let handled = self.dispatch_click(logical_x, logical_y);
 
                     if handled {
                         if let Some(window) = &self.window {
@@ -427,31 +400,33 @@ impl ApplicationHandler for BrowserApp {
                 self.mouse_y = position.y as f32;
 
                 // Hit test to find hovered element
-                // Convert screen coordinates to page coordinates
                 let page_x = self.mouse_x / self.scale_factor;
                 let page_y = self.mouse_y / self.scale_factor + self.scroll_y;
 
                 let new_hover = self.main.frame().hit_test(page_x, page_y);
 
-                // Check if hover changed
-                let hover_changed = match (&self.hover_info, &new_hover) {
+                // Check if hover changed by comparing with devtools tracked hover
+                let current_hover = if self.devtools.is_pinned() {
+                    None // Don't compare when pinned
+                } else {
+                    self.devtools.selected_element()
+                };
+
+                let hover_changed = match (&current_hover, &new_hover) {
                     (Some(current), Some(next)) => !Rc::ptr_eq(current, next),
                     (None, None) => false,
                     _ => true,
                 };
 
-                if hover_changed {
+                if hover_changed || self.devtools.is_pinned() {
                     // Update CSS :hover state (this triggers restyle)
                     self.main.frame_mut().set_hover(new_hover.clone());
                     self.main.invalidate();
 
-                    // Update devtools overlay if visible
-                    if self.devtools_visible {
-                        self.hover_info = new_hover;
-                        self.update_devtools_content();
-                        self.rebuild_overlay();
-                    } else {
-                        self.hover_info = new_hover;
+                    // Update devtools if visible and not pinned
+                    if self.devtools.is_visible() && !self.devtools.is_pinned() {
+                        self.devtools.set_hover(new_hover);
+                        self.update_devtools();
                     }
 
                     if let Some(window) = &self.window {
@@ -477,9 +452,10 @@ impl ApplicationHandler for BrowserApp {
                 // Handle debounced resize
                 if let Some((width, height)) = self.resize_debouncer.poll() {
                     self.main.set_viewport(width, height);
-                    self.devtools.set_viewport(self.devtools_width(), height);
-                    self.overlay.set_viewport(width, height);
-                    self.rebuild_overlay();
+                    self.devtools.set_viewport(self.devtools.reserved_width(), height, width);
+                    let viewport = self.main.frame().viewport.clone();
+                    let page_height = self.main.frame().page_height.max(viewport.height);
+                    self.devtools.rebuild_overlay(viewport, page_height);
                 }
 
                 // Render and present
