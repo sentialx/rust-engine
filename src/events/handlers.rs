@@ -21,12 +21,6 @@ impl DefaultEventHandler {
     fn handle_hover(&mut self, event: &mut InputEvent) -> EventResult {
         let new_hover = event.target.clone();
 
-        // Debug: print what element is being hovered
-        if let Some(ref el) = new_hover {
-            let el_ref = el.borrow();
-            eprintln!("handle_hover: target=<{}> classes={:?}", el_ref.tag_name, el_ref.class_list);
-        }
-
         // Check if hover changed
         let changed = match (&self.hovered_element, &new_hover) {
             (Some(old), Some(new)) => !Rc::ptr_eq(old, new),
@@ -35,7 +29,6 @@ impl DefaultEventHandler {
         };
 
         if changed {
-            eprintln!("handle_hover: hover CHANGED");
             // Update pseudo-class state: old element leaves, new element enters
             // set_hover() marks elements as style_dirty automatically
             let old_hover = self.hovered_element.take();

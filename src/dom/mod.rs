@@ -5,7 +5,6 @@ pub use element::{
     DomElement,
     DomEvent,
     ElementKind,
-    EventContext,
     HTMLCustomRenderElement,
     HTMLElement,
     HTMLInputElement,

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::frame::Frame;
-use crate::dom::{DomEvent, EventContext};
+use crate::dom::DomEvent;
 
 use super::{DefaultEventHandler, EventResult, InputEvent, InputEventKind};
 
@@ -114,21 +114,13 @@ impl EventSink {
             return EventResult::default();
         };
 
-        let mut ctx = EventContext::new();
         let mut dom_event = DomEvent::new();
 
         {
             let mut node_ref = target.borrow_mut();
             let mut element_kind = std::mem::take(&mut node_ref.element_kind);
-            element_kind.on_click(&mut node_ref, &mut dom_event, &mut ctx);
+            element_kind.on_click(&mut node_ref, &mut dom_event);
             node_ref.element_kind = element_kind;
-        }
-
-        // Handle reflow/restyle if requested by the element
-        if ctx.needs_reflow {
-            self.frame.borrow_mut().full_layout();
-        } else if ctx.needs_restyle {
-            self.frame.borrow_mut().restyle();
         }
 
         EventResult::handled()

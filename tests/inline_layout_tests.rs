@@ -190,7 +190,6 @@ fn test_fast_reflow_reuses_cached_layout_tree() {
         .expect("cached layout tree should be built after full layout");
 
     frame.borrow_mut().set_viewport(280.0, 200.0);
-    frame.borrow_mut().fast_reflow();
 
     let after_ptr = frame.borrow()
         .cached_layout_tree

@@ -77,9 +77,6 @@ impl RenderFrameState {
 
         let mut frame = self.frame.borrow_mut();
         frame.set_viewport(width, height);
-        if frame.cached_layout_tree.is_some() {
-            frame.fast_reflow();
-        }
         drop(frame);
 
         self.invalidate();
@@ -88,12 +85,10 @@ impl RenderFrameState {
     pub(crate) fn render_if_needed(&mut self, renderer: &mut SkiaRenderer) {
         // Process any pending style changes before rendering
         if self.frame.borrow_mut().update_styles_if_needed() {
-            eprintln!("render_if_needed: styles updated, invalidating");
             self.invalidate();
         }
 
         if self.dirty || self.buffer.is_none() {
-            eprintln!("render_if_needed: RE-RENDERING");
             self.buffer = Some(renderer.render(&self.frame.borrow()));
             self.dirty = false;
         }

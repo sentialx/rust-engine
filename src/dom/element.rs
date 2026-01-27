@@ -59,30 +59,6 @@ impl DomEvent {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct EventContext {
-    pub needs_restyle: bool,
-    pub needs_reflow: bool,
-}
-
-impl EventContext {
-    pub fn new() -> Self {
-        Self {
-            needs_restyle: false,
-            needs_reflow: false,
-        }
-    }
-
-    pub fn request_restyle(&mut self) {
-        self.needs_restyle = true;
-    }
-
-    pub fn request_reflow(&mut self) {
-        self.needs_reflow = true;
-        self.needs_restyle = true;
-    }
-}
-
-#[derive(Clone, Debug, Default)]
 pub struct PseudoClassState {
     pub hover: bool,
     pub focus: bool,
@@ -90,7 +66,7 @@ pub struct PseudoClassState {
 }
 
 pub trait HTMLElement {
-    fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent, ctx: &mut EventContext);
+    fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent);
 }
 
 #[derive(Clone, Debug, Default)]
@@ -99,7 +75,7 @@ pub struct HTMLInputElement {
 }
 
 impl HTMLElement for HTMLInputElement {
-    fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent, _ctx: &mut EventContext) {
+    fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent) {
         self.clicks += 1;
     }
 }
@@ -108,7 +84,7 @@ impl HTMLElement for HTMLInputElement {
 pub struct HTMLCustomRenderElement;
 
 impl HTMLElement for HTMLCustomRenderElement {
-    fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent, _ctx: &mut EventContext) {}
+    fn on_click(&mut self, _element: &mut DomElement, _event: &mut DomEvent) {}
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,14 +104,14 @@ impl ElementKind {
         }
     }
 
-    pub fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent, ctx: &mut EventContext) -> bool {
+    pub fn on_click(&mut self, element: &mut DomElement, event: &mut DomEvent) -> bool {
         match self {
             ElementKind::Input(input) => {
-                input.on_click(element, event, ctx);
+                input.on_click(element, event);
                 true
             }
             ElementKind::CustomRender(custom) => {
-                custom.on_click(element, event, ctx);
+                custom.on_click(element, event);
                 true
             }
             ElementKind::Generic => false,
