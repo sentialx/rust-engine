@@ -28,8 +28,9 @@ use crate::layout::abspos::AbsoluteLayoutStrategy;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-/// Evaluate all scalar CSS values on a DOM tree (margin, padding, width, etc.)
-/// This must be called before reading computed_style values.
+/// Evaluate all scalar CSS values on an element's inherited_style (margin, padding, width, etc.)
+/// This must be called before reading values from inherited_style.
+/// Does NOT update computed_style - that's done separately to allow old vs new comparison.
 /// Returns child context values: (font_size, width, height)
 pub fn evaluate_element_styles(
     element: &mut DomElement,
@@ -54,10 +55,7 @@ pub fn evaluate_element_styles(
     inherited_style.width.evaluate(&parent_width_scalar_ctx);
     inherited_style.height.evaluate(&parent_height_scalar_ctx);
 
-    // Update computed_style
-    element.computed_style = Some(inherited_style.to_computed_style());
-
-    // Return child context
+    // Return child context (don't update computed_style here)
     let font_size = inherited_style.font_size.get();
     let width = if inherited_style.width.has_numeric_value() { inherited_style.width.get() } else { parent_width };
     let height = if inherited_style.height.has_numeric_value() { inherited_style.height.get() } else { parent_height };
@@ -114,13 +112,20 @@ pub fn build_layout_tree(
                 continue;
             }
 
-            // Evaluate all scalar styles and update computed_style
-            evaluate_element_styles(
+            // Evaluate all scalar styles
+            let ctx = evaluate_element_styles(
                 &mut element,
                 context.font_size,
                 context.parent_width,
                 context.parent_height,
-            )
+            );
+
+            // Update computed_style from evaluated inherited_style
+            if let Some(ref inherited) = element.inherited_style {
+                element.computed_style = Some(inherited.to_computed_style());
+            }
+
+            ctx
         };
 
         let Some((child_font_size, child_width, child_height)) = child_ctx_values else {

@@ -84,6 +84,18 @@ impl Frame {
         self.styles_dirty.set(true);
     }
 
+    /// Get a short display name for logging (derived from URL)
+    fn log_name(&self) -> &str {
+        if self.url.is_empty() {
+            return "frame";
+        }
+        // Get filename from path, or last path segment from URL
+        self.url
+            .rsplit('/')
+            .next()
+            .unwrap_or(&self.url)
+    }
+
     /// Create a new element with a reference to this frame
     pub fn create_element(&self, tag_name: &str) -> Rc<RefCell<DomElement>> {
         let frame_ref = self.self_ref.clone().expect("Frame self_ref not set");
@@ -241,7 +253,7 @@ impl Frame {
         self.ensure_layout_tree();
         if let Some(ref mut tree) = self.cached_layout_tree {
             relayout(tree, &self.viewport);
-            println!("Resize took: {:?}", s.elapsed());
+            println!("[{}] Resize: {:?}", self.log_name(), s.elapsed());
         }
         self.build_render_array();
     }
@@ -255,7 +267,7 @@ impl Frame {
         self.do_reflow();
         self.build_render_array();
 
-        println!("Full layout took: {:?}", s.elapsed());
+        println!("[{}] Full layout: {:?}", self.log_name(), s.elapsed());
     }
 
     /// Ensure layout tree exists, creating it if needed.
@@ -265,7 +277,7 @@ impl Frame {
             let s = Instant::now();
             let tree = create_layout_tree(&mut self.dom_tree, &mut self.font_manager, &self.viewport);
             self.cached_layout_tree = Some(tree);
-            println!("Built layout tree: {:?}", s.elapsed());
+            println!("[{}] Build layout tree: {:?}", self.log_name(), s.elapsed());
             true
         } else {
             false
@@ -284,7 +296,7 @@ impl Frame {
                 // Existing tree, need to remeasure
                 reflow(tree, &mut self.font_manager, &self.viewport);
             }
-            println!("Reflow took: {:?}", s.elapsed());
+            println!("[{}] Reflow: {:?}", self.log_name(), s.elapsed());
         }
     }
 
@@ -307,7 +319,8 @@ impl Frame {
             .fold(0.0_f32, |a, b| a.max(b));
 
         println!(
-            "Build render array took: {:?}, items: {:?}, page_height: {:?}",
+            "[{}] Build render array: {:?}, items: {:?}, page_height: {:?}",
+            self.log_name(),
             s.elapsed(),
             self.render_array.len(),
             self.page_height
@@ -322,10 +335,10 @@ impl Frame {
 
         let s = Instant::now();
         compute_styles(&mut self.dom_tree, &self.styles, &mut vec![], None);
-        println!("Computing styles took: {:?}", s.elapsed());
+        println!("[{}] Computing styles: {:?}", self.log_name(), s.elapsed());
         let s = Instant::now();
         propagate_styles(&mut self.dom_tree, None);
-        println!("Propagating styles took: {:?}", s.elapsed());
+        println!("[{}] Propagating styles: {:?}", self.log_name(), s.elapsed());
 
         // Evaluate all scalar values (margin: 1em, width: 50%, etc.)
         // This must happen before to_computed_style() is called
