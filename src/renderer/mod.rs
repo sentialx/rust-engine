@@ -16,36 +16,6 @@ pub struct CompositeFrame<'a> {
     pub scroll_y: f32,
 }
 
-use crate::frame::Frame;
-use tiny_skia::Pixmap;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Global generation counter for buffer versioning
-static BUFFER_GENERATION: AtomicU64 = AtomicU64::new(1);
-
-pub struct RenderedBuffer {
-    pub pixmap: Pixmap,
-    /// Generation number - increments each time content changes
-    pub generation: u64,
-}
-
-impl RenderedBuffer {
-    pub fn new(pixmap: Pixmap) -> Self {
-        Self {
-            pixmap,
-            generation: BUFFER_GENERATION.fetch_add(1, Ordering::Relaxed),
-        }
-    }
-}
-
-pub struct CompositeRegion<'a> {
-    pub buffer: &'a RenderedBuffer,
-    pub dest_x: f32,
-    pub scroll_y: f32,
-    /// If true, use fast copy. If false, use alpha blending.
-    pub opaque: bool,
-}
-
 /// GPU-rendered colored quad
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -64,11 +34,6 @@ pub struct GpuQuad {
 impl GpuQuad {
     pub fn new(x: f32, y: f32, width: f32, height: f32, r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { x, y, width, height, r, g, b, a }
-    }
-
-    /// Convert RenderItems to GpuQuads (box shadows + backgrounds + borders, no text)
-    pub fn from_render_items(items: &[crate::layout::RenderItem]) -> Vec<GpuQuad> {
-        Self::from_render_items_scaled(items, 1.0)
     }
 
     /// Convert RenderItems to GpuQuads with scale factor applied
@@ -111,11 +76,11 @@ impl GpuQuad {
                 });
             }
 
-            // Borders (solid only - dashed/dotted rendered by Skia)
+            // Borders (rendered as solid - dotted/dashed not yet supported on GPU)
             let border = &item.border;
 
             // Top
-            if border.top.is_solid() {
+            if border.top.is_visible() {
                 let c = border.top.color;
                 quads.push(GpuQuad {
                     x: item.x * scale,
@@ -127,7 +92,7 @@ impl GpuQuad {
             }
 
             // Bottom
-            if border.bottom.is_solid() {
+            if border.bottom.is_visible() {
                 let c = border.bottom.color;
                 quads.push(GpuQuad {
                     x: item.x * scale,
@@ -139,7 +104,7 @@ impl GpuQuad {
             }
 
             // Left
-            if border.left.is_solid() {
+            if border.left.is_visible() {
                 let c = border.left.color;
                 quads.push(GpuQuad {
                     x: item.x * scale,
@@ -151,7 +116,7 @@ impl GpuQuad {
             }
 
             // Right
-            if border.right.is_solid() {
+            if border.right.is_visible() {
                 let c = border.right.color;
                 quads.push(GpuQuad {
                     x: (item.x + item.width - border.right.width) * scale,
@@ -165,22 +130,4 @@ impl GpuQuad {
 
         quads
     }
-}
-
-/// Abstract renderer trait - implement for different backends
-pub trait Renderer {
-    /// Initialize/resize the renderer for given dimensions
-    fn resize(&mut self, width: u32, height: u32, scale_factor: f32);
-
-    /// Render a frame's content to an off-screen buffer
-    fn render(&mut self, frame: &Frame) -> RenderedBuffer;
-
-    /// Composite multiple rendered buffers into the display buffer
-    fn composite(&mut self, regions: &[CompositeRegion]);
-
-    /// Get the display buffer as raw pixels (ARGB format for softbuffer)
-    fn get_display_buffer(&self) -> &[u32];
-
-    /// Clear caches (e.g., when scale factor changes)
-    fn clear_caches(&mut self);
 }

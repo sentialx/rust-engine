@@ -4,14 +4,10 @@ use std::rc::{Rc, Weak};
 use crate::events::{EventHandler, EventSink};
 use crate::frame::{Frame, RenderDelegate};
 use crate::layout::Rect;
-use crate::renderer::{RenderedBuffer, Renderer, SkiaRenderer};
 
 pub(crate) struct RenderFrameState {
     frame: Rc<RefCell<Frame>>,
     sink: Option<Rc<RefCell<EventSink>>>,
-    buffer: Option<RenderedBuffer>,
-    /// True if viewport changed (requires re-render but doesn't mark styles dirty)
-    viewport_changed: bool,
 }
 
 impl RenderFrameState {
@@ -23,8 +19,6 @@ impl RenderFrameState {
         Self {
             frame,
             sink: Some(Rc::new(RefCell::new(sink))),
-            buffer: None,
-            viewport_changed: true, // Force initial render
         }
     }
 
@@ -33,8 +27,6 @@ impl RenderFrameState {
         Self {
             frame: Frame::new(viewport),
             sink: None,
-            buffer: None,
-            viewport_changed: true, // Force initial render
         }
     }
 
@@ -76,7 +68,6 @@ impl RenderFrameState {
         drop(frame);
 
         self.frame.borrow_mut().set_viewport(width, height);
-        self.viewport_changed = true;
     }
 
     /// Update viewport size without triggering relayout (for debouncing)
@@ -90,30 +81,10 @@ impl RenderFrameState {
         drop(frame);
 
         self.frame.borrow_mut().set_viewport_size(width, height);
-        self.viewport_changed = true;
     }
 
     /// Trigger relayout with current viewport dimensions
     pub(crate) fn relayout(&mut self) {
         self.frame.borrow_mut().relayout();
-        self.viewport_changed = true;
-    }
-
-    /// Render only if content has changed
-    pub(crate) fn render(&mut self, renderer: &mut SkiaRenderer) {
-        // Check if Frame has pending style changes (content changed)
-        let styles_updated = self.frame.borrow_mut().update_styles_if_needed();
-
-        let needs_render = styles_updated || self.viewport_changed || self.buffer.is_none();
-        if !needs_render {
-            return; // Skip rendering - buffer is still valid
-        }
-
-        self.buffer = Some(renderer.render(&self.frame.borrow()));
-        self.viewport_changed = false;
-    }
-
-    pub(crate) fn buffer(&self) -> Option<&RenderedBuffer> {
-        self.buffer.as_ref()
     }
 }
