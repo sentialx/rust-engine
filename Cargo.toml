@@ -11,9 +11,14 @@ edition = "2018"
 winit = "0.30"
 
 # GPU rendering
-wgpu = "23"
+wgpu = { version = "23", features = ["wgc"] }
 pollster = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
+
+# Platform-specific: Metal access for macOS
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.29"
+objc = "0.2"
 
 # 2D rendering
 tiny-skia = "0.11"

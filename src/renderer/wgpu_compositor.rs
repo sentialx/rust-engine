@@ -30,6 +30,7 @@ struct Uniforms {
 }
 
 pub struct WgpuCompositor {
+    window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -54,7 +55,13 @@ impl WgpuCompositor {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
+
+        // Configure Metal layer after surface creation to prevent resize glitch
+        #[cfg(target_os = "macos")]
+        {
+            Self::configure_metal_layer_for_window(&window);
+        }
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -84,7 +91,9 @@ impl WgpuCompositor {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
-        // Prefer Mailbox (non-blocking, low latency) over Fifo (vsync)
+        // Use Fifo (vsync) for synchronized presentation with presentsWithTransaction
+        // Use Mailbox if available for faster presentation during resize
+        // Falls back to Fifo if Mailbox is not supported
         let present_mode = if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
             wgpu::PresentMode::Mailbox
         } else {
@@ -218,6 +227,7 @@ impl WgpuCompositor {
         });
 
         Self {
+            window,
             surface,
             device,
             queue,
@@ -232,6 +242,49 @@ impl WgpuCompositor {
         }
     }
 
+    /// Configure Metal layer to prevent content stretching during resize (macOS only)
+    /// Sets contentsGravity to bottomLeft so old content stays anchored during resize
+    #[cfg(target_os = "macos")]
+    fn configure_metal_layer_for_window(window: &Window) {
+        use objc::runtime::Object;
+        use objc::{class, msg_send, sel, sel_impl};
+
+        unsafe {
+            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let Ok(handle) = window.window_handle() else { return };
+            let RawWindowHandle::AppKit(appkit_handle) = handle.as_raw() else { return };
+
+            let ns_view = appkit_handle.ns_view.as_ptr() as *mut Object;
+            if ns_view.is_null() { return }
+
+            // Check if view is layer-backed
+            let wants_layer: bool = msg_send![ns_view, wantsLayer];
+            if !wants_layer {
+                return;
+            }
+
+            // Get the layer from the view
+            let layer: *mut Object = msg_send![ns_view, layer];
+            if layer.is_null() {
+                return;
+            }
+
+            // Set contentsGravity on sublayers to prevent stretching during resize
+            // Use bottomLeft since macOS has origin at bottom-left
+            let sublayers: *mut Object = msg_send![layer, sublayers];
+            if !sublayers.is_null() {
+                let count: usize = msg_send![sublayers, count];
+                let gravity: *mut Object = msg_send![class!(NSString), stringWithUTF8String: b"bottomLeft\0".as_ptr()];
+                for i in 0..count {
+                    let sublayer: *mut Object = msg_send![sublayers, objectAtIndex: i];
+                    if !sublayer.is_null() {
+                        let _: () = msg_send![sublayer, setContentsGravity: gravity];
+                    }
+                }
+            }
+        }
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -241,6 +294,12 @@ impl WgpuCompositor {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+
+        // Reconfigure Metal layer after surface reconfiguration
+        #[cfg(target_os = "macos")]
+        {
+            Self::configure_metal_layer_for_window(&self.window);
+        }
     }
 
     /// Get device for creating HybridRenderer
@@ -355,7 +414,11 @@ impl WgpuCompositor {
             }
         }
 
+        // Submit and wait for GPU to finish before presenting
+        // This is required when using presentsWithTransaction
         self.queue.submit(std::iter::once(encoder.finish()));
+        self.device.poll(wgpu::Maintain::Wait);
+
         output.present();
     }
 }

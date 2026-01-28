@@ -635,6 +635,8 @@ dependencies = [
  "fontdue",
  "html5ever",
  "markup5ever_rcdom",
+ "metal",
+ "objc",
  "pollster",
  "regex",
  "roxmltree",

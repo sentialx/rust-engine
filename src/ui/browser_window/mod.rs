@@ -215,7 +215,10 @@ impl BrowserApp {
             }
         }
 
-        // Composite to screen
+        // Notify winit we're about to present, then composite to screen
+        if let Some(window) = &self.window {
+            window.pre_present_notify();
+        }
         if let Some(compositor) = &mut self.compositor {
             compositor.compose_frames(&frames, scale);
         }
@@ -246,10 +249,8 @@ impl BrowserApp {
         self.devtools.set_viewport(devtools_width, logical_height, main_width);
         self.setup_event_routing();
 
-        // Request redraw - let normal event flow handle rendering
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+        // Render and present immediately to avoid showing stretched old frame
+        self.render_and_present();
     }
 
     fn handle_scale_factor_changed(&mut self, new_scale_factor: f64) {
