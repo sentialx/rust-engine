@@ -95,6 +95,69 @@ pub fn handle(
             Response::success(id, json!({ "data": base64_data }))
         }
 
+        "getFrameTree" => {
+            // Return basic frame tree for Chrome DevTools
+            let frame_tree = json!({
+                "frameTree": {
+                    "frame": {
+                        "id": "main",
+                        "loaderId": "1",
+                        "url": if frame.url.is_empty() { "about:blank" } else { &frame.url },
+                        "domainAndRegistry": "",
+                        "securityOrigin": "://",
+                        "mimeType": "text/html",
+                        "secureContextType": "Secure",
+                        "crossOriginIsolatedContextType": "NotIsolated",
+                        "gatedAPIFeatures": []
+                    },
+                    "childFrames": []
+                }
+            });
+            Response::success(id, frame_tree)
+        }
+
+        "getResourceTree" => {
+            // Return basic resource tree for Chrome DevTools
+            let url = if frame.url.is_empty() { "about:blank".to_string() } else { frame.url.clone() };
+            let resource_tree = json!({
+                "frameTree": {
+                    "frame": {
+                        "id": "main",
+                        "loaderId": "1",
+                        "url": url.clone(),
+                        "domainAndRegistry": "",
+                        "securityOrigin": "://",
+                        "mimeType": "text/html",
+                        "secureContextType": "Secure",
+                        "crossOriginIsolatedContextType": "NotIsolated",
+                        "gatedAPIFeatures": []
+                    },
+                    "childFrames": [],
+                    "resources": [{
+                        "url": url,
+                        "type": "Document",
+                        "mimeType": "text/html"
+                    }]
+                }
+            });
+            Response::success(id, resource_tree)
+        }
+
+        "getNavigationHistory" => {
+            // Return basic navigation history
+            let url = if frame.url.is_empty() { "about:blank".to_string() } else { frame.url.clone() };
+            Response::success(id, json!({
+                "currentIndex": 0,
+                "entries": [{
+                    "id": 0,
+                    "url": url,
+                    "userTypedURL": url,
+                    "title": "Graviton",
+                    "transitionType": "typed"
+                }]
+            }))
+        }
+
         "getLayoutMetrics" => {
             let viewport_width = frame.viewport.width as f64;
             let viewport_height = frame.viewport.height as f64;

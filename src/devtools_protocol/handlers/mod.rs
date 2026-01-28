@@ -6,6 +6,13 @@ pub mod page;
 pub mod input;
 pub mod runtime;
 pub mod overlay;
+pub mod network;
+pub mod debugger;
+pub mod target;
+pub mod console_log;
+pub mod security;
+pub mod profiler;
+pub mod inspector;
 
 use serde_json::Value;
 
@@ -37,6 +44,14 @@ pub fn dispatch(
         "Input" => input::handle(server, frame, id, command, params),
         "Runtime" => runtime::handle(server, frame, id, command, params),
         "Overlay" => overlay::handle(server, frame, id, command, params),
-        _ => Response::error(id, ERROR_METHOD_NOT_FOUND, &format!("Unknown domain: {}", domain)),
+        "Network" => network::handle(id, command, params),
+        "Debugger" => debugger::handle(id, command, params),
+        "Target" => target::handle(id, command, params),
+        "Log" => console_log::handle(id, command, params),
+        "Security" => security::handle(id, command, params),
+        "Profiler" => profiler::handle(id, command, params),
+        "Inspector" => inspector::handle(id, command, params),
+        // Accept unknown domains silently to avoid flooding errors
+        _ => Response::success(id, serde_json::json!({})),
     }
 }

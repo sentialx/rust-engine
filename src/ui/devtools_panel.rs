@@ -42,12 +42,11 @@ impl DevtoolsPanel {
     fn rebuild_ui(&mut self) {
         let agent = self.agent.borrow();
         let selected = agent.get_selected_element();
-        let is_pinned = agent.is_pinned();
         let main_dom_tree = agent.frame().map(|f| f.borrow().dom_tree.clone());
         drop(agent);
 
         if let Some(dom_tree) = main_dom_tree {
-            self.update_content(selected.as_ref(), &dom_tree, is_pinned);
+            self.update_content(selected.as_ref(), &dom_tree);
         }
     }
 
@@ -110,15 +109,10 @@ impl DevtoolsPanel {
         &mut self,
         selected_element: Option<&Rc<RefCell<DomElement>>>,
         main_dom_tree: &Vec<Rc<RefCell<DomElement>>>,
-        is_pinned: bool,
     ) {
-        // Build breadcrumb (ancestor path) with pin indicator
+        // Build breadcrumb (ancestor path)
         let breadcrumb_html = if let Some(node) = selected_element {
-            let mut html = build_breadcrumb(node);
-            if is_pinned {
-                html = format!("<span class=\"pin-indicator\">pinned</span>{}", html);
-            }
-            html
+            build_breadcrumb(node)
         } else {
             String::new()
         };

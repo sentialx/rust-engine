@@ -5,11 +5,15 @@ use serde_json::Value;
 
 /// CDP Request format
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Request {
     pub id: u64,
     pub method: String,
     #[serde(default)]
     pub params: Value,
+    /// Optional session ID for session-based CDP (flatten mode)
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// CDP Response format

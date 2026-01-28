@@ -2,7 +2,7 @@
 //!
 //! Handles mouse events when element inspection is enabled:
 //! - MouseMove: highlights hovered element
-//! - Click: toggles pin on clicked element
+//! - Click: selects element and exits inspect mode
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -26,17 +26,21 @@ impl ElementInspectorHandler {
 
 impl EventHandler for ElementInspectorHandler {
     fn handle(&mut self, event: &mut InputEvent, _frame: &Rc<RefCell<Frame>>) -> EventResult {
-        let agent = self.agent.borrow();
-        if !agent.is_enabled() {
-            return EventResult::default();
+        {
+            let agent = self.agent.borrow();
+            // Only intercept events when inspect mode is active (picker enabled)
+            if !agent.is_inspect_mode() {
+                return EventResult::default();
+            }
         }
-        drop(agent);
 
-        match event.kind {
+        let result = match event.kind {
             InputEventKind::Click => {
                 if let Some(ref target) = event.target {
                     let mut agent = self.agent.borrow_mut();
-                    agent.toggle_pin_element(target);
+                    // Select the clicked element and exit inspect mode
+                    agent.select_element(target);
+                    agent.set_inspect_mode(false);
                 }
 
                 // Intercept the click - don't let it through to default behavior
@@ -46,21 +50,39 @@ impl EventHandler for ElementInspectorHandler {
                 EventResult::handled()
             }
             InputEventKind::MouseMove => {
-                let mut agent = self.agent.borrow_mut();
-
-                // Only update hover if not pinned
-                if !agent.is_pinned() {
+                {
+                    let mut agent = self.agent.borrow_mut();
+                    // Update highlight on hover
                     if let Some(ref target) = event.target {
                         agent.highlight_element(target);
                     } else {
                         agent.hide_highlight();
                     }
-                    return EventResult::handled();
                 }
-
-                EventResult::default()
+                // Borrow released, now flush
+                self.flush_pending_notifications();
+                EventResult::handled()
             }
             _ => EventResult::default(),
+        };
+
+        self.flush_pending_notifications();
+        result
+    }
+}
+
+impl ElementInspectorHandler {
+    /// Flush pending notifications outside of agent borrow.
+    fn flush_pending_notifications(&self) {
+        let (pending, observers) = {
+            let mut agent = self.agent.borrow_mut();
+            (agent.take_pending_notification(), agent.collect_observers())
+        };
+        // Agent borrow released, safe to notify
+        if pending {
+            for observer in observers {
+                observer.on_selection_changed();
+            }
         }
     }
 }

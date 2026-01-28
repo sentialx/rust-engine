@@ -144,13 +144,51 @@ pub fn handle(
         }
 
         "getDocument" => {
+            // Default to full depth (-1) if not specified, Chrome DevTools expects this
+            let depth = params.get("depth")
+                .and_then(|v| v.as_i64())
+                .map(|d| d as i32)
+                .unwrap_or(-1);
+
+            let root = create_document_node(server, frame, depth);
+            let result = json!({ "root": root });
+            println!("DOM.getDocument response: {}", serde_json::to_string_pretty(&result).unwrap_or_default());
+            Response::success(id, result)
+        }
+
+        "requestChildNodes" => {
+            // Chrome DevTools calls this to get children of a node
+            let node_id = match params.get("nodeId").and_then(|v| v.as_u64()) {
+                Some(id) => id,
+                None => return Response::error(id, ERROR_INVALID_PARAMS, "Missing nodeId parameter"),
+            };
+
             let depth = params.get("depth")
                 .and_then(|v| v.as_i64())
                 .map(|d| d as i32)
                 .unwrap_or(1);
 
-            let root = create_document_node(server, frame, depth);
-            Response::success(id, json!({ "root": root }))
+            // Get the element and build child nodes
+            if node_id == server.document_node_id {
+                // Document node - return top-level children
+                let children: Vec<Node> = frame.dom_tree
+                    .iter()
+                    .map(|el| element_to_node(server, el, depth, 0))
+                    .collect();
+
+                // This should trigger a setChildNodes event, but for now just return success
+                // The event would be: {"method":"DOM.setChildNodes","params":{"parentId":nodeId,"nodes":[...]}}
+                Response::success(id, json!({}))
+            } else if let Some(element) = server.get_element_by_id(node_id) {
+                let el = element.borrow();
+                let _children: Vec<Node> = el.children
+                    .iter()
+                    .map(|child| element_to_node(server, child, depth, 0))
+                    .collect();
+                Response::success(id, json!({}))
+            } else {
+                Response::error(id, ERROR_INVALID_PARAMS, "Node not found")
+            }
         }
 
         "querySelector" => {
@@ -221,8 +259,14 @@ pub fn handle(
 
             let element = match server.get_element_by_id(node_id) {
                 Some(el) => el,
-                None => return Response::error(id, ERROR_INVALID_PARAMS, "Node not found"),
+                None => {
+                    println!("getBoxModel: node {} not found in registry", node_id);
+                    return Response::error(id, ERROR_INVALID_PARAMS, "Node not found");
+                }
             };
+
+            // Trigger highlight for this node (hover preview)
+            server.agent().borrow_mut().highlight_node(node_id);
 
             let el = element.borrow();
 
@@ -387,6 +431,71 @@ pub fn handle(
             collect_text_segments_recursive(&el, &mut segments);
 
             Response::success(id, json!({ "textSegments": segments }))
+        }
+
+        "highlightNode" => {
+            // DOM.highlightNode - same as Overlay.highlightNode
+            let node_id = params.get("nodeId")
+                .and_then(|v| v.as_u64())
+                .or_else(|| params.get("backendNodeId").and_then(|v| v.as_u64()));
+
+            if let Some(nid) = node_id {
+                server.set_highlighted_node(Some(nid));
+            }
+            Response::success(id, json!({}))
+        }
+
+        "hideHighlight" => {
+            server.set_highlighted_node(None);
+            Response::success(id, json!({}))
+        }
+
+        "setInspectedNode" => {
+            // Called when user clicks/selects an element in DevTools
+            // Select the node when DevTools sets it as inspected
+            let node_id = params.get("nodeId").and_then(|v| v.as_u64());
+            if let Some(nid) = node_id {
+                server.agent().borrow_mut().select_node(nid);
+            }
+            Response::success(id, json!({}))
+        }
+
+        "setInspectModeEnabled" => {
+            // Alternative inspect mode toggle (some DevTools versions use this)
+            let enabled = params.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            server.agent().borrow_mut().set_inspect_mode(enabled);
+            Response::success(id, json!({}))
+        }
+
+        "getNodeForLocation" => {
+            // Get node at specific coordinates - used by element picker
+            let x = params.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let y = params.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let _include_user_agent_shadow_dom = params.get("includeUserAgentShadowDOM")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            println!("DOM.getNodeForLocation: x={}, y={}", x, y);
+
+            // Perform hit test
+            if let Some(element) = frame.hit_test(x, y) {
+                let node_id = server.get_or_create_node_id(&element);
+                let backend_node_id = node_id; // We use same ID for both
+
+                // Highlight this node
+                server.agent().borrow_mut().highlight_node(node_id);
+
+                Response::success(id, json!({
+                    "backendNodeId": backend_node_id,
+                    "nodeId": node_id,
+                    "frameId": "main"
+                }))
+            } else {
+                Response::success(id, json!({
+                    "backendNodeId": 0,
+                    "nodeId": 0
+                }))
+            }
         }
 
         _ => Response::error(id, ERROR_METHOD_NOT_FOUND, &format!("Unknown DOM method: {}", command)),
