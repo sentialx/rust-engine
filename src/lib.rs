@@ -13,5 +13,6 @@ pub mod properties;
 pub mod frame;
 pub mod text;
 pub mod renderer;
+pub mod devtools;
 pub mod devtools_protocol;
 pub mod events;

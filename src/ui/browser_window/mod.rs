@@ -7,6 +7,7 @@ use crate::layout::{Rect, Size};
 use crate::renderer::{HybridRenderer, WgpuCompositor};
 use crate::ui::devtools_panel::DevtoolsPanel;
 use crate::ui::web_contents::WebContents;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,7 +52,7 @@ struct BrowserApp {
     render_delegate: Option<Rc<dyn RenderDelegate>>,
 
     web_contents: WebContents,
-    devtools_panel: Option<DevtoolsPanel>,
+    devtools_panel: Option<Rc<RefCell<DevtoolsPanel>>>,
     router: EventRouter,
 
     pressed_up: bool,
@@ -88,21 +89,11 @@ impl BrowserApp {
     }
 
     fn load_url(&mut self) {
-        self.web_contents.frame_mut().load_url(&self.url);
-        self.web_contents.inspector().borrow_mut().clear_selection();
+        self.web_contents.load_url(&self.url);
     }
 
     fn reserved_width(&self) -> f32 {
         if self.panel_visible { PANEL_WIDTH } else { 0.0 }
-    }
-
-    fn update_panel_content(&mut self) {
-        if let Some(ref mut panel) = self.devtools_panel {
-            let inspector = self.web_contents.inspector().borrow();
-            let selected = inspector.selected_element();
-            let is_pinned = inspector.is_pinned();
-            panel.update(selected.as_ref(), &self.web_contents.frame().dom_tree, is_pinned);
-        }
     }
 
     fn setup_event_routing(&mut self) {
@@ -115,6 +106,7 @@ impl BrowserApp {
         ));
 
         if let Some(ref panel) = self.devtools_panel {
+            let panel = panel.borrow();
             let panel_viewport = panel.viewport().clone();
             self.router.add_region(FrameRegion::new(
                 Rect { x: main_viewport.width, y: 0.0, width: panel_viewport.width, height: panel_viewport.height },
@@ -135,17 +127,12 @@ impl BrowserApp {
             let Some(renderer) = &mut self.renderer else { return };
             renderer.set_scale_factor(scale);
             self.web_contents.render(renderer);
-            if let Some(ref mut panel) = self.devtools_panel {
-                panel.render(renderer);
+            if let Some(ref panel) = self.devtools_panel {
+                panel.borrow_mut().render(renderer);
             }
         }
 
-        // Phase 2: Update panel content if main selection changed
-        if self.web_contents.take_selection_dirty() {
-            self.update_panel_content();
-        }
-
-        // Phase 3: Composite
+        // Phase 2: Composite
         let Some(renderer) = &mut self.renderer else { return };
 
         // Composite (order: main, panel on side, main overlay on top)
@@ -153,7 +140,7 @@ impl BrowserApp {
         if let Some(ref panel) = self.devtools_panel {
             // Insert panel frames before main overlay (which is last in web_contents frames)
             let main_overlay = frames.pop();
-            frames.extend(panel.get_composite_frames(renderer, self.web_contents.viewport_width()));
+            frames.extend(panel.borrow().get_composite_frames(renderer, self.web_contents.viewport_width()));
             if let Some(f) = main_overlay {
                 frames.push(f);
             }
@@ -184,8 +171,8 @@ impl BrowserApp {
 
         self.web_contents.set_viewport(main_width, logical_height);
 
-        if let Some(ref mut panel) = self.devtools_panel {
-            panel.set_viewport(devtools_width, logical_height);
+        if let Some(ref panel) = self.devtools_panel {
+            panel.borrow_mut().set_viewport(devtools_width, logical_height);
         }
 
         self.setup_event_routing();
@@ -204,7 +191,6 @@ impl BrowserApp {
 
     fn toggle_panel(&mut self) {
         self.panel_visible = !self.panel_visible;
-        self.web_contents.selection().borrow_mut().visible = self.panel_visible;
 
         if let Some(window) = &self.window {
             let size = window.inner_size();
@@ -217,21 +203,23 @@ impl BrowserApp {
 
             if self.panel_visible {
                 let panel_size = Size { width: devtools_width, height: logical_height };
-                let mut panel = DevtoolsPanel::new(panel_size, PANEL_FRAME_ID, PANEL_OVERLAY_FRAME_ID);
+                let agent = self.web_contents.agent().clone();
+                let panel = DevtoolsPanel::new(panel_size, PANEL_FRAME_ID, PANEL_OVERLAY_FRAME_ID, agent);
 
-                if let Some(ref delegate) = self.render_delegate {
-                    panel.set_render_delegate(Rc::downgrade(delegate));
+                {
+                    let mut p = panel.borrow_mut();
+                    if let Some(ref delegate) = self.render_delegate {
+                        p.set_render_delegate(Rc::downgrade(delegate));
+                    }
+                    p.load();
+                    p.show();
                 }
-
-                panel.load();
-
-                let inspector = self.web_contents.inspector().borrow();
-                let selected = inspector.selected_element();
-                let is_pinned = inspector.is_pinned();
-                panel.update(selected.as_ref(), &self.web_contents.frame().dom_tree, is_pinned);
 
                 self.devtools_panel = Some(panel);
             } else {
+                if let Some(ref panel) = self.devtools_panel {
+                    panel.borrow_mut().hide();
+                }
                 self.devtools_panel = None;
             }
 
@@ -290,11 +278,6 @@ impl ApplicationHandler for BrowserApp {
             WindowEvent::KeyboardInput { event: KeyEvent { logical_key, state, .. }, .. } => {
                 let pressed = state == ElementState::Pressed;
                 match logical_key {
-                    Key::Named(NamedKey::Escape) => event_loop.exit(),
-                    Key::Named(NamedKey::F5) if pressed => {
-                        self.load_url();
-                        self.update_panel_content();
-                    }
                     Key::Named(NamedKey::ArrowUp) => {
                         self.pressed_up = pressed;
                         if pressed { if let Some(w) = &self.window { w.request_redraw(); } }

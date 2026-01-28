@@ -4,7 +4,7 @@ mod handlers;
 
 pub use router::{EventRouter, FrameRegion};
 pub use sink::{EventSink, EventHandler};
-pub use handlers::{DefaultEventHandler, DevtoolsOverlayHandler, DevtoolsSelection};
+pub use handlers::DefaultEventHandler;
 
 use std::cell::RefCell;
 use std::rc::Rc;

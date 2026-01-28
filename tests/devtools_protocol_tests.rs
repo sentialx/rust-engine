@@ -1,17 +1,16 @@
 // DevTools Protocol integration tests
 
+use graviton::devtools::DevtoolsAgent;
 use graviton::devtools_protocol::DevtoolsServer;
 use graviton::frame::Frame;
-use graviton::layout::Rect;
+use graviton::layout::Size;
 use serde_json::{json, Value};
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 fn create_test_frame(html_file: &str) -> Rc<RefCell<Frame>> {
-    let viewport = Rect {
-        x: 0.0,
-        y: 0.0,
+    let viewport = Size {
         width: 800.0,
         height: 600.0,
     };
@@ -20,13 +19,18 @@ fn create_test_frame(html_file: &str) -> Rc<RefCell<Frame>> {
     frame
 }
 
+fn create_test_server(frame: &Rc<RefCell<Frame>>) -> DevtoolsServer {
+    let agent = Rc::new(RefCell::new(DevtoolsAgent::new(Rc::downgrade(frame))));
+    DevtoolsServer::new(agent)
+}
+
 fn send_command(server: &mut DevtoolsServer, frame: &mut Frame, method: &str, params: Value) -> Value {
     let request_json = json!({
         "id": 1,
         "method": method,
         "params": params
     });
-    let response_str = server.handle_line(&request_json.to_string(), frame);
+    let response_str = server.handle_line(&request_json.to_string(), frame, None);
     serde_json::from_str(&response_str).expect("Failed to parse response")
 }
 
@@ -37,7 +41,7 @@ fn send_command(server: &mut DevtoolsServer, frame: &mut Frame, method: &str, pa
 #[test]
 fn test_dom_get_document() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getDocument", json!({"depth": 2}));
 
@@ -53,7 +57,7 @@ fn test_dom_get_document() {
 #[test]
 fn test_dom_get_document_depth_zero() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getDocument", json!({"depth": 0}));
 
@@ -66,7 +70,7 @@ fn test_dom_get_document_depth_zero() {
 #[test]
 fn test_dom_query_selector_by_tag() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
         "nodeId": 1,
@@ -81,7 +85,7 @@ fn test_dom_query_selector_by_tag() {
 #[test]
 fn test_dom_query_selector_by_class() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
         "nodeId": 1,
@@ -96,7 +100,7 @@ fn test_dom_query_selector_by_class() {
 #[test]
 fn test_dom_query_selector_not_found() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
         "nodeId": 1,
@@ -111,7 +115,7 @@ fn test_dom_query_selector_not_found() {
 #[test]
 fn test_dom_query_selector_all() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelectorAll", json!({
         "nodeId": 1,
@@ -126,7 +130,7 @@ fn test_dom_query_selector_all() {
 #[test]
 fn test_dom_get_box_model() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // First get the element
     let query_response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -156,7 +160,7 @@ fn test_dom_get_box_model() {
 #[test]
 fn test_dom_get_attributes() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // First get the element
     let query_response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -182,7 +186,7 @@ fn test_dom_get_attributes() {
 #[test]
 fn test_dom_get_outer_html() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // First get the element
     let query_response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -207,7 +211,7 @@ fn test_dom_get_outer_html() {
 #[test]
 fn test_dom_describe_node() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.describeNode", json!({
         "nodeId": 1,
@@ -225,7 +229,7 @@ fn test_dom_describe_node() {
 #[test]
 fn test_dom_node_not_found() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getBoxModel", json!({
         "nodeId": 99999
@@ -242,7 +246,7 @@ fn test_dom_node_not_found() {
 #[test]
 fn test_css_get_computed_style() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // First get the element
     let query_response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -275,7 +279,7 @@ fn test_css_get_computed_style() {
 #[test]
 fn test_css_get_matched_styles() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // First get the element
     let query_response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -300,7 +304,7 @@ fn test_css_get_matched_styles() {
 #[test]
 fn test_page_get_layout_metrics() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Page.getLayoutMetrics", json!({}));
 
@@ -318,7 +322,7 @@ fn test_page_get_layout_metrics() {
 #[test]
 fn test_page_capture_screenshot() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Page.captureScreenshot", json!({
         "format": "png"
@@ -342,7 +346,7 @@ fn test_page_capture_screenshot() {
 #[test]
 fn test_page_navigate() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Navigate to a different file
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Page.navigate", json!({
@@ -356,7 +360,7 @@ fn test_page_navigate() {
 #[test]
 fn test_page_reload() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Page.reload", json!({}));
 
@@ -370,7 +374,7 @@ fn test_page_reload() {
 #[test]
 fn test_input_dispatch_mouse_event() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Input.dispatchMouseEvent", json!({
         "type": "mouseMoved",
@@ -384,7 +388,7 @@ fn test_input_dispatch_mouse_event() {
 #[test]
 fn test_input_dispatch_mouse_click() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Input.dispatchMouseEvent", json!({
         "type": "mousePressed",
@@ -400,7 +404,7 @@ fn test_input_dispatch_mouse_click() {
 #[test]
 fn test_input_dispatch_key_event() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Input.dispatchKeyEvent", json!({
         "type": "keyDown",
@@ -418,7 +422,7 @@ fn test_input_dispatch_key_event() {
 #[test]
 fn test_runtime_evaluate_document_url() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Runtime.evaluate", json!({
         "expression": "document.URL"
@@ -432,7 +436,7 @@ fn test_runtime_evaluate_document_url() {
 #[test]
 fn test_runtime_evaluate_literals() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Test number
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Runtime.evaluate", json!({
@@ -463,7 +467,7 @@ fn test_runtime_evaluate_literals() {
 #[test]
 fn test_domain_enable_disable() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Test enable/disable for each domain
     for domain in &["DOM", "CSS", "Page", "Input", "Runtime"] {
@@ -482,7 +486,7 @@ fn test_domain_enable_disable() {
 #[test]
 fn test_unknown_method() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "Unknown.method", json!({}));
 
@@ -493,7 +497,7 @@ fn test_unknown_method() {
 #[test]
 fn test_unknown_domain() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let response = send_command(&mut server, &mut frame.borrow_mut(), "FakeDomain.fakeMethod", json!({}));
 
@@ -504,7 +508,7 @@ fn test_unknown_domain() {
 #[test]
 fn test_missing_required_param() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // querySelector requires nodeId and selector
     let response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({}));
@@ -516,9 +520,9 @@ fn test_missing_required_param() {
 #[test]
 fn test_invalid_json() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
-    let response_str = server.handle_line("not valid json", &mut frame.borrow_mut());
+    let response_str = server.handle_line("not valid json", &mut frame.borrow_mut(), None);
     let response: Value = serde_json::from_str(&response_str).unwrap();
 
     assert!(response.get("error").is_some());
@@ -532,7 +536,7 @@ fn test_invalid_json() {
 #[test]
 fn test_overlay_enable_disable() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     let enable = send_command(&mut server, &mut frame.borrow_mut(), "Overlay.enable", json!({}));
     assert!(enable.get("error").is_none());
@@ -544,7 +548,7 @@ fn test_overlay_enable_disable() {
 #[test]
 fn test_overlay_highlight_node() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // First get an element
     let query = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -566,7 +570,7 @@ fn test_overlay_highlight_node() {
 #[test]
 fn test_overlay_hide_highlight() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Get and highlight an element
     let query = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -587,7 +591,7 @@ fn test_overlay_hide_highlight() {
 #[test]
 fn test_screenshot_with_overlay() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Get screenshot without overlay
     let screenshot1 = send_command(&mut server, &mut frame.borrow_mut(), "Page.captureScreenshot", json!({"format": "png"}));
@@ -623,7 +627,7 @@ fn test_screenshot_with_overlay() {
 #[test]
 fn test_node_ids_stable_across_queries() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Query the same element twice
     let response1 = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({
@@ -644,7 +648,7 @@ fn test_node_ids_stable_across_queries() {
 #[test]
 fn test_node_registry_clears_on_navigation() {
     let frame = create_test_frame("test_fixtures/borders.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Get a node
     let _response1 = send_command(&mut server, &mut frame.borrow_mut(), "DOM.querySelector", json!({

@@ -1,23 +1,59 @@
+use crate::devtools::{DevtoolsAgent, SelectionObserver};
 use crate::events::EventSink;
 use crate::dom::{DomElement, NodeType};
 use crate::layout::Size;
 use crate::renderer::{CompositeFrame, HybridRenderer};
 use crate::ui::web_contents::WebContents;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 pub struct DevtoolsPanel {
     web_contents: WebContents,
+    agent: Rc<RefCell<DevtoolsAgent>>,
     loaded: bool,
+    /// Self-reference for observer callback (set after construction)
+    self_ref: Weak<RefCell<Self>>,
 }
 
 impl DevtoolsPanel {
-    pub fn new(viewport: Size, frame_id: usize, overlay_frame_id: usize) -> Self {
-        Self {
+    /// Create a new DevtoolsPanel wrapped in Rc<RefCell<>>, registered as observer.
+    pub fn new(
+        viewport: Size,
+        frame_id: usize,
+        overlay_frame_id: usize,
+        agent: Rc<RefCell<DevtoolsAgent>>,
+    ) -> Rc<RefCell<Self>> {
+        let panel = Rc::new(RefCell::new(Self {
             web_contents: WebContents::new(viewport, frame_id, overlay_frame_id),
+            agent: agent.clone(),
             loaded: false,
+            self_ref: Weak::new(),
+        }));
+
+        // Set self-reference and register as observer
+        panel.borrow_mut().self_ref = Rc::downgrade(&panel);
+        agent.borrow_mut().add_observer(Rc::downgrade(&panel) as _);
+
+        panel
+    }
+
+    /// Rebuild UI based on current agent state.
+    fn rebuild_ui(&mut self) {
+        let agent = self.agent.borrow();
+        let selected = agent.get_selected_element();
+        let is_pinned = agent.is_pinned();
+        let main_dom_tree = agent.frame().map(|f| f.borrow().dom_tree.clone());
+        drop(agent);
+
+        if let Some(dom_tree) = main_dom_tree {
+            self.update_content(selected.as_ref(), &dom_tree, is_pinned);
         }
+    }
+
+    /// Get the DevtoolsAgent
+    pub fn agent(&self) -> &Rc<RefCell<DevtoolsAgent>> {
+        &self.agent
     }
 
     pub fn set_viewport(&mut self, width: f32, height: f32) {
@@ -44,6 +80,16 @@ impl DevtoolsPanel {
         self.loaded = true;
     }
 
+    /// Show the panel and enable devtools inspection.
+    pub fn show(&mut self) {
+        self.agent.borrow_mut().enable();
+    }
+
+    /// Hide the panel and disable devtools inspection.
+    pub fn hide(&mut self) {
+        self.agent.borrow_mut().disable();
+    }
+
     pub fn is_loaded(&self) -> bool {
         self.loaded
     }
@@ -60,7 +106,7 @@ impl DevtoolsPanel {
         self.web_contents.scroll_y()
     }
 
-    pub fn update(
+    fn update_content(
         &mut self,
         selected_element: Option<&Rc<RefCell<DomElement>>>,
         main_dom_tree: &Vec<Rc<RefCell<DomElement>>>,
@@ -413,4 +459,11 @@ fn format_computed_prop_with_swatch(name: &str, value: &str, color: (f32, f32, f
         "<div class=\"computed-prop\"><span class=\"computed-name\">{}</span>: <span class=\"color-swatch\" style=\"background:rgb({},{},{})\"></span><span class=\"computed-value\">{}</span></div>",
         name, r as u8, g as u8, b as u8, value
     )
+}
+
+/// Observer implementation - rebuilds UI when selection changes.
+impl SelectionObserver for RefCell<DevtoolsPanel> {
+    fn on_selection_changed(&self) {
+        self.borrow_mut().rebuild_ui();
+    }
 }
