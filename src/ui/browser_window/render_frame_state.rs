@@ -3,7 +3,8 @@ use std::rc::{Rc, Weak};
 
 use crate::events::{EventHandler, EventSink};
 use crate::frame::{Frame, RenderDelegate};
-use crate::layout::Rect;
+use crate::layout::Size;
+use crate::renderer::HybridRenderer;
 
 pub(crate) struct RenderFrameState {
     frame: Rc<RefCell<Frame>>,
@@ -12,7 +13,7 @@ pub(crate) struct RenderFrameState {
 
 impl RenderFrameState {
     /// Create a render frame with event handling (for interactive frames)
-    pub(crate) fn new(viewport: Rect) -> Self {
+    pub(crate) fn new(viewport: Size) -> Self {
         let frame = Frame::new(viewport);
         let sink = EventSink::new(frame.clone());
 
@@ -23,7 +24,7 @@ impl RenderFrameState {
     }
 
     /// Create a render-only frame (no event handling, for overlays)
-    pub(crate) fn new_render_only(viewport: Rect) -> Self {
+    pub(crate) fn new_render_only(viewport: Size) -> Self {
         Self {
             frame: Frame::new(viewport),
             sink: None,
@@ -41,6 +42,16 @@ impl RenderFrameState {
 
     pub(crate) fn frame_mut(&self) -> std::cell::RefMut<'_, Frame> {
         self.frame.borrow_mut()
+    }
+
+    /// Get a weak reference to the frame
+    pub(crate) fn frame_weak(&self) -> Weak<RefCell<Frame>> {
+        Rc::downgrade(&self.frame)
+    }
+
+    /// Get a strong reference to the frame
+    pub(crate) fn frame_rc(&self) -> Rc<RefCell<Frame>> {
+        self.frame.clone()
     }
 
     pub(crate) fn sink_rc(&self) -> Rc<RefCell<EventSink>> {
@@ -86,5 +97,11 @@ impl RenderFrameState {
     /// Trigger relayout with current viewport dimensions
     pub(crate) fn relayout(&mut self) {
         self.frame.borrow_mut().relayout();
+    }
+
+    /// Update styles and render the frame
+    pub(crate) fn render(&self, renderer: &mut HybridRenderer, frame_id: usize) {
+        self.frame_mut().update_styles_if_needed();
+        renderer.render(&self.frame(), frame_id, self.scroll_y());
     }
 }

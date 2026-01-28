@@ -6,7 +6,7 @@ use crate::{
     css::parse_css,
     dom::{DomElement, ElementKind, NodeType},
     html::{parse_html, HtmlNode, HtmlNodeType},
-    layout::{compute_styles, create_layout_tree, get_render_array, propagate_styles, reflow, relayout, Rect, RenderItem, boxes::LayoutNode},
+    layout::{compute_styles, create_layout_tree, get_render_array, propagate_styles, reflow, relayout, Rect, Size, RenderItem, boxes::LayoutNode},
     styles::StyleRule,
     text::FontManager,
 };
@@ -35,7 +35,7 @@ fn extract_style_tags(tree: &Vec<Rc<RefCell<DomElement>>>, css: &mut String) {
 /// Frame manages the document structure, styles, layout, and fonts
 /// It produces RenderItems that can be passed to any renderer
 pub struct Frame {
-    pub viewport: Rect,
+    pub viewport: Size,
     pub render_array: Vec<RenderItem>,
     pub page_height: f32,
     pub dom_tree: Vec<Rc<RefCell<DomElement>>>,
@@ -59,7 +59,7 @@ pub trait RenderDelegate {
 }
 
 impl Frame {
-    pub fn new(viewport: Rect) -> Rc<RefCell<Frame>> {
+    pub fn new(viewport: Size) -> Rc<RefCell<Frame>> {
         let default_css =
             fs::read_to_string("default_styles.css").expect("error while reading default_styles.css");
         let default_styles = parse_css(&default_css);
@@ -275,7 +275,7 @@ impl Frame {
         let s = Instant::now();
         self.ensure_layout_tree();
         if let Some(ref mut tree) = self.cached_layout_tree {
-            relayout(tree, &self.viewport);
+            relayout(tree, &self.viewport.to_rect());
             println!("[{}] Resize: {:?}", self.log_name(), s.elapsed());
         }
         self.build_render_array();
@@ -292,7 +292,7 @@ impl Frame {
         let s = Instant::now();
         self.ensure_layout_tree();
         if let Some(ref mut tree) = self.cached_layout_tree {
-            relayout(tree, &self.viewport);
+            relayout(tree, &self.viewport.to_rect());
             println!("[{}] Relayout: {:?}", self.log_name(), s.elapsed());
         }
         self.build_render_array();
@@ -315,7 +315,7 @@ impl Frame {
     fn ensure_layout_tree(&mut self) -> bool {
         if self.cached_layout_tree.is_none() {
             let s = Instant::now();
-            let tree = create_layout_tree(&mut self.dom_tree, &mut self.font_manager, &self.viewport);
+            let tree = create_layout_tree(&mut self.dom_tree, &mut self.font_manager, &self.viewport.to_rect());
             self.cached_layout_tree = Some(tree);
             println!("[{}] Build layout tree: {:?}", self.log_name(), s.elapsed());
             true
@@ -331,10 +331,10 @@ impl Frame {
         if let Some(ref mut tree) = self.cached_layout_tree {
             if freshly_built {
                 // Tree was just built and measured, only need layout pass
-                relayout(tree, &self.viewport);
+                relayout(tree, &self.viewport.to_rect());
             } else {
                 // Existing tree, need to remeasure
-                reflow(tree, &mut self.font_manager, &self.viewport);
+                reflow(tree, &mut self.font_manager, &self.viewport.to_rect());
             }
             println!("[{}] Reflow: {:?}", self.log_name(), s.elapsed());
         }
@@ -344,10 +344,13 @@ impl Frame {
     pub fn build_render_array(&mut self) {
         let s = Instant::now();
 
-        // Use a very tall viewport to get all items
-        let mut full_viewport = self.viewport.clone();
-        full_viewport.y = 0.0;
-        full_viewport.height = 100000.0;
+        // Use viewport that covers all content in local coordinates
+        let full_viewport = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: self.viewport.width,
+            height: 100000.0,
+        };
 
         self.render_array = get_render_array(&mut self.dom_tree, &full_viewport)
             .into_iter()

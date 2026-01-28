@@ -43,6 +43,18 @@ pub struct Rect {
     pub height: f32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Size {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Size {
+    pub fn to_rect(&self) -> Rect {
+        Rect { x: 0.0, y: 0.0, width: self.width, height: self.height }
+    }
+}
+
 use crate::properties::border::ComputedBorder;
 use crate::properties::box_shadow::ComputedBoxShadow;
 

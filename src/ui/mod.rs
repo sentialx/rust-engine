@@ -1,4 +1,5 @@
 pub mod browser_window;
-pub mod devtools;
-pub mod devtools_manager;
 pub mod devtools_panel;
+pub mod element_inspector;
+pub mod overlay_frame;
+pub mod web_contents;
