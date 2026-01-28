@@ -1,6 +1,8 @@
 mod render_frame_state;
 
 pub(crate) use render_frame_state::RenderFrameState;
+use crate::devtools_protocol::websocket::{self, DevtoolsReceiver};
+use crate::devtools_protocol::DevtoolsServer;
 use crate::events::{EventRouter, FrameRegion, InputEventKind};
 use crate::frame::RenderDelegate;
 use crate::layout::{Rect, Size};
@@ -10,7 +12,6 @@ use crate::ui::web_contents::WebContents;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -53,6 +54,8 @@ struct BrowserApp {
 
     web_contents: WebContents,
     devtools_panel: Option<Rc<RefCell<DevtoolsPanel>>>,
+    devtools_server: DevtoolsServer,
+    devtools_receiver: DevtoolsReceiver,
     router: EventRouter,
 
     pressed_up: bool,
@@ -62,12 +65,17 @@ struct BrowserApp {
     scale_factor: f32,
     initialized: bool,
     panel_visible: bool,
+
 }
 
 impl BrowserApp {
     fn new(url: String) -> Self {
         let empty_size = Size { width: 0.0, height: 0.0 };
         let web_contents = WebContents::new(empty_size, MAIN_FRAME_ID, MAIN_OVERLAY_FRAME_ID);
+
+        // Create DevtoolsServer and start WebSocket server
+        let devtools_server = DevtoolsServer::new(web_contents.agent().clone());
+        let devtools_receiver = websocket::start_server(9222);
 
         Self {
             url,
@@ -77,6 +85,8 @@ impl BrowserApp {
             render_delegate: None,
             web_contents,
             devtools_panel: None,
+            devtools_server,
+            devtools_receiver,
             router: EventRouter::new(),
             pressed_up: false,
             pressed_down: false,
@@ -204,6 +214,10 @@ impl BrowserApp {
             if self.panel_visible {
                 let panel_size = Size { width: devtools_width, height: logical_height };
                 let agent = self.web_contents.agent().clone();
+
+                // Enable inspect mode when opening devtools
+                agent.borrow_mut().set_inspect_mode(true);
+
                 let panel = DevtoolsPanel::new(panel_size, PANEL_FRAME_ID, PANEL_OVERLAY_FRAME_ID, agent);
 
                 {
@@ -217,6 +231,9 @@ impl BrowserApp {
 
                 self.devtools_panel = Some(panel);
             } else {
+                // Disable inspect mode when closing devtools
+                self.web_contents.agent().borrow_mut().set_inspect_mode(false);
+
                 if let Some(ref panel) = self.devtools_panel {
                     panel.borrow_mut().hide();
                 }
@@ -228,7 +245,7 @@ impl BrowserApp {
     }
 }
 
-impl ApplicationHandler for BrowserApp {
+impl ApplicationHandler<()> for BrowserApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attrs = Window::default_attributes()
             .with_title("Graviton")
@@ -340,12 +357,115 @@ impl ApplicationHandler for BrowserApp {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        self.process_devtools_requests();
+        // Also check for selection changes from browser-side interactions
+        self.flush_agent_notifications();
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        // CDP request arrived - process it immediately
+        self.process_devtools_requests();
+    }
+}
+
+impl BrowserApp {
+    /// Process pending CDP requests from the WebSocket server.
+    fn process_devtools_requests(&mut self) {
+        while let Some(request) = self.devtools_receiver.try_recv() {
+            // Parse request to check method
+            let method = serde_json::from_str::<serde_json::Value>(&request.message)
+                .ok()
+                .and_then(|v| v.get("method").and_then(|m| m.as_str()).map(String::from));
+
+            let response = self.devtools_server.handle_line(
+                &request.message,
+                &mut self.web_contents.frame_mut(),
+                self.renderer.as_mut(),
+            );
+
+            println!("CDP response: {}", response);
+            // Send response back (ignore errors if client disconnected)
+            let _ = request.response_tx.blocking_send(response);
+
+            // Send follow-up events for certain methods
+            if let Some(ref m) = method {
+                self.send_cdp_events_for_method(m, &request.response_tx);
+            }
+        }
+
+        // Flush any pending notifications from CDP commands
+        self.flush_agent_notifications();
+    }
+
+    /// Send CDP events that should follow certain method calls.
+    fn send_cdp_events_for_method(&mut self, method: &str, tx: &tokio::sync::mpsc::Sender<String>) {
+        match method {
+            "DOM.enable" => {
+                // Send DOM.documentUpdated to trigger getDocument
+                let event = r#"{"method":"DOM.documentUpdated","params":{}}"#;
+                let _ = tx.blocking_send(event.to_string());
+            }
+            "Page.enable" => {
+                // Send Page.frameNavigated event
+                let url = {
+                    let frame = self.web_contents.frame();
+                    if frame.url.is_empty() { "about:blank".to_string() } else { frame.url.clone() }
+                };
+                let event = format!(
+                    r#"{{"method":"Page.frameNavigated","params":{{"frame":{{"id":"main","loaderId":"1","url":"{}","mimeType":"text/html","securityOrigin":"://"}}}}}}"#,
+                    url
+                );
+                let _ = tx.blocking_send(event);
+            }
+            "Overlay.highlightNode" | "Overlay.hideHighlight"
+            | "DOM.highlightNode" | "DOM.hideHighlight"
+            | "DOM.setInspectedNode" | "DOM.getBoxModel" => {
+                // Request redraw to show/hide highlight overlay
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Flush pending agent notifications outside of borrow.
+    fn flush_agent_notifications(&self) {
+        let (pending, observers, cdp_change) = {
+            let mut agent = self.web_contents.agent().borrow_mut();
+            (
+                agent.take_pending_notification(),
+                agent.collect_observers(),
+                agent.take_cdp_selection_change(),
+            )
+        };
+
+        // Notify internal observers
+        if pending {
+            for observer in observers {
+                observer.on_selection_changed();
+            }
+        }
+
+        // Send CDP event if selection changed
+        if let Some(node_id) = cdp_change {
+            let event = format!(
+                r#"{{"method":"Overlay.inspectNodeRequested","params":{{"backendNodeId":{}}}}}"#,
+                node_id
+            );
+            self.devtools_receiver.send_event(&event);
+        }
+    }
 }
 
 pub fn create_browser_window(url: String) {
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop: EventLoop<()> = EventLoop::with_user_event().build().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = BrowserApp::new(url);
+
+    // Set waker so CDP requests wake up the event loop immediately
+    app.devtools_receiver.set_waker(event_loop.create_proxy());
+
     event_loop.run_app(&mut app).unwrap();
 }

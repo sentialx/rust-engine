@@ -272,7 +272,7 @@ pub fn handle(
                     .iter()
                     .map(|decl| CSSProperty {
                         name: decl.key.clone(),
-                        value: format!("{:?}", decl.value),
+                        value: decl.value.to_string(),
                     })
                     .collect();
 

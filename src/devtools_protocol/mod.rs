@@ -6,6 +6,7 @@
 
 pub mod types;
 pub mod handlers;
+pub mod websocket;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -74,10 +75,10 @@ impl DevtoolsServer {
         }
     }
 
-    /// Get the currently highlighted node
+    /// Get the currently selected/highlighted node
     pub fn get_highlighted_node(&self) -> Option<Rc<RefCell<DomElement>>> {
         let agent = self.agent.borrow();
-        agent.highlighted_node_id()
+        agent.get_selected_node_id()
             .and_then(|id| agent.get_element_by_id(id))
     }
 

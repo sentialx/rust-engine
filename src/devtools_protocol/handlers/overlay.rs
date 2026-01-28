@@ -15,11 +15,14 @@ pub fn handle(
 ) -> Response {
     match command {
         "enable" => {
+            // Enable the devtools agent for overlay highlighting
+            println!("Overlay.enable called");
+            server.agent().borrow_mut().enable();
             Response::success(id, json!({}))
         }
 
         "disable" => {
-            server.set_highlighted_node(None);
+            server.agent().borrow_mut().disable();
             Response::success(id, json!({}))
         }
 
@@ -44,6 +47,28 @@ pub fn handle(
 
         "hideHighlight" => {
             server.set_highlighted_node(None);
+            Response::success(id, json!({}))
+        }
+
+        "setInspectMode" => {
+            // mode: "searchForNode" enables picker, "none" disables
+            let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("none");
+            println!("Overlay.setInspectMode: mode={}", mode);
+            let mut agent = server.agent().borrow_mut();
+
+            let active = mode == "searchForNode" || mode == "searchForUAShadowDOM";
+            agent.set_inspect_mode(active);
+            Response::success(id, json!({}))
+        }
+
+        "setShowViewportSizeOnResize" |
+        "setShowGridOverlays" |
+        "setShowFlexOverlays" |
+        "setShowScrollSnapOverlays" |
+        "setShowContainerQueryOverlays" |
+        "setShowIsolatedElements" |
+        "setShowHinge" => {
+            // Stub handlers for overlay features we don't support yet
             Response::success(id, json!({}))
         }
 

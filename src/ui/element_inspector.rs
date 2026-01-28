@@ -16,7 +16,7 @@ pub struct ElementInspector {
     main_frame: Weak<RefCell<Frame>>,
     main_sink: Weak<RefCell<EventSink>>,
     // Change detection for overlay rebuild
-    last_selected_id: Option<u64>,
+    last_highlighted_id: Option<u64>,
     last_scroll_y: f32,
 }
 
@@ -40,7 +40,7 @@ impl ElementInspector {
             agent,
             main_frame,
             main_sink,
-            last_selected_id: None,
+            last_highlighted_id: None,
             last_scroll_y: 0.0,
         }))
     }
@@ -66,22 +66,22 @@ impl ElementInspector {
 
         // Check if anything changed that requires a rebuild
         let agent = self.agent.borrow();
-        let selected_id = agent.get_selected_node_id();
-        let selected_element = agent.get_selected_element();
+        let highlighted_id = agent.get_highlighted_node_id();
+        let highlighted_element = agent.get_selected_element();
         drop(agent);
 
-        let selection_changed = self.last_selected_id != selected_id;
+        let highlight_changed = self.last_highlighted_id != highlighted_id;
         let scroll_changed = (scroll_y - self.last_scroll_y).abs() > 0.5;
 
-        if !selection_changed && !scroll_changed {
+        if !highlight_changed && !scroll_changed {
             return;
         }
 
         // Rebuild overlay content
-        self.overlay.rebuild(selected_element.as_ref(), viewport, scroll_y);
+        self.overlay.rebuild(highlighted_element.as_ref(), viewport, scroll_y);
 
         // Update tracking
-        self.last_selected_id = selected_id;
+        self.last_highlighted_id = highlighted_id;
         self.last_scroll_y = scroll_y;
     }
 
