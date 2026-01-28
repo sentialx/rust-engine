@@ -147,6 +147,11 @@ impl DevtoolsManager {
         self.overlay.rebuild(selected.as_ref(), main_viewport, scroll_y);
     }
 
+    /// Update overlay position on scroll (always rebuilds regardless of selection change)
+    pub fn update_overlay_for_scroll(&mut self, main_viewport: Rect, scroll_y: f32) {
+        self.rebuild_overlay(main_viewport, scroll_y);
+    }
+
     /// Update both panel content and overlay (only if selection changed)
     pub fn update(&mut self, main_dom_tree: &Vec<Rc<RefCell<DomElement>>>, main_viewport: Rect, scroll_y: f32) {
         if !self.selection_changed() {
