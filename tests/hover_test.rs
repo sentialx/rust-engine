@@ -1,12 +1,18 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use graviton::devtools::DevtoolsAgent;
 use graviton::events::{DefaultEventHandler, EventSink, InputEventKind};
 use graviton::frame::Frame;
-use graviton::layout::Rect;
+use graviton::layout::{Rect, Size};
 use graviton::css::parse_css;
 use graviton::devtools_protocol::DevtoolsServer;
 use serde_json::{json, Value};
+
+fn create_test_server(frame: &Rc<RefCell<Frame>>) -> DevtoolsServer {
+    let agent = Rc::new(RefCell::new(DevtoolsAgent::new(Rc::downgrade(frame))));
+    DevtoolsServer::new(agent)
+}
 
 #[test]
 fn test_hover_css_parsing() {
@@ -55,7 +61,7 @@ fn test_hover_in_html() {
 </html>
 "#;
 
-    let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
+    let viewport = Size { width: 800.0, height: 600.0 };
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_html(html);
 
@@ -94,7 +100,7 @@ fn test_hover_style_applied() {
 </html>
 "#;
 
-    let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
+    let viewport = Size { width: 800.0, height: 600.0 };
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_html(html);
     // Dirty tracking is now automatic via Frame's self-reference
@@ -169,16 +175,16 @@ fn send_command(server: &mut DevtoolsServer, frame: &mut Frame, method: &str, pa
         "method": method,
         "params": params
     });
-    let response_str = server.handle_line(&request_json.to_string(), frame);
+    let response_str = server.handle_line(&request_json.to_string(), frame, None);
     serde_json::from_str(&response_str).expect("Failed to parse response")
 }
 
 #[test]
 fn test_hover_ui_demo() {
-    let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
+    let viewport = Size { width: 800.0, height: 600.0 };
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_url("ui_demo.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Print all hover rules
     println!("All hover rules in ui_demo.html:");
@@ -255,10 +261,10 @@ fn test_hover_via_mouse_move() {
     use base64::Engine;
     use std::fs;
 
-    let viewport = Rect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 };
+    let viewport = Size { width: 800.0, height: 600.0 };
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_url("ui_demo.html");
-    let mut server = DevtoolsServer::new();
+    let mut server = create_test_server(&frame);
 
     // Find a .pill element and get its box model
     let _response = send_command(&mut server, &mut frame.borrow_mut(), "DOM.getDocument", json!({"depth": 0}));

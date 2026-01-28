@@ -13,7 +13,7 @@ pub trait EventHandler {
 }
 
 pub struct EventSink {
-    /// Handlers that run before the default handler (e.g., DevtoolsOverlayHandler)
+    /// Handlers that run before the default handler (e.g., ElementInspectorHandler)
     pre_handlers: Vec<Box<dyn EventHandler>>,
     /// Default handler for CSS hover state
     default_handler: DefaultEventHandler,
@@ -62,7 +62,7 @@ impl EventSink {
         let mut event = InputEvent::new(kind, target, x, y);
         let mut result = EventResult::default();
 
-        // Run pre-handlers (like DevtoolsOverlayHandler)
+        // Run pre-handlers (like ElementInspectorHandler)
         for handler in &mut self.pre_handlers {
             let handler_result = handler.handle(&mut event, &self.frame);
             result.merge(handler_result);

@@ -8,9 +8,12 @@
 //
 // Reads JSON CDP commands from stdin, writes responses to stdout.
 
+use std::cell::RefCell;
 use std::env;
 use std::process;
+use std::rc::Rc;
 
+use graviton::devtools::DevtoolsAgent;
 use graviton::devtools_protocol::DevtoolsServer;
 use graviton::frame::Frame;
 use graviton::layout::Size;
@@ -55,8 +58,11 @@ fn main() {
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_url(html_file);
 
+    // Create DevtoolsAgent with frame reference
+    let agent = Rc::new(RefCell::new(DevtoolsAgent::new(Rc::downgrade(&frame))));
+
     // Create and run the devtools server
-    let mut server = DevtoolsServer::new();
+    let mut server = DevtoolsServer::new(agent);
 
     {
         let mut frame_ref = frame.borrow_mut();

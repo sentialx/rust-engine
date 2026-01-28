@@ -1,7 +1,7 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::{Rc, Weak};
 
-use crate::events::DevtoolsSelection;
+use crate::devtools::DevtoolsAgent;
 use crate::frame::{Frame, RenderDelegate};
 use crate::layout::Size;
 use crate::renderer::{CompositeFrame, HybridRenderer};
@@ -13,6 +13,7 @@ use crate::ui::element_inspector::ElementInspector;
 pub struct WebContents {
     inner: RenderFrameState,
     inspector: Rc<RefCell<ElementInspector>>,
+    agent: Rc<RefCell<DevtoolsAgent>>,
     frame_id: usize,
     overlay_frame_id: usize,
 }
@@ -20,8 +21,14 @@ pub struct WebContents {
 impl WebContents {
     pub fn new(viewport: Size, frame_id: usize, overlay_frame_id: usize) -> Self {
         let mut inner = RenderFrameState::new(viewport);
-        let inspector = ElementInspector::install(&mut inner);
-        Self { inner, inspector, frame_id, overlay_frame_id }
+
+        // Create the DevtoolsAgent (disabled by default)
+        let agent = Rc::new(RefCell::new(DevtoolsAgent::new(Weak::new())));
+
+        // Install inspector with the agent
+        let inspector = ElementInspector::install(&mut inner, agent.clone());
+
+        Self { inner, inspector, agent, frame_id, overlay_frame_id }
     }
 
     /// Render main frame and overlay
@@ -34,11 +41,6 @@ impl WebContents {
         self.inspector.borrow().render_overlay(renderer, self.overlay_frame_id);
     }
 
-    /// Check and clear the selection dirty flag
-    pub fn take_selection_dirty(&self) -> bool {
-        self.inspector.borrow().take_selection_dirty()
-    }
-
     /// Get composite frames (main + overlay on top)
     pub fn get_composite_frames<'a>(&self, renderer: &'a HybridRenderer, dest_x: f32) -> Vec<CompositeFrame<'a>> {
         let mut frames = Vec::new();
@@ -49,6 +51,12 @@ impl WebContents {
             frames.push(CompositeFrame { texture: tex, dest_x, scroll_y: 0.0 });
         }
         frames
+    }
+
+    /// Load a URL, clearing devtools state automatically.
+    pub fn load_url(&mut self, url: &str) {
+        self.inner.frame_mut().load_url(url);
+        self.agent.borrow_mut().clear_registry();
     }
 
     // --- Delegate methods to inner RenderFrameState ---
@@ -87,8 +95,8 @@ impl WebContents {
         &self.inspector
     }
 
-    pub fn selection(&self) -> Rc<RefCell<DevtoolsSelection>> {
-        self.inspector.borrow().selection()
+    /// Get the DevtoolsAgent
+    pub fn agent(&self) -> &Rc<RefCell<DevtoolsAgent>> {
+        &self.agent
     }
-
 }
