@@ -138,9 +138,14 @@ impl BrowserApp {
     fn dispatch_event(&mut self, kind: InputEventKind, logical_x: f32, logical_y: f32) -> bool {
         let result = self.router.dispatch(kind, logical_x, logical_y);
 
-        // Just update devtools if needed for non-scroll events
-        if result.handled && !matches!(kind, InputEventKind::Scroll { .. }) {
-            if self.devtools.is_visible() {
+        // Update devtools when visible
+        if result.handled && self.devtools.is_visible() {
+            if matches!(kind, InputEventKind::Scroll { .. }) {
+                // For scroll events, just update overlay position (no selection change check)
+                let viewport = self.main.frame().viewport.clone();
+                let scroll_y = self.main.scroll_y();
+                self.devtools.update_overlay_for_scroll(viewport, scroll_y);
+            } else {
                 self.update_devtools();
             }
         }

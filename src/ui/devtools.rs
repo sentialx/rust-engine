@@ -129,19 +129,19 @@ impl DevtoolsOverlay {
             };
 
             // Adjust coordinates to viewport-relative by subtracting scroll_y
-            let margin_box = clamp_rect(Rect {
+            let margin_box = clamp_rect_to_viewport(Rect {
                 x: flow.hover_rect.x,
                 y: flow.hover_rect.y - scroll_y,
                 width: flow.hover_rect.width,
                 height: flow.hover_rect.height,
             });
-            let border_box = clamp_rect(Rect {
+            let border_box = clamp_rect_to_viewport(Rect {
                 x: flow.x,
                 y: flow.y - scroll_y,
                 width: flow.width,
                 height: flow.height,
             });
-            let content_box = clamp_rect(Rect {
+            let content_box = clamp_rect_to_viewport(Rect {
                 x: flow.x + style.padding.left,
                 y: flow.y + style.padding.top - scroll_y,
                 width: flow.width - style.padding.left - style.padding.right,
@@ -160,8 +160,16 @@ impl DevtoolsOverlay {
                 let mut text_segments = Vec::new();
                 collect_text_segments(&element, &mut text_segments);
                 for seg in &text_segments {
-                    // Adjust text segment y by scroll_y
-                    add_border_box(&frame, &body, seg.x, seg.y - scroll_y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
+                    // Adjust text segment y by scroll_y and clip to viewport
+                    let clipped = clamp_rect_to_viewport(Rect {
+                        x: seg.x,
+                        y: seg.y - scroll_y,
+                        width: seg.width,
+                        height: seg.height,
+                    });
+                    if clipped.width > 0.0 && clipped.height > 0.0 {
+                        add_border_box(&frame, &body, clipped.x, clipped.y, clipped.width, clipped.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
+                    }
                 }
 
                 // Add info popup (position will be adjusted after layout)
@@ -319,13 +327,35 @@ fn add_inset_overlay(
     }
 }
 
-fn clamp_rect(rect: Rect) -> Rect {
-    Rect {
-        x: rect.x,
-        y: rect.y,
-        width: rect.width.max(0.0),
-        height: rect.height.max(0.0),
+/// Clamp a rect to visible viewport area (0,0 to infinity)
+/// Returns a rect that is clipped to only the visible portion
+fn clamp_rect_to_viewport(rect: Rect) -> Rect {
+    // If completely above viewport, return empty rect
+    if rect.y + rect.height <= 0.0 {
+        return Rect { x: rect.x, y: 0.0, width: rect.width.max(0.0), height: 0.0 };
     }
+    // If completely left of viewport, return empty rect
+    if rect.x + rect.width <= 0.0 {
+        return Rect { x: 0.0, y: rect.y, width: 0.0, height: rect.height.max(0.0) };
+    }
+
+    let mut result = rect;
+
+    // Clip top edge
+    if result.y < 0.0 {
+        result.height += result.y; // reduce height by amount above viewport
+        result.y = 0.0;
+    }
+
+    // Clip left edge
+    if result.x < 0.0 {
+        result.width += result.x; // reduce width by amount left of viewport
+        result.x = 0.0;
+    }
+
+    result.width = result.width.max(0.0);
+    result.height = result.height.max(0.0);
+    result
 }
 
 fn collect_text_segments(element: &DomElement, out: &mut Vec<Rect>) {
