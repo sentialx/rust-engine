@@ -23,6 +23,10 @@ impl ComputedBorderSide {
     pub fn is_visible(&self) -> bool {
         self.width > 0.0 && self.style != "none" && self.style != "hidden"
     }
+
+    pub fn is_solid(&self) -> bool {
+        self.is_visible() && (self.style == "solid" || self.style.is_empty())
+    }
 }
 
 /// Computed border for all four sides

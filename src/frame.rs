@@ -281,6 +281,23 @@ impl Frame {
         self.build_render_array();
     }
 
+    /// Update viewport dimensions without triggering relayout (for resize debouncing)
+    pub fn set_viewport_size(&mut self, width: f32, height: f32) {
+        self.viewport.width = width;
+        self.viewport.height = height;
+    }
+
+    /// Trigger relayout with current viewport dimensions
+    pub fn relayout(&mut self) {
+        let s = Instant::now();
+        self.ensure_layout_tree();
+        if let Some(ref mut tree) = self.cached_layout_tree {
+            relayout(tree, &self.viewport);
+            println!("[{}] Relayout: {:?}", self.log_name(), s.elapsed());
+        }
+        self.build_render_array();
+    }
+
     /// Perform full layout and generate render array
     pub fn full_layout(&mut self) {
         let s = Instant::now();

@@ -4,13 +4,11 @@ pub(crate) use render_frame_state::RenderFrameState;
 use crate::events::{EventRouter, FrameRegion, InputEventKind};
 use crate::frame::RenderDelegate;
 use crate::layout::Rect;
-use crate::renderer::{CompositeRegion, Renderer, SkiaRenderer};
+use crate::renderer::{CompositeFrame, HybridRenderer, WgpuCompositor};
 use crate::ui::devtools_manager::DevtoolsManager;
-use crate::utils::Debouncer;
-
-use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -19,11 +17,19 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-use softbuffer::Surface;
+/// Wrapper to allow Rc<Arc<Window>> for the delegate
+struct ArcWindow(Arc<Window>);
+
+impl std::ops::Deref for ArcWindow {
+    type Target = Window;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// Delegate that forwards render requests to the window
 struct WindowRenderDelegate {
-    window: Rc<Window>,
+    window: Rc<ArcWindow>,
 }
 
 impl RenderDelegate for WindowRenderDelegate {
@@ -34,8 +40,9 @@ impl RenderDelegate for WindowRenderDelegate {
 
 struct BrowserApp {
     url: String,
-    window: Option<Rc<Window>>,
-    surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    window: Option<Arc<Window>>,
+    compositor: Option<WgpuCompositor>,
+    renderer: Option<HybridRenderer>,
     render_delegate: Option<Rc<WindowRenderDelegate>>,
 
     // Document layout
@@ -47,9 +54,6 @@ struct BrowserApp {
     // Event routing
     router: EventRouter,
 
-    // Rendering
-    renderer: SkiaRenderer,
-
     // Input state
     pressed_up: bool,
     pressed_down: bool,
@@ -58,7 +62,6 @@ struct BrowserApp {
 
     // UI state
     scale_factor: f32,
-    resize_debouncer: Debouncer<(f32, f32)>,
     initialized: bool,
 }
 
@@ -73,18 +76,17 @@ impl BrowserApp {
         Self {
             url,
             window: None,
-            surface: None,
+            compositor: None,
+            renderer: None,
             render_delegate: None,
             main,
             devtools,
             router: EventRouter::new(),
-            renderer: SkiaRenderer::new(),
             pressed_up: false,
             pressed_down: false,
             mouse_x: 0.0,
             mouse_y: 0.0,
             scale_factor: 1.0,
-            resize_debouncer: Debouncer::new(Duration::from_millis(1)),
             initialized: false,
         }
     }
@@ -97,8 +99,8 @@ impl BrowserApp {
 
     fn update_devtools(&mut self) {
         let viewport = self.main.frame().viewport.clone();
-        let page_height = self.main.frame().page_height.max(viewport.height);
-        self.devtools.update(&self.main.frame().dom_tree, viewport, page_height);
+        let scroll_y = self.main.scroll_y();
+        self.devtools.update(&self.main.frame().dom_tree, viewport, scroll_y);
     }
 
     fn setup_event_routing(&mut self) {
@@ -146,71 +148,77 @@ impl BrowserApp {
         result.handled
     }
 
-    fn render(&mut self) {
+    fn render_and_present(&mut self) {
+        let Some(renderer) = &mut self.renderer else { return };
+
+        let scale = self.scale_factor;
+        renderer.set_scale_factor(scale);
+
+        // Frame IDs for caching
+        const MAIN_FRAME_ID: usize = 0;
+        const PANEL_FRAME_ID: usize = 1;
+        const OVERLAY_FRAME_ID: usize = 2;
+
+        // Update styles/layout for all frames
+        self.main.frame_mut().update_styles_if_needed();
+        let devtools_visible = self.devtools.is_visible();
+        if devtools_visible {
+            self.devtools.panel_mut().render_state_mut().frame_mut().update_styles_if_needed();
+            self.devtools.overlay_mut().render_state_mut().frame_mut().update_styles_if_needed();
+        }
+
+        // Render frames to textures
         let t0 = Instant::now();
-        self.main.render(&mut self.renderer);
+        renderer.render(&self.main.frame(), MAIN_FRAME_ID);
         println!("  main render: {:?}", t0.elapsed());
 
-        let t1 = Instant::now();
-        self.devtools.render(&mut self.renderer);
-        println!("  devtools render: {:?}", t1.elapsed());
+        if devtools_visible {
+            let t1 = Instant::now();
+            renderer.render(&self.devtools.panel_mut().render_state_mut().frame(), PANEL_FRAME_ID);
+            println!("  panel render: {:?}", t1.elapsed());
 
+            let t2 = Instant::now();
+            renderer.render(&self.devtools.overlay_mut().render_state_mut().frame(), OVERLAY_FRAME_ID);
+            println!("  overlay render: {:?}", t2.elapsed());
+        }
+
+        // Collect frame data for compositing
         let main_scroll_y = self.main.scroll_y();
-        let devtools_scroll_y = self.devtools.panel_scroll_y();
+        let main_viewport_width = self.main.frame().viewport.width;
+        let panel_scroll_y = self.devtools.panel_scroll_y();
 
-        let mut regions = Vec::new();
-        if let Some(main_buffer) = self.main.buffer() {
-            regions.push(CompositeRegion {
-                buffer: main_buffer,
+        // Build composite frames
+        let mut frames: Vec<CompositeFrame> = Vec::new();
+
+        if let Some(tex) = renderer.get_texture(MAIN_FRAME_ID) {
+            frames.push(CompositeFrame {
+                texture: tex,
                 dest_x: 0.0,
                 scroll_y: main_scroll_y,
-                opaque: true,
             });
         }
 
-        self.devtools.add_composite_regions(
-            &mut regions,
-            self.main.frame().viewport.width,
-            main_scroll_y,
-            devtools_scroll_y,
-        );
-
-        let t2 = Instant::now();
-        self.renderer.composite(&regions);
-        println!("  composite: {:?}", t2.elapsed());
-    }
-
-    fn present(&mut self) {
-        let Some(surface) = &mut self.surface else { return };
-        let Some(window) = &self.window else { return };
-
-        let size = window.inner_size();
-        let width = size.width;
-        let height = size.height;
-
-        if width == 0 || height == 0 {
-            return;
+        if devtools_visible {
+            if let Some(tex) = renderer.get_texture(PANEL_FRAME_ID) {
+                frames.push(CompositeFrame {
+                    texture: tex,
+                    dest_x: main_viewport_width,
+                    scroll_y: panel_scroll_y,
+                });
+            }
+            if let Some(tex) = renderer.get_texture(OVERLAY_FRAME_ID) {
+                frames.push(CompositeFrame {
+                    texture: tex,
+                    dest_x: 0.0,
+                    scroll_y: 0.0, // Overlay is viewport-relative
+                });
+            }
         }
 
-        let t0 = Instant::now();
-        surface
-            .resize(
-                NonZeroU32::new(width).unwrap(),
-                NonZeroU32::new(height).unwrap(),
-            )
-            .expect("Failed to resize surface");
-
-        let mut buffer = surface.buffer_mut().expect("Failed to get buffer");
-        let display_buffer = self.renderer.get_display_buffer();
-        println!("  surface setup: {:?}", t0.elapsed());
-
-        let t1 = Instant::now();
-        buffer.copy_from_slice(display_buffer);
-        println!("  buffer copy: {:?}", t1.elapsed());
-
-        let t2 = Instant::now();
-        buffer.present().expect("Failed to present buffer");
-        println!("  present: {:?}", t2.elapsed());
+        // Composite to screen
+        if let Some(compositor) = &mut self.compositor {
+            compositor.compose_frames(&frames, scale);
+        }
     }
 
     fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -218,8 +226,17 @@ impl BrowserApp {
             return;
         }
 
-        self.renderer.resize(new_size.width, new_size.height, self.scale_factor);
+        // Resize compositor immediately for correct surface dimensions
+        if let Some(compositor) = &mut self.compositor {
+            compositor.resize(new_size.width, new_size.height);
+        }
 
+        // Clear cached frame textures to prevent stale content
+        if let Some(renderer) = &mut self.renderer {
+            renderer.clear_caches();
+        }
+
+        // Update viewport and relayout immediately
         let logical_width = new_size.width as f32 / self.scale_factor;
         let logical_height = new_size.height as f32 / self.scale_factor;
         let devtools_width = self.devtools.reserved_width();
@@ -228,13 +245,18 @@ impl BrowserApp {
         self.main.set_viewport(main_width, logical_height);
         self.devtools.set_viewport(devtools_width, logical_height, main_width);
         self.setup_event_routing();
+
+        // Request redraw - let normal event flow handle rendering
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
     }
 
     fn handle_scale_factor_changed(&mut self, new_scale_factor: f64) {
         let new_scale = new_scale_factor as f32;
         if (new_scale - self.scale_factor).abs() > 0.001 {
             self.scale_factor = new_scale;
-            self.renderer.clear_caches();
+            // HybridRenderer handles scale factor changes internally via set_scale_factor
             if let Some(ref window) = self.window {
                 window.request_redraw();
             }
@@ -248,7 +270,7 @@ impl ApplicationHandler for BrowserApp {
             .with_title("Graviton")
             .with_inner_size(LogicalSize::new(1366, 768));
 
-        let window = Rc::new(event_loop.create_window(window_attrs).unwrap());
+        let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
         let physical_size = window.inner_size();
         let scale_factor = window.scale_factor() as f32;
 
@@ -257,12 +279,15 @@ impl ApplicationHandler for BrowserApp {
         let logical_width = physical_size.width as f32 / scale_factor;
         let logical_height = physical_size.height as f32 / scale_factor;
 
-        // Create surface
-        let context = softbuffer::Context::new(window.clone()).unwrap();
-        let surface = Surface::new(&context, window.clone()).unwrap();
+        // Create GPU compositor
+        let compositor = WgpuCompositor::new(window.clone());
 
-        // Initialize renderer
-        self.renderer.resize(physical_size.width, physical_size.height, scale_factor);
+        // Create hybrid renderer using compositor's device/queue
+        let renderer = HybridRenderer::new(
+            compositor.device(),
+            compositor.queue(),
+        );
+        self.renderer = Some(renderer);
 
         // Set up viewport
         let devtools_width = self.devtools.reserved_width();
@@ -271,10 +296,11 @@ impl ApplicationHandler for BrowserApp {
         self.devtools.set_viewport(devtools_width, logical_height, main_width);
 
         self.window = Some(window.clone());
-        self.surface = Some(surface);
+        self.compositor = Some(compositor);
 
         // Set up render delegate so frames can request redraws
-        let delegate = Rc::new(WindowRenderDelegate { window });
+        let window_rc = Rc::new(ArcWindow(window));
+        let delegate = Rc::new(WindowRenderDelegate { window: window_rc });
         self.render_delegate = Some(delegate.clone());
         self.main.set_render_delegate(Rc::downgrade(&delegate) as _);
         self.devtools.set_render_delegate(Rc::downgrade(&delegate) as _);
@@ -305,10 +331,6 @@ impl ApplicationHandler for BrowserApp {
             }
 
             WindowEvent::Resized(new_size) => {
-                let logical_width = new_size.width as f32 / self.scale_factor;
-                let logical_height = new_size.height as f32 / self.scale_factor;
-                let devtools_width = self.devtools.reserved_width();
-                self.resize_debouncer.push((logical_width - devtools_width, logical_height));
                 self.handle_resize(new_size);
             }
 
@@ -434,19 +456,8 @@ impl ApplicationHandler for BrowserApp {
                     );
                 }
 
-                // Handle debounced resize
-                if let Some((width, height)) = self.resize_debouncer.poll() {
-                    self.main.set_viewport(width, height);
-                    self.devtools.set_viewport(self.devtools.reserved_width(), height, width);
-                    let viewport = self.main.frame().viewport.clone();
-                    let page_height = self.main.frame().page_height.max(viewport.height);
-                    self.devtools.rebuild_overlay(viewport, page_height);
-                    self.setup_event_routing();
-                }
-
                 // Render and present
-                self.render();
-                self.present();
+                self.render_and_present();
             }
 
             _ => {}

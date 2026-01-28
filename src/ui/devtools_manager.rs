@@ -1,7 +1,6 @@
 use crate::events::{DevtoolsOverlayHandler, DevtoolsSelection, EventSink};
 use crate::dom::DomElement;
 use crate::layout::Rect;
-use crate::renderer::{CompositeRegion, SkiaRenderer};
 use crate::ui::browser_window::RenderFrameState;
 use crate::ui::devtools::DevtoolsOverlay;
 use crate::ui::devtools_panel::DevtoolsPanel;
@@ -118,6 +117,18 @@ impl DevtoolsManager {
         self.overlay.set_viewport(main_viewport_width, height);
     }
 
+    /// Update viewport size without triggering relayout (for debouncing)
+    pub fn set_viewport_size(&mut self, panel_width: f32, height: f32, main_viewport_width: f32) {
+        self.panel.set_viewport_size(panel_width, height);
+        self.overlay.set_viewport_size(main_viewport_width, height);
+    }
+
+    /// Trigger relayout with current viewport dimensions
+    pub fn relayout(&mut self) {
+        self.panel.relayout();
+        self.overlay.relayout();
+    }
+
     /// Set render delegate for panel and overlay frames
     pub fn set_render_delegate(&mut self, delegate: Weak<dyn RenderDelegate>) {
         self.panel.set_render_delegate(delegate.clone());
@@ -131,13 +142,13 @@ impl DevtoolsManager {
         self.panel.update(selected.as_ref(), main_dom_tree, is_pinned);
     }
 
-    pub fn rebuild_overlay(&mut self, main_viewport: Rect, page_height: f32) {
+    pub fn rebuild_overlay(&mut self, main_viewport: Rect, scroll_y: f32) {
         let selected = self.selected_element();
-        self.overlay.rebuild(selected.as_ref(), main_viewport, page_height);
+        self.overlay.rebuild(selected.as_ref(), main_viewport, scroll_y);
     }
 
     /// Update both panel content and overlay (only if selection changed)
-    pub fn update(&mut self, main_dom_tree: &Vec<Rc<RefCell<DomElement>>>, main_viewport: Rect, page_height: f32) {
+    pub fn update(&mut self, main_dom_tree: &Vec<Rc<RefCell<DomElement>>>, main_viewport: Rect, scroll_y: f32) {
         if !self.selection_changed() {
             return;
         }
@@ -146,44 +157,16 @@ impl DevtoolsManager {
         self.last_selected = self.selected_element().map(|rc| Rc::downgrade(&rc));
 
         self.update_content(main_dom_tree);
-        self.rebuild_overlay(main_viewport, page_height);
+        self.rebuild_overlay(main_viewport, scroll_y);
     }
 
-    pub fn render(&mut self, renderer: &mut SkiaRenderer) {
-        if self.is_visible() {
-            self.panel.render(renderer);
-            self.overlay.render(renderer);
-        }
+    /// Access panel for rendering
+    pub fn panel_mut(&mut self) -> &mut DevtoolsPanel {
+        &mut self.panel
     }
 
-    /// Add devtools regions to the composite list
-    pub fn add_composite_regions<'a>(
-        &'a self,
-        regions: &mut Vec<CompositeRegion<'a>>,
-        main_viewport_width: f32,
-        main_scroll_y: f32,
-        panel_scroll_y: f32,
-    ) {
-        if !self.is_visible() {
-            return;
-        }
-
-        if let Some(panel_buffer) = self.panel.buffer() {
-            regions.push(CompositeRegion {
-                buffer: panel_buffer,
-                dest_x: main_viewport_width,
-                scroll_y: panel_scroll_y,
-                opaque: true,
-            });
-        }
-
-        if let Some(overlay_buffer) = self.overlay.buffer() {
-            regions.push(CompositeRegion {
-                buffer: overlay_buffer,
-                dest_x: 0.0,
-                scroll_y: main_scroll_y,
-                opaque: false, // Overlay needs alpha blending
-            });
-        }
+    /// Access overlay for rendering
+    pub fn overlay_mut(&mut self) -> &mut DevtoolsOverlay {
+        &mut self.overlay
     }
 }

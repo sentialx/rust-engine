@@ -1,7 +1,6 @@
 use crate::events::EventSink;
 use crate::dom::{DomElement, NodeType};
 use crate::layout::Rect;
-use crate::renderer::{RenderedBuffer, SkiaRenderer};
 use crate::ui::browser_window::RenderFrameState;
 
 use std::cell::RefCell;
@@ -24,12 +23,17 @@ impl DevtoolsPanel {
         self.render.set_viewport(width, height);
     }
 
-    pub fn render(&mut self, renderer: &mut SkiaRenderer) {
-        self.render.render(renderer);
+    pub fn set_viewport_size(&mut self, width: f32, height: f32) {
+        self.render.set_viewport_size(width, height);
     }
 
-    pub fn buffer(&self) -> Option<&RenderedBuffer> {
-        self.render.buffer()
+    pub fn relayout(&mut self) {
+        self.render.relayout();
+    }
+
+    /// Access the underlying render state for rendering
+    pub fn render_state_mut(&mut self) -> &mut RenderFrameState {
+        &mut self.render
     }
 
     /// Set render delegate

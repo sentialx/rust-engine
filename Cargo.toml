@@ -9,7 +9,11 @@ edition = "2018"
 [dependencies]
 # Windowing
 winit = "0.30"
-softbuffer = "0.4"
+
+# GPU rendering
+wgpu = "23"
+pollster = "0.4"
+bytemuck = { version = "1.14", features = ["derive"] }
 
 # 2D rendering
 tiny-skia = "0.11"
