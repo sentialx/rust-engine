@@ -1,11 +1,11 @@
-// HybridRenderer: combines GPU quad rendering with Skia text rendering
+// HybridRenderer: combines GPU quad rendering with GPU text rendering
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::frame::Frame;
-use super::skia::SkiaRenderer;
+use super::skia::{SkiaRenderer, TextQuad};
 use super::wgpu_renderer::WgpuRenderer;
 use super::GpuQuad;
 
@@ -19,9 +19,9 @@ pub struct FrameTexture {
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CompositeUniforms {
-    tex_w: f32,
-    tex_h: f32,
+struct TextUniforms {
+    screen_w: f32,
+    screen_h: f32,
     _padding: [f32; 2],
 }
 
@@ -30,7 +30,7 @@ struct CachedFrame {
     texture: FrameTexture,
 }
 
-/// Combines WgpuRenderer (quads) + SkiaRenderer (text) into FrameTextures
+/// Combines WgpuRenderer (quads) + GPU text rendering into FrameTextures
 pub struct HybridRenderer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -39,13 +39,19 @@ pub struct HybridRenderer {
     quad_renderer: WgpuRenderer,
     skia_renderer: SkiaRenderer,
 
-    // Compositing pipeline (quads + text → output)
-    composite_pipeline: wgpu::RenderPipeline,
-    composite_bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+    // Text rendering pipeline
+    text_pipeline: wgpu::RenderPipeline,
+    text_bind_group_layout: wgpu::BindGroupLayout,
+    text_sampler: wgpu::Sampler,
+    text_uniform_buffer: wgpu::Buffer,
 
-    // Cached text texture
-    text_texture: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
+    // Glyph atlas on GPU
+    glyph_atlas_texture: Option<(wgpu::Texture, wgpu::TextureView)>,
+    glyph_atlas_version: u64,
+
+    // Text instance buffer
+    text_instance_buffer: wgpu::Buffer,
+    text_instance_capacity: usize,
 
     // Cached frames by ID
     frames: HashMap<usize, CachedFrame>,
@@ -58,19 +64,19 @@ impl HybridRenderer {
         let quad_renderer = WgpuRenderer::new(Arc::clone(&device), Arc::clone(&queue));
         let skia_renderer = SkiaRenderer::new();
 
-        // Compositing shader - blends text over quads
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Hybrid Composite Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("text_blend.wgsl").into()),
+        // Text rendering shader
+        let text_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Text Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("text.wgsl").into()),
         });
 
-        let composite_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Hybrid Bind Group Layout"),
+        let text_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Text Bind Group Layout"),
             entries: &[
                 // Uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -78,7 +84,7 @@ impl HybridRenderer {
                     },
                     count: None,
                 },
-                // Text texture
+                // Glyph atlas texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -99,23 +105,49 @@ impl HybridRenderer {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Hybrid Pipeline Layout"),
-            bind_group_layouts: &[&composite_bind_group_layout],
+        let text_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Text Pipeline Layout"),
+            bind_group_layouts: &[&text_bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Hybrid Composite Pipeline"),
-            layout: Some(&pipeline_layout),
+        // Instance buffer layout for text quads
+        let text_instance_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<TextQuad>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                // pos: vec4<f32>
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // uv: vec4<f32>
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                // color: vec4<f32>
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
+        };
+
+        let text_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Text Pipeline"),
+            layout: Some(&text_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &text_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[],
+                buffers: &[text_instance_layout],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &text_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::Rgba8Unorm,
@@ -131,10 +163,25 @@ impl HybridRenderer {
             cache: None,
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let text_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
+        });
+
+        let text_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Text Uniform Buffer"),
+            size: std::mem::size_of::<TextUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let initial_capacity = 4096;
+        let text_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Text Instance Buffer"),
+            size: (initial_capacity * std::mem::size_of::<TextQuad>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         Self {
@@ -142,10 +189,14 @@ impl HybridRenderer {
             queue,
             quad_renderer,
             skia_renderer,
-            composite_pipeline,
-            composite_bind_group_layout,
-            sampler,
-            text_texture: None,
+            text_pipeline,
+            text_bind_group_layout,
+            text_sampler,
+            text_uniform_buffer,
+            glyph_atlas_texture: None,
+            glyph_atlas_version: 0,
+            text_instance_buffer,
+            text_instance_capacity: initial_capacity,
             frames: HashMap::new(),
             scale_factor: 1.0,
         }
@@ -160,37 +211,42 @@ impl HybridRenderer {
         }
     }
 
-    /// Render a frame to a cached texture
-    pub fn render(&mut self, frame: &Frame, frame_id: usize) {
+    /// Render a frame to a cached texture using GPU text rendering
+    pub fn render(&mut self, frame: &Frame, frame_id: usize, scroll_y: f32) {
+        use std::time::Instant;
         let scale = self.scale_factor;
 
         // Get render items and convert to quads
         let items = frame.render_items();
         let quads = GpuQuad::from_render_items_scaled(&items, scale);
 
-        // Calculate dimensions
-        let page_width = (frame.viewport.width * scale).max(1.0) as u32;
+        // Calculate dimensions - use viewport size for output
+        let viewport_width = (frame.viewport.width * scale).max(1.0) as u32;
+        let viewport_height = (frame.viewport.height * scale).max(1.0) as u32;
         let page_height = ((frame.page_height + 100.0) * scale).min(8192.0).max(1.0) as u32;
+        let scroll_y_scaled = (scroll_y * scale) as u32;
 
-        // 1. Render quads to texture
-        let quad_texture = self.quad_renderer.render(&quads, page_width, page_height);
+        // 1. Render quads to texture (full page height for scroll support)
+        let t_quads = Instant::now();
+        let quad_texture = self.quad_renderer.render(&quads, viewport_width, page_height);
+        let quad_time = t_quads.elapsed();
 
-        // 2. Render text with Skia
-        let text_buffer = self.skia_renderer.render_text_only(frame);
-        let text_pixmap = &text_buffer.pixmap;
+        // 2. Generate text quads for GPU rendering
+        let t_text = Instant::now();
+        let text_quads = self.skia_renderer.generate_text_quads(frame, scroll_y);
+        let text_time = t_text.elapsed();
 
-        // 3. Upload text pixmap to GPU texture
-        let text_w = text_pixmap.width();
-        let text_h = text_pixmap.height();
+        // 3. Update glyph atlas texture if needed
+        let t_atlas = Instant::now();
+        let atlas = self.skia_renderer.glyph_atlas();
+        let atlas_version = atlas.version;
+        let (atlas_w, atlas_h) = atlas.dimensions();
 
-        let needs_new_text = self.text_texture.as_ref()
-            .map(|(_, _, w, h)| *w != text_w || *h != text_h)
-            .unwrap_or(true);
-
-        if needs_new_text {
+        if self.glyph_atlas_version != atlas_version || self.glyph_atlas_texture.is_none() {
+            // Create or recreate atlas texture
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Text Texture"),
-                size: wgpu::Extent3d { width: text_w, height: text_h, depth_or_array_layers: 1 },
+                label: Some("Glyph Atlas"),
+                size: wgpu::Extent3d { width: atlas_w, height: atlas_h, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -198,31 +254,50 @@ impl HybridRenderer {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
+
+            // Upload atlas data
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                atlas.pixmap_data(),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(atlas_w * 4),
+                    rows_per_image: Some(atlas_h),
+                },
+                wgpu::Extent3d { width: atlas_w, height: atlas_h, depth_or_array_layers: 1 },
+            );
+
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.text_texture = Some((texture, view, text_w, text_h));
+            self.glyph_atlas_texture = Some((texture, view));
+            self.glyph_atlas_version = atlas_version;
         }
+        let atlas_time = t_atlas.elapsed();
 
-        // Upload text pixels
-        let (text_tex, text_view, _, _) = self.text_texture.as_ref().unwrap();
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: text_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            text_pixmap.data(),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(text_w * 4),
-                rows_per_image: Some(text_h),
-            },
-            wgpu::Extent3d { width: text_w, height: text_h, depth_or_array_layers: 1 },
-        );
+        // 4. Upload text instance data
+        let t_upload = Instant::now();
+        if !text_quads.is_empty() {
+            // Grow buffer if needed
+            if text_quads.len() > self.text_instance_capacity {
+                self.text_instance_capacity = text_quads.len().next_power_of_two();
+                self.text_instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Text Instance Buffer"),
+                    size: (self.text_instance_capacity * std::mem::size_of::<TextQuad>()) as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
+            self.queue.write_buffer(&self.text_instance_buffer, 0, bytemuck::cast_slice(&text_quads));
+        }
+        let upload_time = t_upload.elapsed();
 
-        // 4. Ensure output texture exists with correct size
-        let out_w = page_width;
-        let out_h = page_height;
+        // 5. Ensure output texture exists with correct size (viewport-sized)
+        let out_w = viewport_width;
+        let out_h = viewport_height;
 
         let needs_new_output = self.frames.get(&frame_id)
             .map(|f| f.texture.width != out_w || f.texture.height != out_h)
@@ -249,71 +324,22 @@ impl HybridRenderer {
 
         let output = &self.frames.get(&frame_id).unwrap().texture;
 
-        // 5. Composite: copy quads, then blend text on top
+        // 6. Composite: copy quads, then render text on top
+        let t_composite = Instant::now();
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Hybrid Composite Encoder"),
         });
 
-        // Copy quad texture to output
-        encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
-                texture: &quad_texture.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyTexture {
-                texture: &output.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: out_w.min(quad_texture.width),
-                height: out_h.min(quad_texture.height),
-                depth_or_array_layers: 1,
-            },
-        );
-
-        // Blend text on top
-        let uniforms = CompositeUniforms {
-            tex_w: out_w as f32,
-            tex_h: out_h as f32,
-            _padding: [0.0; 2],
-        };
-        let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Hybrid Uniforms"),
-            contents: bytemuck::cast_slice(&[uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Hybrid Bind Group"),
-            layout: &self.composite_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(text_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
-
+        // Clear output texture first (prevents garbage when scrolled past content)
+        // Use transparent so overlay frames composite correctly
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Text Blend Pass"),
+            let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Clear Output Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &output.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // Keep quads, blend text on top
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -321,13 +347,92 @@ impl HybridRenderer {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
+            // Pass ends immediately, clearing the texture
+        }
 
-            render_pass.set_pipeline(&self.composite_pipeline);
-            render_pass.set_bind_group(0, &bind_group, &[]);
-            render_pass.draw(0..6, 0..1);
+        // Copy visible portion of quad texture to output (at scroll offset)
+        let copy_height = out_h.min(quad_texture.height.saturating_sub(scroll_y_scaled));
+        if copy_height > 0 {
+            encoder.copy_texture_to_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &quad_texture.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: scroll_y_scaled, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyTexture {
+                    texture: &output.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: out_w.min(quad_texture.width),
+                    height: copy_height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        // Render text on top using GPU
+        if !text_quads.is_empty() {
+            // Update uniforms
+            let uniforms = TextUniforms {
+                screen_w: out_w as f32,
+                screen_h: out_h as f32,
+                _padding: [0.0; 2],
+            };
+            self.queue.write_buffer(&self.text_uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            let (_, atlas_view) = self.glyph_atlas_texture.as_ref().unwrap();
+
+            let text_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Text Bind Group"),
+                layout: &self.text_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.text_uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(atlas_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.text_sampler),
+                    },
+                ],
+            });
+
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Text Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &output.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load, // Keep quads, render text on top
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                render_pass.set_pipeline(&self.text_pipeline);
+                render_pass.set_bind_group(0, &text_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
+                render_pass.draw(0..6, 0..text_quads.len() as u32);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+        let composite_time = t_composite.elapsed();
+
+        println!("    quads:{:?} text_gen:{:?} atlas:{:?} upload:{:?} comp:{:?} ({} glyphs)",
+            quad_time, text_time, atlas_time, upload_time, composite_time, text_quads.len());
     }
 
     /// Get a cached frame texture by ID
@@ -338,5 +443,87 @@ impl HybridRenderer {
     pub fn clear_caches(&mut self) {
         self.frames.clear();
         self.skia_renderer.clear_caches();
+        self.glyph_atlas_texture = None;
+        self.glyph_atlas_version = 0;
+    }
+
+    /// Read back pixels from a rendered frame texture as RGBA bytes
+    pub fn read_pixels(&self, frame_id: usize) -> Option<(Vec<u8>, u32, u32)> {
+        let frame = self.frames.get(&frame_id)?;
+        let texture = &frame.texture;
+        let width = texture.width;
+        let height = texture.height;
+
+        // Calculate buffer size with alignment (wgpu requires 256-byte row alignment)
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        // Create staging buffer
+        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Screenshot Staging Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        // Copy texture to buffer
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Screenshot Encoder"),
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging_buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map buffer and read data
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+
+        self.device.poll(wgpu::Maintain::Wait);
+
+        if rx.recv().ok()?.is_err() {
+            return None;
+        }
+
+        let data = buffer_slice.get_mapped_range();
+
+        // Remove row padding if present
+        let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            let end = start + (width * bytes_per_pixel) as usize;
+            pixels.extend_from_slice(&data[start..end]);
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Some((pixels, width, height))
     }
 }

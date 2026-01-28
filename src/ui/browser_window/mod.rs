@@ -172,25 +172,25 @@ impl BrowserApp {
             self.devtools.overlay_mut().render_state_mut().frame_mut().update_styles_if_needed();
         }
 
-        // Render frames to textures
+        // Get scroll positions for viewport-based rendering
+        let main_scroll_y = self.main.scroll_y();
+        let main_viewport_width = self.main.frame().viewport.width;
+        let panel_scroll_y = self.devtools.panel_scroll_y();
+
+        // Render frames to textures (passing scroll_y for viewport-based rendering)
         let t0 = Instant::now();
-        renderer.render(&self.main.frame(), MAIN_FRAME_ID);
+        renderer.render(&self.main.frame(), MAIN_FRAME_ID, main_scroll_y);
         println!("  main render: {:?}", t0.elapsed());
 
         if devtools_visible {
             let t1 = Instant::now();
-            renderer.render(&self.devtools.panel_mut().render_state_mut().frame(), PANEL_FRAME_ID);
+            renderer.render(&self.devtools.panel_mut().render_state_mut().frame(), PANEL_FRAME_ID, panel_scroll_y);
             println!("  panel render: {:?}", t1.elapsed());
 
             let t2 = Instant::now();
-            renderer.render(&self.devtools.overlay_mut().render_state_mut().frame(), OVERLAY_FRAME_ID);
+            renderer.render(&self.devtools.overlay_mut().render_state_mut().frame(), OVERLAY_FRAME_ID, 0.0);
             println!("  overlay render: {:?}", t2.elapsed());
         }
-
-        // Collect frame data for compositing
-        let main_scroll_y = self.main.scroll_y();
-        let main_viewport_width = self.main.frame().viewport.width;
-        let panel_scroll_y = self.devtools.panel_scroll_y();
 
         // Build composite frames
         let mut frames: Vec<CompositeFrame> = Vec::new();
@@ -199,7 +199,7 @@ impl BrowserApp {
             frames.push(CompositeFrame {
                 texture: tex,
                 dest_x: 0.0,
-                scroll_y: main_scroll_y,
+                scroll_y: 0.0, // Scroll already applied in render
             });
         }
 
@@ -208,7 +208,7 @@ impl BrowserApp {
                 frames.push(CompositeFrame {
                     texture: tex,
                     dest_x: main_viewport_width,
-                    scroll_y: panel_scroll_y,
+                    scroll_y: 0.0, // Scroll already applied in render
                 });
             }
             if let Some(tex) = renderer.get_texture(OVERLAY_FRAME_ID) {

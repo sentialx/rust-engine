@@ -5,14 +5,13 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 use crate::devtools_protocol::{DevtoolsServer, types::*};
 use crate::frame::Frame;
-use crate::layout::Rect;
-use crate::renderer::{Renderer, SkiaRenderer, CompositeRegion};
-use crate::ui::devtools::DevtoolsOverlay;
+use crate::renderer::HybridRenderer;
 
 /// Handle Page domain commands
 pub fn handle(
     server: &mut DevtoolsServer,
     frame: &mut Frame,
+    renderer: Option<&mut HybridRenderer>,
     id: u64,
     command: &str,
     params: &Value,
@@ -54,86 +53,45 @@ pub fn handle(
         }
 
         "captureScreenshot" => {
-            let format = params.get("format")
+            let Some(renderer) = renderer else {
+                return Response::error(id, ERROR_INTERNAL, "Renderer not available for screenshots");
+            };
+
+            let _format = params.get("format")
                 .and_then(|v| v.as_str())
                 .unwrap_or("png");
 
-            let _quality = params.get("quality")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(100) as u8;
+            // Render frame to texture
+            const SCREENSHOT_FRAME_ID: usize = 999;
+            renderer.render(frame, SCREENSHOT_FRAME_ID, 0.0);
 
-            // Create a renderer and render the frame
-            let mut renderer = SkiaRenderer::new();
-            let width = frame.viewport.width as u32;
-            let height = frame.viewport.height as u32;
-            let page_height = frame.page_height;
+            // Read pixels back from GPU
+            let (pixels, width, height) = match renderer.read_pixels(SCREENSHOT_FRAME_ID) {
+                Some(data) => data,
+                None => return Response::error(id, ERROR_INTERNAL, "Failed to read pixels from GPU"),
+            };
 
-            renderer.resize(width, height, 1.0);
-            let main_buffer = renderer.render(frame);
+            // Create pixmap and encode to PNG
+            let mut pixmap = match tiny_skia::Pixmap::new(width, height) {
+                Some(p) => p,
+                None => return Response::error(id, ERROR_INTERNAL, "Failed to create pixmap"),
+            };
 
-            // Check if we need to render an overlay
-            let highlighted = server.get_highlighted_node();
-
-            let final_pixmap = if highlighted.is_some() {
-                // Create overlay with highlighted element
-                let viewport = Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: frame.viewport.width,
-                    height: frame.viewport.height,
-                };
-                let mut overlay = DevtoolsOverlay::new(viewport.clone());
-                overlay.set_viewport(viewport.width, viewport.height);
-                overlay.rebuild(highlighted.as_ref(), viewport, page_height);
-                overlay.render(&mut renderer);
-
-                // Composite main + overlay
-                let mut regions = vec![
-                    CompositeRegion {
-                        buffer: &main_buffer,
-                        dest_x: 0.0,
-                        scroll_y: 0.0,
-                        opaque: true,
-                    },
-                ];
-
-                if let Some(overlay_buffer) = overlay.buffer() {
-                    regions.push(CompositeRegion {
-                        buffer: overlay_buffer,
-                        dest_x: 0.0,
-                        scroll_y: 0.0,
-                        opaque: false,
-                    });
+            // Copy RGBA pixels to pixmap
+            for (i, chunk) in pixels.chunks(4).enumerate() {
+                if chunk.len() == 4 {
+                    pixmap.pixels_mut()[i] = tiny_skia::PremultipliedColorU8::from_rgba(
+                        chunk[0], chunk[1], chunk[2], chunk[3]
+                    ).unwrap();
                 }
+            }
 
-                renderer.composite(&regions);
-
-                // Get the composited result - we need to create a pixmap from display buffer
-                let display = renderer.get_display_buffer();
-                let mut pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
-                for (i, &pixel) in display.iter().enumerate() {
-                    let r = ((pixel >> 16) & 0xFF) as u8;
-                    let g = ((pixel >> 8) & 0xFF) as u8;
-                    let b = (pixel & 0xFF) as u8;
-                    pixmap.pixels_mut()[i] = tiny_skia::ColorU8::from_rgba(r, g, b, 255).premultiply();
-                }
-                pixmap
-            } else {
-                main_buffer.pixmap
+            let png_data = match pixmap.encode_png() {
+                Ok(data) => data,
+                Err(_) => return Response::error(id, ERROR_INTERNAL, "Failed to encode PNG"),
             };
 
-            // Encode to PNG
-            let png_data = match format {
-                "png" => encode_pixmap_to_png(&final_pixmap),
-                "jpeg" | "jpg" => encode_pixmap_to_png(&final_pixmap),
-                _ => encode_pixmap_to_png(&final_pixmap),
-            };
-
-            let base64_data = match png_data {
-                Some(data) => BASE64.encode(&data),
-                None => return Response::error(id, ERROR_INTERNAL, "Failed to encode screenshot"),
-            };
-
+            let base64_data = BASE64.encode(&png_data);
             Response::success(id, json!({ "data": base64_data }))
         }
 
@@ -170,9 +128,4 @@ pub fn handle(
 
         _ => Response::error(id, ERROR_METHOD_NOT_FOUND, &format!("Unknown Page method: {}", command)),
     }
-}
-
-/// Encode a tiny-skia Pixmap to PNG bytes
-fn encode_pixmap_to_png(pixmap: &tiny_skia::Pixmap) -> Option<Vec<u8>> {
-    pixmap.encode_png().ok()
 }

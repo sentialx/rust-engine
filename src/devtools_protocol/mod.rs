@@ -12,6 +12,7 @@ use serde_json;
 
 use crate::frame::Frame;
 use crate::dom::DomElement;
+use crate::renderer::HybridRenderer;
 use types::{Request, Response, ERROR_INTERNAL};
 
 /// Node registry - maps stable u64 IDs to DOM elements
@@ -110,8 +111,8 @@ impl DevtoolsServer {
     }
 
     /// Handle a single CDP request
-    pub fn handle_request(&mut self, request: &Request, frame: &mut Frame) -> Response {
-        handlers::dispatch(self, frame, request.id, &request.method, &request.params)
+    pub fn handle_request(&mut self, request: &Request, frame: &mut Frame, renderer: Option<&mut HybridRenderer>) -> Response {
+        handlers::dispatch(self, frame, renderer, request.id, &request.method, &request.params)
     }
 
     /// Run the server in stdio mode (for AI agent integration)
@@ -129,7 +130,7 @@ impl DevtoolsServer {
             }
 
             let response = match serde_json::from_str::<Request>(line) {
-                Ok(request) => self.handle_request(&request, frame),
+                Ok(request) => self.handle_request(&request, frame, None),
                 Err(e) => Response::error(0, ERROR_INTERNAL, &format!("JSON parse error: {}", e)),
             };
 
@@ -142,9 +143,9 @@ impl DevtoolsServer {
     }
 
     /// Handle a single line of input (for testing/embedding)
-    pub fn handle_line(&mut self, line: &str, frame: &mut Frame) -> String {
+    pub fn handle_line(&mut self, line: &str, frame: &mut Frame, renderer: Option<&mut HybridRenderer>) -> String {
         let response = match serde_json::from_str::<Request>(line) {
-            Ok(request) => self.handle_request(&request, frame),
+            Ok(request) => self.handle_request(&request, frame, renderer),
             Err(e) => Response::error(0, ERROR_INTERNAL, &format!("JSON parse error: {}", e)),
         };
 

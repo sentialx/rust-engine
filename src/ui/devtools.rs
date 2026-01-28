@@ -2,7 +2,6 @@ use crate::dom::{DomElement, DomElementExt, NodeType};
 use crate::html::parse_html;
 use crate::layout::Rect;
 use crate::frame::Frame;
-use crate::renderer::{RenderedBuffer, SkiaRenderer};
 use crate::styles::ComputedStyle;
 use crate::ui::browser_window::RenderFrameState;
 
@@ -36,14 +35,6 @@ impl DevtoolsOverlay {
 
     pub fn relayout(&mut self) {
         self.render.relayout();
-    }
-
-    pub fn render(&mut self, renderer: &mut SkiaRenderer) {
-        self.render.render(renderer);
-    }
-
-    pub fn buffer(&self) -> Option<&RenderedBuffer> {
-        self.render.buffer()
     }
 
     /// Access the underlying render state for hybrid rendering
