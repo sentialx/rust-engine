@@ -30,12 +30,25 @@ impl DevtoolsOverlay {
         self.render.set_viewport(width, height);
     }
 
+    pub fn set_viewport_size(&mut self, width: f32, height: f32) {
+        self.render.set_viewport_size(width, height);
+    }
+
+    pub fn relayout(&mut self) {
+        self.render.relayout();
+    }
+
     pub fn render(&mut self, renderer: &mut SkiaRenderer) {
         self.render.render(renderer);
     }
 
     pub fn buffer(&self) -> Option<&RenderedBuffer> {
         self.render.buffer()
+    }
+
+    /// Access the underlying render state for hybrid rendering
+    pub fn render_state_mut(&mut self) -> &mut RenderFrameState {
+        &mut self.render
     }
 
     /// Set render delegate
@@ -54,7 +67,7 @@ impl DevtoolsOverlay {
         frame.request_redraw();
     }
 
-    pub fn rebuild(&mut self, hover_info: Option<&Rc<RefCell<DomElement>>>, viewport: Rect, page_height: f32) {
+    pub fn rebuild(&mut self, hover_info: Option<&Rc<RefCell<DomElement>>>, viewport: Rect, scroll_y: f32) {
         self.render.set_viewport(viewport.width, viewport.height);
 
         if hover_info.is_none() {
@@ -99,9 +112,10 @@ impl DevtoolsOverlay {
             body
         };
 
+        // Use viewport height for smaller pixmap - highlights are clipped to visible area
         let body_style = format!(
             "display:block; margin:0px; position:relative; width:{}px; height:{}px; background: rgba(0,0,0,0);",
-            viewport.width, page_height
+            viewport.width, viewport.height
         );
         body.borrow_mut().set_attribute("style", &body_style);
 
@@ -114,16 +128,22 @@ impl DevtoolsOverlay {
                 return;
             };
 
-            let margin_box = clamp_rect(flow.hover_rect.clone());
+            // Adjust coordinates to viewport-relative by subtracting scroll_y
+            let margin_box = clamp_rect(Rect {
+                x: flow.hover_rect.x,
+                y: flow.hover_rect.y - scroll_y,
+                width: flow.hover_rect.width,
+                height: flow.hover_rect.height,
+            });
             let border_box = clamp_rect(Rect {
                 x: flow.x,
-                y: flow.y,
+                y: flow.y - scroll_y,
                 width: flow.width,
                 height: flow.height,
             });
             let content_box = clamp_rect(Rect {
                 x: flow.x + style.padding.left,
-                y: flow.y + style.padding.top,
+                y: flow.y + style.padding.top - scroll_y,
                 width: flow.width - style.padding.left - style.padding.right,
                 height: flow.height - style.padding.top - style.padding.bottom,
             });
@@ -140,7 +160,8 @@ impl DevtoolsOverlay {
                 let mut text_segments = Vec::new();
                 collect_text_segments(&element, &mut text_segments);
                 for seg in &text_segments {
-                    add_border_box(&frame, &body, seg.x, seg.y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
+                    // Adjust text segment y by scroll_y
+                    add_border_box(&frame, &body, seg.x, seg.y - scroll_y, seg.width, seg.height, 1.0, "dotted", "rgba(255,0,128,1.0)");
                 }
 
                 // Add info popup (position will be adjusted after layout)
@@ -170,7 +191,7 @@ impl DevtoolsOverlay {
 
             let popup_y = if above_y >= 8.0 {
                 above_y
-            } else if below_y + popup_height < page_height {
+            } else if below_y + popup_height < viewport.height {
                 below_y
             } else {
                 8.0_f32.max(above_y)

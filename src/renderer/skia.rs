@@ -18,9 +18,63 @@ fn css_color_to_skia(c: ColorTupleA) -> Color {
     .unwrap_or(Color::BLACK)
 }
 
+/// Fast rectangle fill - direct write for opaque, tiny-skia for semi-transparent
+#[inline]
+fn fast_fill_rect(
+    pixmap: &mut Pixmap,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: ColorTupleA,
+) {
+    let alpha = color.3;
+
+    if alpha < 0.001 {
+        return;
+    }
+
+    if alpha >= 0.999 {
+        // Opaque: fast direct write
+        let px_width = pixmap.width() as i32;
+        let px_height = pixmap.height() as i32;
+
+        let x0 = (x as i32).max(0) as usize;
+        let y0 = (y as i32).max(0) as usize;
+        let x1 = ((x + width) as i32).min(px_width) as usize;
+        let y1 = ((y + height) as i32).min(px_height) as usize;
+
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        let row_width = x1 - x0;
+        let pixels = pixmap.pixels_mut();
+        let px_width = px_width as usize;
+
+        let pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+            color.0 as u8, color.1 as u8, color.2 as u8, 255
+        ).unwrap();
+
+        for y in y0..y1 {
+            let row_start = y * px_width + x0;
+            pixels[row_start..row_start + row_width].fill(pixel);
+        }
+    } else {
+        // Semi-transparent: use tiny-skia for proper CSS alpha blending within frame
+        if let Some(rect) = SkiaRect::from_xywh(x, y, width, height) {
+            let mut paint = Paint::default();
+            paint.set_color(css_color_to_skia(color));
+            paint.anti_alias = false;
+            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
+}
+
 /// Draw a border line (solid or dashed)
 fn draw_border_line(
     pixmap: &mut Pixmap,
+    _paint: &mut Paint,
     x: f32,
     y: f32,
     width: f32,
@@ -29,10 +83,6 @@ fn draw_border_line(
     style: &str,
     color: ColorTupleA,
 ) {
-    let mut paint = Paint::default();
-    paint.set_color(css_color_to_skia(color));
-    paint.anti_alias = false;
-
     match style {
         "dashed" => {
             // Dash length is typically 3x the border width
@@ -44,18 +94,14 @@ fn draw_border_line(
                 let mut cx = x;
                 while cx < x + width {
                     let segment_width = dash_len.min(x + width - cx);
-                    if let Some(rect) = SkiaRect::from_xywh(cx, y, segment_width, height) {
-                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                    }
+                    fast_fill_rect(pixmap, cx, y, segment_width, height, color);
                     cx += dash_len + gap_len;
                 }
             } else {
                 let mut cy = y;
                 while cy < y + height {
                     let segment_height = dash_len.min(y + height - cy);
-                    if let Some(rect) = SkiaRect::from_xywh(x, cy, width, segment_height) {
-                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                    }
+                    fast_fill_rect(pixmap, x, cy, width, segment_height, color);
                     cy += dash_len + gap_len;
                 }
             }
@@ -69,26 +115,20 @@ fn draw_border_line(
             if horizontal {
                 let mut cx = x;
                 while cx < x + width {
-                    if let Some(rect) = SkiaRect::from_xywh(cx, y, dot_size, height) {
-                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                    }
+                    fast_fill_rect(pixmap, cx, y, dot_size, height, color);
                     cx += dot_size + gap_len;
                 }
             } else {
                 let mut cy = y;
                 while cy < y + height {
-                    if let Some(rect) = SkiaRect::from_xywh(x, cy, width, dot_size) {
-                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                    }
+                    fast_fill_rect(pixmap, x, cy, width, dot_size, color);
                     cy += dot_size + gap_len;
                 }
             }
         }
         _ => {
             // solid (default)
-            if let Some(rect) = SkiaRect::from_xywh(x, y, width, height) {
-                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-            }
+            fast_fill_rect(pixmap, x, y, width, height, color);
         }
     }
 }
@@ -106,12 +146,7 @@ fn draw_box_shadow(
 ) {
     if blur_radius <= 0.0 {
         // No blur - just draw a solid shadow
-        let mut paint = Paint::default();
-        paint.set_color(css_color_to_skia(color));
-        paint.anti_alias = false;
-        if let Some(rect) = SkiaRect::from_xywh(x, y, width, height) {
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-        }
+        fast_fill_rect(pixmap, x, y, width, height, color);
         return;
     }
 
@@ -131,18 +166,14 @@ fn draw_box_shadow(
             color.3 * alpha_factor * 0.5,
         );
 
-        let mut paint = Paint::default();
-        paint.set_color(css_color_to_skia(layer_color));
-        paint.anti_alias = false;
-
-        if let Some(rect) = SkiaRect::from_xywh(
+        fast_fill_rect(
+            pixmap,
             x - offset,
             y - offset,
             width + offset * 2.0,
             height + offset * 2.0,
-        ) {
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-        }
+            layer_color,
+        );
     }
 }
 
@@ -291,6 +322,179 @@ impl SkiaRenderer {
     }
 }
 
+impl SkiaRenderer {
+    /// Render text only (for hybrid GPU/Skia rendering)
+    /// Returns a buffer with text on transparent background
+    pub fn render_text_only(&mut self, frame: &Frame) -> RenderedBuffer {
+        let page_width = (frame.viewport.width * self.scale_factor).max(1.0) as u32;
+        let page_pixel_height = ((frame.page_height + 100.0) * self.scale_factor) as u32;
+        let page_pixel_height = page_pixel_height.min(8192).max(1);
+        let mut page_pm = Pixmap::new(page_width.max(1), page_pixel_height).unwrap();
+        page_pm.fill(Color::TRANSPARENT);
+
+        let scale = self.scale_factor;
+        let items = frame.render_items();
+        let fonts = frame.fonts();
+
+        // Render text only
+        let items_for_text: Vec<_> = items.iter()
+            .filter(|item| !item.text_segments.is_empty())
+            .cloned()
+            .collect();
+
+        for item in &items_for_text {
+            let color_r = item.color.0 as u8;
+            let color_g = item.color.1 as u8;
+            let color_b = item.color.2 as u8;
+            let scaled_font_size = item.font_size * scale;
+            let font_size_key = (scaled_font_size * 100.0) as u32;
+
+            for seg in &item.text_segments {
+                let baseline_y = seg.y + seg.ascent;
+                let mut x_offset = seg.x * scale;
+
+                for c in seg.text.chars() {
+                    let atlas_key = GlyphAtlasKey {
+                        character: c,
+                        font_path: item.font_path.clone(),
+                        font_size_scaled: font_size_key,
+                    };
+
+                    if fonts.has_font(&item.font_path) {
+                        if let Some(glyph_info) = self.glyph_atlas.get_or_insert(
+                            atlas_key,
+                            fonts,
+                            scaled_font_size,
+                        ) {
+                            let (g_x, g_y, g_w, g_h, g_xmin, g_ymin, g_advance) = (
+                                glyph_info.x,
+                                glyph_info.y,
+                                glyph_info.width,
+                                glyph_info.height,
+                                glyph_info.xmin,
+                                glyph_info.ymin,
+                                glyph_info.advance_width,
+                            );
+
+                            if g_w > 0 && g_h > 0 {
+                                let glyph_x = (x_offset + g_xmin as f32) as i32;
+                                let glyph_y = (baseline_y * scale - g_ymin as f32 - g_h as f32) as i32;
+
+                                let page_width = page_pm.width();
+                                let page_height = page_pm.height();
+                                let atlas_width = self.glyph_atlas.pixmap.width();
+                                let atlas_pixels = self.glyph_atlas.pixmap.pixels();
+
+                                for gy in 0..g_h {
+                                    for gx in 0..g_w {
+                                        let atlas_idx = ((g_y + gy) * atlas_width + g_x + gx) as usize;
+                                        let alpha = atlas_pixels[atlas_idx].alpha();
+
+                                        if alpha > 0 {
+                                            let px = glyph_x + gx as i32;
+                                            let py = glyph_y + gy as i32;
+
+                                            if px >= 0 && py >= 0 && (px as u32) < page_width && (py as u32) < page_height {
+                                                let dst_idx = (py as u32 * page_width + px as u32) as usize;
+                                                // For text-only, write premultiplied color directly
+                                                let premult = tiny_skia::ColorU8::from_rgba(
+                                                    color_r, color_g, color_b, alpha
+                                                ).premultiply();
+                                                page_pm.pixels_mut()[dst_idx] = premult;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            x_offset += g_advance;
+                        } else {
+                            x_offset += scaled_font_size * 0.6;
+                        }
+                    } else {
+                        x_offset += scaled_font_size * 0.6;
+                    }
+                }
+
+                // Draw underline if needed
+                if item.underline {
+                    let color = css_color_to_skia(item.color);
+                    let mut paint = Paint::default();
+                    paint.set_color(color);
+                    if let Some(rect) = SkiaRect::from_xywh(
+                        seg.x * scale,
+                        (baseline_y + 2.0) * scale,
+                        seg.width * scale,
+                        1.0 * scale,
+                    ) {
+                        page_pm.fill_rect(rect, &paint, Transform::identity(), None);
+                    }
+                }
+            }
+        }
+
+        // Render non-solid borders (dashed, dotted) - solid borders handled by GPU
+        let mut paint = Paint::default();
+        for item in items {
+            let border = &item.border;
+
+            // Top
+            if border.top.is_visible() && !border.top.is_solid() {
+                draw_border_line(
+                    &mut page_pm, &mut paint,
+                    item.x * scale, item.y * scale,
+                    item.width * scale, border.top.width * scale,
+                    true, &border.top.style, border.top.color
+                );
+            }
+
+            // Bottom
+            if border.bottom.is_visible() && !border.bottom.is_solid() {
+                draw_border_line(
+                    &mut page_pm, &mut paint,
+                    item.x * scale, (item.y + item.height - border.bottom.width) * scale,
+                    item.width * scale, border.bottom.width * scale,
+                    true, &border.bottom.style, border.bottom.color
+                );
+            }
+
+            // Left
+            if border.left.is_visible() && !border.left.is_solid() {
+                draw_border_line(
+                    &mut page_pm, &mut paint,
+                    item.x * scale, item.y * scale,
+                    border.left.width * scale, item.height * scale,
+                    false, &border.left.style, border.left.color
+                );
+            }
+
+            // Right
+            if border.right.is_visible() && !border.right.is_solid() {
+                draw_border_line(
+                    &mut page_pm, &mut paint,
+                    (item.x + item.width - border.right.width) * scale, item.y * scale,
+                    border.right.width * scale, item.height * scale,
+                    false, &border.right.style, border.right.color
+                );
+            }
+        }
+
+        RenderedBuffer::new(page_pm)
+    }
+
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    pub fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.scale_factor = scale_factor;
+    }
+
+    pub fn clear_caches(&mut self) {
+        self.glyph_atlas.clear();
+    }
+}
+
 impl Renderer for SkiaRenderer {
     fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
         if width == 0 || height == 0 {
@@ -309,13 +513,17 @@ impl Renderer for SkiaRenderer {
     fn render(&mut self, frame: &Frame) -> RenderedBuffer {
         let page_width = (frame.viewport.width * self.scale_factor).max(1.0) as u32;
         let page_pixel_height = ((frame.page_height + 100.0) * self.scale_factor) as u32;
-        let page_pixel_height = page_pixel_height.min(16384).max(1);
+        let page_pixel_height = page_pixel_height.min(8192).max(1);
         let mut page_pm = Pixmap::new(page_width.max(1), page_pixel_height).unwrap();
         page_pm.fill(Color::TRANSPARENT);
 
         let scale = self.scale_factor;
         let items = frame.render_items();
         let fonts = frame.fonts();
+
+        // Reuse paint object across items
+        let mut paint = Paint::default();
+        paint.anti_alias = false;
 
         // Render all items to page buffer
         for item in items {
@@ -334,18 +542,14 @@ impl Renderer for SkiaRenderer {
 
             // Draw background
             if item.background_color != (0.0, 0.0, 0.0, 0.0) {
-                let mut paint = Paint::default();
-                paint.set_color(css_color_to_skia(item.background_color));
-                paint.anti_alias = false;
-
-                if let Some(rect) = SkiaRect::from_xywh(
+                fast_fill_rect(
+                    &mut page_pm,
                     item.x * scale,
                     item.y * scale,
                     item.width * scale,
                     item.height * scale,
-                ) {
-                    page_pm.fill_rect(rect, &paint, Transform::identity(), None);
-                }
+                    item.background_color,
+                );
             }
 
             // Draw borders
@@ -355,6 +559,7 @@ impl Renderer for SkiaRenderer {
             if border.top.is_visible() {
                 draw_border_line(
                     &mut page_pm,
+                    &mut paint,
                     item.x * scale,
                     item.y * scale,
                     item.width * scale,
@@ -369,6 +574,7 @@ impl Renderer for SkiaRenderer {
             if border.bottom.is_visible() {
                 draw_border_line(
                     &mut page_pm,
+                    &mut paint,
                     item.x * scale,
                     (item.y + item.height) * scale - border.bottom.width * scale,
                     item.width * scale,
@@ -383,6 +589,7 @@ impl Renderer for SkiaRenderer {
             if border.left.is_visible() {
                 draw_border_line(
                     &mut page_pm,
+                    &mut paint,
                     item.x * scale,
                     item.y * scale,
                     border.left.width * scale,
@@ -397,6 +604,7 @@ impl Renderer for SkiaRenderer {
             if border.right.is_visible() {
                 draw_border_line(
                     &mut page_pm,
+                    &mut paint,
                     (item.x + item.width) * scale - border.right.width * scale,
                     item.y * scale,
                     border.right.width * scale,
@@ -509,7 +717,7 @@ impl Renderer for SkiaRenderer {
             }
         }
 
-        RenderedBuffer { pixmap: page_pm }
+        RenderedBuffer::new(page_pm)
     }
 
     fn composite(&mut self, regions: &[CompositeRegion]) {

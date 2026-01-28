@@ -10,6 +10,8 @@ pub(crate) struct RenderFrameState {
     frame: Rc<RefCell<Frame>>,
     sink: Option<Rc<RefCell<EventSink>>>,
     buffer: Option<RenderedBuffer>,
+    /// True if viewport changed (requires re-render but doesn't mark styles dirty)
+    viewport_changed: bool,
 }
 
 impl RenderFrameState {
@@ -22,6 +24,7 @@ impl RenderFrameState {
             frame,
             sink: Some(Rc::new(RefCell::new(sink))),
             buffer: None,
+            viewport_changed: true, // Force initial render
         }
     }
 
@@ -31,6 +34,7 @@ impl RenderFrameState {
             frame: Frame::new(viewport),
             sink: None,
             buffer: None,
+            viewport_changed: true, // Force initial render
         }
     }
 
@@ -72,13 +76,41 @@ impl RenderFrameState {
         drop(frame);
 
         self.frame.borrow_mut().set_viewport(width, height);
-        // Frame's set_viewport already sets render_needed via build_render_array
+        self.viewport_changed = true;
     }
 
+    /// Update viewport size without triggering relayout (for debouncing)
+    pub(crate) fn set_viewport_size(&mut self, width: f32, height: f32) {
+        let frame = self.frame.borrow();
+        let width_changed = (frame.viewport.width - width).abs() > 0.01;
+        let height_changed = (frame.viewport.height - height).abs() > 0.01;
+        if !width_changed && !height_changed {
+            return;
+        }
+        drop(frame);
+
+        self.frame.borrow_mut().set_viewport_size(width, height);
+        self.viewport_changed = true;
+    }
+
+    /// Trigger relayout with current viewport dimensions
+    pub(crate) fn relayout(&mut self) {
+        self.frame.borrow_mut().relayout();
+        self.viewport_changed = true;
+    }
+
+    /// Render only if content has changed
     pub(crate) fn render(&mut self, renderer: &mut SkiaRenderer) {
-        // Process any pending style changes before rendering
-        self.frame.borrow_mut().update_styles_if_needed();
+        // Check if Frame has pending style changes (content changed)
+        let styles_updated = self.frame.borrow_mut().update_styles_if_needed();
+
+        let needs_render = styles_updated || self.viewport_changed || self.buffer.is_none();
+        if !needs_render {
+            return; // Skip rendering - buffer is still valid
+        }
+
         self.buffer = Some(renderer.render(&self.frame.borrow()));
+        self.viewport_changed = false;
     }
 
     pub(crate) fn buffer(&self) -> Option<&RenderedBuffer> {
