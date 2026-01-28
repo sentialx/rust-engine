@@ -44,12 +44,10 @@ impl Color {
                   self.value = Some((0.0, 0.0, 0.0, 0.0));
                 },
                 _ if value.starts_with("#") => {
-                   
                     let color = hex_to_rgb(value);
                     let is_ok = color.is_ok();
                     let c = &color.unwrap_or((0.0, 0.0, 0.0));
                     self.value = Some((c.0, c.1, c.2, if is_ok { 1.0 } else { 0.0 }));
-                  
                 },
                 _ => {
                   let c = match_named_color(value);

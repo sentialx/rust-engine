@@ -83,7 +83,7 @@ impl EventHandler for DefaultEventHandler {
     }
 }
 
-/// Shared state between DevtoolsOverlayHandler and DevtoolsManager
+/// Shared state between DevtoolsOverlayHandler and ElementInspector
 #[derive(Default)]
 pub struct DevtoolsSelection {
     pub visible: bool,
@@ -97,7 +97,11 @@ impl DevtoolsSelection {
     }
 
     /// Returns the element to display - pinned takes priority over hover
+    /// Returns None if devtools is not visible
     pub fn selected(&self) -> Option<Rc<RefCell<DomElement>>> {
+        if !self.visible {
+            return None;
+        }
         self.pinned.clone().or_else(|| self.hover.clone())
     }
 

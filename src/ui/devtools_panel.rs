@@ -1,49 +1,46 @@
 use crate::events::EventSink;
 use crate::dom::{DomElement, NodeType};
-use crate::layout::Rect;
-use crate::ui::browser_window::RenderFrameState;
+use crate::layout::Size;
+use crate::renderer::{CompositeFrame, HybridRenderer};
+use crate::ui::web_contents::WebContents;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct DevtoolsPanel {
-    render: RenderFrameState,
+    web_contents: WebContents,
     loaded: bool,
 }
 
 impl DevtoolsPanel {
-    pub fn new(viewport: Rect) -> Self {
+    pub fn new(viewport: Size, frame_id: usize, overlay_frame_id: usize) -> Self {
         Self {
-            render: RenderFrameState::new(viewport),
+            web_contents: WebContents::new(viewport, frame_id, overlay_frame_id),
             loaded: false,
         }
     }
 
     pub fn set_viewport(&mut self, width: f32, height: f32) {
-        self.render.set_viewport(width, height);
+        self.web_contents.set_viewport(width, height);
     }
 
-    pub fn set_viewport_size(&mut self, width: f32, height: f32) {
-        self.render.set_viewport_size(width, height);
+    /// Render the panel
+    pub fn render(&mut self, renderer: &mut HybridRenderer) {
+        self.web_contents.render(renderer);
     }
 
-    pub fn relayout(&mut self) {
-        self.render.relayout();
-    }
-
-    /// Access the underlying render state for rendering
-    pub fn render_state_mut(&mut self) -> &mut RenderFrameState {
-        &mut self.render
+    /// Get composite frames for compositing
+    pub fn get_composite_frames<'a>(&self, renderer: &'a HybridRenderer, dest_x: f32) -> Vec<CompositeFrame<'a>> {
+        self.web_contents.get_composite_frames(renderer, dest_x)
     }
 
     /// Set render delegate
     pub fn set_render_delegate(&mut self, delegate: std::rc::Weak<dyn crate::frame::RenderDelegate>) {
-        self.render.set_render_delegate(delegate);
+        self.web_contents.set_render_delegate(delegate);
     }
 
     pub fn load(&mut self) {
-        self.render.frame_mut().load_url("devtools.html");
-        // load_url calls full_layout which sets render_needed
+        self.web_contents.frame_mut().load_url("devtools.html");
         self.loaded = true;
     }
 
@@ -51,16 +48,16 @@ impl DevtoolsPanel {
         self.loaded
     }
 
-    pub fn viewport(&self) -> Rect {
-        self.render.frame().viewport.clone()
+    pub fn viewport(&self) -> Size {
+        self.web_contents.frame().viewport.clone()
     }
 
     pub fn sink_rc(&self) -> Rc<RefCell<EventSink>> {
-        self.render.sink_rc()
+        self.web_contents.sink_rc()
     }
 
     pub fn scroll_y(&self) -> f32 {
-        self.render.scroll_y()
+        self.web_contents.scroll_y()
     }
 
     pub fn update(
@@ -113,12 +110,11 @@ impl DevtoolsPanel {
         };
 
         // Update DOM elements
-        // Collect elements first to avoid borrow issues
-        let breadcrumb_el = self.render.frame_mut().get_element_by_id("breadcrumb");
-        let tree_el = self.render.frame_mut().get_element_by_id("elements-tree");
-        let styles_el = self.render.frame_mut().get_element_by_id("matched-styles");
-        let computed_el = self.render.frame_mut().get_element_by_id("computed-styles");
-        let dims_el = self.render.frame_mut().get_element_by_id("box-dimensions");
+        let breadcrumb_el = self.web_contents.frame_mut().get_element_by_id("breadcrumb");
+        let tree_el = self.web_contents.frame_mut().get_element_by_id("elements-tree");
+        let styles_el = self.web_contents.frame_mut().get_element_by_id("matched-styles");
+        let computed_el = self.web_contents.frame_mut().get_element_by_id("computed-styles");
+        let dims_el = self.web_contents.frame_mut().get_element_by_id("box-dimensions");
 
         if let Some(el) = breadcrumb_el {
             el.borrow_mut().set_inner_html(&breadcrumb_html);
@@ -135,7 +131,6 @@ impl DevtoolsPanel {
         if let Some(el) = dims_el {
             el.borrow_mut().set_text_content(&box_dims);
         }
-        // DOM modifications via set_text_content/set_inner_html trigger mark_dirty
     }
 }
 

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use graviton::colors::ColorTupleA;
 use graviton::frame::Frame;
-use graviton::layout::Rect;
+use graviton::layout::Size;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -27,12 +27,7 @@ fn main() {
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(768.0);
 
-    let viewport = Rect {
-        x: 0.0,
-        y: 0.0,
-        width,
-        height,
-    };
+    let viewport = Size { width, height };
 
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_url(input);

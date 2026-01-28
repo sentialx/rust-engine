@@ -13,7 +13,7 @@ use std::process;
 
 use graviton::devtools_protocol::DevtoolsServer;
 use graviton::frame::Frame;
-use graviton::layout::Rect;
+use graviton::layout::Size;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -50,12 +50,7 @@ fn main() {
     // (In a real implementation, we'd have a quiet mode flag)
 
     // Create frame with specified viewport
-    let viewport = Rect {
-        x: 0.0,
-        y: 0.0,
-        width,
-        height,
-    };
+    let viewport = Size { width, height };
 
     let frame = Frame::new(viewport);
     frame.borrow_mut().load_url(html_file);
